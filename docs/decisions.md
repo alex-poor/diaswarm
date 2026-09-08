@@ -179,6 +179,38 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D11 · The flagship is personal sharing, not research
+
+**Settled by the project's owner, 2026-09-08.** The point is **privacy and
+sovereignty**: a person shares their own history with friends, family and
+clinicians, revocably, with nobody in the middle. Research donation stays a good
+use case and is not the first one.
+
+This resolves an inconsistency rather than creating one — feasibility.md §6
+already called "a parent seeing their child's CGM at 3 a.m." the flagship, while
+§10.0 recommended research/cohort first because that is where the incumbent is
+worst and where the strong audit claim survives. Both of those remain true; both
+were the wrong reason to pick the first surface.
+
+**What it costs, taken deliberately:**
+
+- **The strong audit claim does not apply here.** Followers hold replicas, so
+  what survives is grants and egress, never reads (D3). The §6 trade —
+  availability at 3 a.m. over a read log — is now being made in the flagship, on
+  purpose, and §11's wording is the primary promise rather than a footnote.
+- **iOS followers become the biggest single risk**, not a conceded gap
+  (feasibility.md §9.5). A parent with an iPhone is the flagship, and cannot be a
+  peer.
+- **Windowing lands in the main path.** "A clinician gets the last 90 days" is a
+  window, and D2's measurement says p2panda cannot scope history on join.
+- **The incumbent to beat is Nightscout, not Open Humans** — harder on
+  convenience, easier on custody. feasibility.md §11 states the pitch.
+
+*Reopens if:* the sovereignty argument turns out not to move anyone, and a
+research group turns out to be willing to fund or host. That is an adoption
+finding, not a technical one, and it would change which surface is built next
+rather than anything below it.
+
 ### D10 · The sealing reference is per-recipient wrapping; p2panda is what ships
 
 **Settled.** §7.3 already said per-recipient wrapping is "the floor and it is

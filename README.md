@@ -194,16 +194,24 @@ Stage order and reasoning are in
 - ~~**Epoch sealing**~~ — **done as the framework-neutral reference.**
   [`tools/seal.py`](tools/seal.py) demonstrates the property on real history and
   prices it at 164 KB/year for five readers, against §7.2's estimate of 180.
-- **Now port that to `p2panda-encryption` data mode**, which is what ships. The
-  reference above is the behavioural spec it has to match — and the open
-  question is whether rotation-on-removal gives per-epoch granularity or
-  something coarser. That is the one assumption §7.2 makes about the library
-  that nobody has tested.
-- **The dependency is checked and healthy** (2026-09-08): p2panda v0.7.1 shipped
-  three weeks ago, and `p2panda-spaces` — the piece the plan called a blocker —
-  is published rather than sitting on a branch. See [D2](docs/decisions.md).
+- ~~**Port it to `p2panda-encryption`**~~ — **done and measured.**
+  [`spike/p2panda-seal`](spike/p2panda-seal/FINDINGS.md): the property holds, and
+  revocation is *finer* than the epoch. But `add()` cannot scope history on join,
+  so a windowed grant needs its own group — and *"a clinician gets the last 90
+  days"* is a window.
+
+**The flagship is personal sharing — friends, family, clinicians**
+([D11](docs/decisions.md)). Privacy and sovereignty is the point; research
+donation is a good second. So, next:
+
+- **Answer the iOS follower question first.** No background sockets means a
+  parent with an iPhone cannot be a peer, and that is the flagship use case on
+  the most common follower device. Push, or a relay that queues — but decided
+  before a follower app is designed, not after.
 - **The AAPS plugin**, a `DataSyncSelector` sibling of `plugins/sync/xdrip`
   (~1,100 lines there as the template). Read-only out of AAPS, always.
+- **Group-per-window**, now that it is in the main path rather than a research
+  edge case.
 
 ## Licence
 

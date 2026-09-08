@@ -841,11 +841,16 @@ a foreground-service type that is not capped, a user-initiated data transfer job
 or asking the follower to grant their own exemption — all exist and all need
 choosing deliberately rather than discovered in the field.
 
-**iOS followers are the real gap.** No background sockets, no persistent
-connection, no way to be a peer. A parent with an iPhone watching a child on AAPS
-cannot participate on these terms — and that is a common configuration, not an
-edge case. It is the one place a third party is genuinely required, and it should
-be conceded rather than engineered around.
+**iOS followers are the real gap, and under §10.0 they are the flagship's
+biggest single risk.** No background sockets, no persistent connection, no way to
+be a peer. A parent with an iPhone watching a child on AAPS cannot participate on
+these terms — and with personal sharing as the flagship, that is not an edge case
+being conceded, **it is the flagship use case failing on the most common
+follower device.** It is the one place a third party is genuinely required.
+
+Nothing else in this document is as likely to decide whether anyone can actually
+use this. It should be answered — push, or a relay that queues for an absent
+peer — before the follower app is designed, not after.
 
 | | Can be a peer | How |
 |---|---|---|
@@ -1001,13 +1006,38 @@ cheaper and more consequential:
 |---|---|---|
 | **Epoch length** | Hour · **day** · week | Bounds how much a revoked reader keeps. A day costs ~180 KB/year in key records for five readers — so choose on revocation granularity, not on cost |
 | **Purposes** | `follow` · `clinician` · `cohort` · `quote` | Each is a key tree. Adding one later is cheap; merging two is not |
-| **History on join** | Give a new reader prior epoch keys, or not | p2panda's data mode makes this a per-join choice. A clinician gets history; a cohort gets the window they consented to |
-| **Flagship** | Research commons · family follower | Decides which surface is built first, not which crypto is used |
+| **History on join** | Give a new reader prior epoch keys, or not | **Not a per-join choice in p2panda** (§8.4, measured). A window means its own group, and "a clinician gets the last 90 days" is a window |
+| **Flagship** | **Personal sharing** · research commons | Decides which surface is built first, not which crypto is used |
 
-**Recommendation unchanged: research/cohort first.** The incumbent is at its
-worst there — donation via Open Humans is a one-way irrevocable upload with no
-use record — and the commons gateway (§9.9) is the one place the strong audit
-claim survives, which is worth building where it is true.
+**Recommendation, corrected by the person whose project this is: personal
+sharing first — `follow` and `clinician`.** The flagship is **privacy and
+sovereignty**: someone handing a partner, a parent or a clinician a key to some
+of their history, and taking it back. Research donation stays a good use case and
+an honest one; it is not the first one.
+
+Earlier drafts recommended research/cohort first, on the grounds that the
+incumbent is worst there and the strong audit claim survives there. Both of those
+remain true and neither is the point. **Three consequences follow, and the first
+is uncomfortable:**
+
+1. **The strong audit claim does not apply to the flagship.** §9.0 gives it only
+   to institutional peers that fetch under grant; followers hold replicas, so
+   what survives is grants and egress. §11's wording is now the *primary*
+   promise rather than a caveat on a secondary case — and §6's trade is being
+   made in the flagship's favour deliberately: **availability at 3 a.m. is worth
+   more than a read log**, which is exactly the choice a person sharing with
+   family would make.
+2. **iOS followers move from conceded gap to first-class blocker** (§9.5). A
+   parent with an iPhone watching a child on AAPS *is* the flagship use case, and
+   cannot be a peer on these terms. Nothing else in this document is as likely to
+   decide whether anyone can use it.
+3. **Windowing still bites, and now it bites the flagship.** "A clinician gets
+   the last 90 days" is a window, and §8.4's measurement says p2panda cannot
+   scope history on join. Group-per-window lands in the main path, not in a
+   research edge case.
+
+**And the incumbent to beat is Nightscout, not Open Humans** (§8.1) — which is a
+harder fight on convenience and an easier one on custody. See §11.
 
 ### 10.1 — Emit: the piece neither framework provides
 
@@ -1114,10 +1144,15 @@ retracted in §7, and with it the argument.)
 
 ### 10.5 — The commons gateway
 
-Built to §9.9. It sits here, ahead of the review gate, because it is the only
-stage with an external party in it and external parties set their own timetable —
-it was numbered 10.6 and printed in this position, which is how a reader ends up
-executing a different order from the one intended.
+Built to §9.9. **No longer the wedge** — §10.0's flagship is personal sharing —
+but it keeps this position for a different reason than it had: it is still the
+only stage with an external party in it, and external parties set their own
+timetable, so the conversation starts long before the code does.
+
+What changes with the flagship is the argument it makes. A commons that arrives
+after a working personal-sharing layer can say *"these people already hold their
+own data and can grant you a window of it"*, which is a considerably better
+opening than asking someone to be the first endpoint of a system with no users.
 
 - **Swarm side**: one granted peer, per-participant capabilities with expiry.
 - **Research side**: an export in the shapes OPEN and the OpenAPS Data Commons
@@ -1190,14 +1225,28 @@ make this claim.
 
 ### The stretch, named
 
-**There is no reason for anyone to run this yet.** whanau_voice has a board, a
+**There is no reason for anyone to switch yet.** whanau_voice has a board, a
 funder and a kaupapa; this has an incumbent that works, a community that already
 solved 80% of the problem in a way they are used to, and a real setup-friction
-disadvantage. The technical case is solid. **The adoption case rests entirely on
-§10.0's recommendation — picking the one use case where the incumbent is
-genuinely bad** — and
-research donation, where consent today is a one-way irrevocable upload with no
-use record, is the honest answer to that.
+disadvantage.
+
+**With personal sharing as the flagship (§10.0), the adoption case can no longer
+rest on a gap in the incumbent's features. It rests on custody.** Nightscout
+works. It also asks each person to run and fund a server, on a host that can read
+everything on it; it revokes everyone at once when it revokes anyone; and it
+keeps no record of who was given what. Against that:
+
+> **No server to run or fund. Nobody who can read what they hold. Revocation per
+> person, by key. And a signed record of every grant and every withdrawal.**
+
+**That is a better story about custody and a worse story about convenience**, and
+the honest position is that it wins only with people for whom custody is the
+point — which is a smaller group than "people who use Nightscout", and is not
+nothing. Anyone selling it on features against an incumbent with years of
+follower apps, watch faces and alarms will lose, and should expect to.
+
+The research commons stays worth building (§9.9) and stays the place where the
+strong audit claim is true. It is no longer the wedge.
 
 ## 12. Open questions
 
