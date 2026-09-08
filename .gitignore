@@ -33,3 +33,4 @@ local.properties
 # Rust spike build output
 /spike/*/target/
 /crates/*/target/
+/crates/*/jniLibs/

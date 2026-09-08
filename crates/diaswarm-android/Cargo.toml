@@ -1,0 +1,15 @@
+[package]
+name = "diaswarm-android"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "JNI surface over diaswarm-core, for the AAPS plugin"
+
+[lib]
+# cdylib for the .so the plugin loads; rlib so the tests can link it on the host.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+diaswarm-core = { path = "../diaswarm-core" }
+jni = "0.21"
+serde_json = "1"
