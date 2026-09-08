@@ -204,10 +204,10 @@ Stage order and reasoning are in
 ([D11](docs/decisions.md)). Privacy and sovereignty is the point; research
 donation is a good second. So, next:
 
-- **Answer the iOS follower question first.** No background sockets means a
-  parent with an iPhone cannot be a peer, and that is the flagship use case on
-  the most common follower device. Push, or a relay that queues — but decided
-  before a follower app is designed, not after.
+- **Followers are Android; iOS is out of scope** ([D12](docs/decisions.md)).
+  Every route to an iPhone ends at Apple's push service, and this design's claim
+  is that nobody in the middle can read or withhold anything. A real exclusion,
+  stated rather than engineered around.
 - **The AAPS plugin**, a `DataSyncSelector` sibling of `plugins/sync/xdrip`
   (~1,100 lines there as the template). Read-only out of AAPS, always.
 - **Group-per-window**, now that it is in the main path rather than a research

@@ -179,6 +179,26 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D12 · Followers are Android. iOS is out of scope
+
+**Settled by the project's owner, 2026-09-08.** iOS cannot hold a background
+socket, so an iPhone cannot be a peer. Every route to serving it — push, or a
+relay that queues for an absent peer — ends at Apple's push service.
+
+**Declining is more consistent with the design than serving it badly.** The whole
+claim is that nobody in the middle can read or withhold anything (§9.4); putting
+APNs in the delivery path would contradict it for the flagship's most visible
+surface. feasibility.md previously called this the biggest single risk and
+proposed answering it before designing the follower app. It is instead accepted.
+
+*What it costs, plainly:* in most countries a large share of the people a subject
+might share with are on iPhones, and they are excluded entirely. **This cannot be
+recommended as a general replacement for Nightscout while that holds**, and any
+description of it must say so rather than implying broad follower support.
+
+*Reopens if:* adoption beyond Android becomes a goal, or someone is willing to
+run a queuing relay and be named as the party in the middle.
+
 ### D11 · The flagship is personal sharing, not research
 
 **Settled by the project's owner, 2026-09-08.** The point is **privacy and

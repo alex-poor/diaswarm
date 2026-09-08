@@ -247,8 +247,8 @@ The audio case gets away with it because **Karo is a processor**: it fetches
 under grant, computes, discards. Fetching is observable, so the fetch *is* the
 audit event and it is nearly complete.
 
-**A diabetes follower is not a processor.** The flagship use case — a parent
-seeing their child's CGM at 3 a.m., a partner getting a low alarm — requires the
+**A diabetes follower is not a processor.** The flagship use case — a partner
+getting a low alarm at 3 a.m., a parent watching an Android phone — requires the
 recipient to hold a **live local replica**, because the whole point is that it
 works when the phone is asleep, the network is bad, and nobody is fetching
 anything.
@@ -841,22 +841,30 @@ a foreground-service type that is not capped, a user-initiated data transfer job
 or asking the follower to grant their own exemption — all exist and all need
 choosing deliberately rather than discovered in the field.
 
-**iOS followers are the real gap, and under §10.0 they are the flagship's
-biggest single risk.** No background sockets, no persistent connection, no way to
-be a peer. A parent with an iPhone watching a child on AAPS cannot participate on
-these terms — and with personal sharing as the flagship, that is not an edge case
-being conceded, **it is the flagship use case failing on the most common
-follower device.** It is the one place a third party is genuinely required.
+**iOS followers are out of scope, deliberately** (D12). No background sockets,
+no persistent connection, no way to be a peer — and the ways out all end at
+Apple's push service, which is the one place this document ever found that *"a
+third party is genuinely required"*.
 
-Nothing else in this document is as likely to decide whether anyone can actually
-use this. It should be answered — push, or a relay that queues for an absent
-peer — before the follower app is designed, not after.
+**That is a scope decision, not a solved problem, and it cuts both ways.**
+
+*What it costs:* an iPhone follower cannot participate at all. In most countries
+that is a large share of the people a subject might want to share with, and it is
+the reason this cannot be recommended generally while it holds.
+
+*What it buys:* the no-operator property survives intact (§9.4). Solving iOS
+would have put Apple in the delivery path for a design whose entire claim is that
+nobody in the middle can read or withhold anything. **Declining to serve iOS is
+more consistent with the flagship than serving it badly would have been.**
+
+*Reopens if:* adoption beyond Android followers becomes a goal. Then the question
+is a queuing relay versus push, and the honest framing is that both add a party.
 
 | | Can be a peer | How |
 |---|---|---|
 | Subject on AAPS | **Yes** | Inherits the loop's foreground service and battery exemption |
 | Android follower app | **Yes, with care** | Must dodge the Android 15 `dataSync` six-hour cap |
-| iOS follower | **No** | No background sockets. Needs push, or a relay that queues |
+| iOS follower | **Out of scope** (D12) | No background sockets. Every route ends at Apple's push service |
 | Researcher / cohort | **Yes** | Always-on by nature; pulls under grant |
 
 ### 9.6 The precedents, which are not encouraging and are not fatal
@@ -1027,10 +1035,11 @@ is uncomfortable:**
    made in the flagship's favour deliberately: **availability at 3 a.m. is worth
    more than a read log**, which is exactly the choice a person sharing with
    family would make.
-2. **iOS followers move from conceded gap to first-class blocker** (§9.5). A
-   parent with an iPhone watching a child on AAPS *is* the flagship use case, and
-   cannot be a peer on these terms. Nothing else in this document is as likely to
-   decide whether anyone can use it.
+2. **Followers are Android** (D12). iOS is out of scope: every route to it ends
+   at Apple's push service, which would put a third party in the delivery path of
+   a design whose claim is that nobody in the middle can read or withhold
+   anything. The cost is that a large share of would-be followers are excluded,
+   and that is accepted rather than solved.
 3. **Windowing still bites, and now it bites the flagship.** "A clinician gets
    the last 90 days" is a window, and §8.4's measurement says p2panda cannot
    scope history on join. Group-per-window lands in the main path, not in a
@@ -1257,16 +1266,18 @@ So the comparison is not custody-versus-convenience. It is:
 | **Who can read it** | The host, and anyone with the URL and a token | **Nobody who was not granted a key** |
 | **Revoking one person** | Rotate `API_SECRET`; **everyone is revoked** | **Per person, by key** |
 | **Record of who you gave it to** | None | **Signed, public, tamper-evident** |
-| **iOS followers** | **Works** — it is a URL | **Cannot be a peer** (§9.5) |
+| **iOS followers** | **Works** — it is a URL | **Out of scope** (D12) |
 | **Ecosystem** | **Years of it** — follower apps, watch faces, clinic dashboards | Nothing yet |
 | **Losing your phone** | Data is on the server; log back in | Depends on multi-device and backup, both unfinished (§12.5, §10.4) |
 | **Someone to ask for help** | **Thousands of people** | Nobody |
 
-**The convenience losses are real but they are specific, and three of the four
-are the kind that close with work.** Ecosystem and support close with adoption;
-recovery closes with multi-device, which is §12.5 and has to be built anyway.
-**iOS is the one that does not close by itself**, and that is why §9.5 calls it
-the flagship's biggest single risk rather than a gap to concede.
+**The convenience losses are real but specific, and three of the four close with
+work.** Ecosystem and support close with adoption; recovery closes with
+multi-device, which is §12.5 and has to be built anyway. **iOS does not close —
+it is declined** (D12), because every route to it ends at Apple, and a design
+whose claim is that nobody in the middle can read or withhold anything should not
+put a push service in the delivery path. That is a real exclusion, stated rather
+than engineered around.
 
 **The honest pitch is therefore stronger than the earlier draft allowed:** for
 the person whose data it is, this is *cheaper, simpler and more private* than
