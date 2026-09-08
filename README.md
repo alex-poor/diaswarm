@@ -44,11 +44,29 @@ make a 3 a.m. decision on what this says.
 ## Repository
 
 ```
-docs/feasibility.md   The assessment. Architecture, frameworks, costs, plan
-docs/decisions.md     What is settled, and what would reopen it
-spec/records.md       The canonical record stream — the wire contract
-tools/canon.py        AAPS SQLite → canonical records. Works today
+docs/feasibility.md    The assessment. Architecture, frameworks, costs, plan
+docs/decisions.md      What is settled, and what would reopen it
+spec/records.md        The canonical record stream — the wire contract
+tools/canon.py         AAPS SQLite → canonical records. Works today
+tools/port-session.sh  Make a Claude Code session resumable from this repo
 ```
+
+## Resuming the design session
+
+This work started in `~/projects/camaps`, and Claude Code keys sessions to the
+directory they ran in. The originating session has been ported here:
+
+```sh
+claude --resume 6a0f1ea9-a0d9-497d-a32f-1b0e33127fd2
+```
+
+The copy is a snapshot. **Re-run `tools/port-session.sh <id>` at the end of any
+session in the old directory**, or the tail of it is lost. `tools/port-session.sh`
+with no argument lists candidates, newest first.
+
+Project memories were seeded too — the swarm architecture, the AAPS database
+hazards, how to pull a fresh snapshot off the phone. The camaps loop memories
+(pump protocol, keybox, Hovorka) were deliberately left behind.
 
 ## Try the one thing that works
 
