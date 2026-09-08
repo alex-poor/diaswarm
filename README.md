@@ -47,6 +47,8 @@ make a 3 a.m. decision on what this says.
 docs/feasibility.md    The assessment. Architecture, frameworks, costs, plan
 docs/decisions.md      What is settled, and what would reopen it
 spec/records.md        The canonical record stream — the wire contract
+crates/diaswarm-core   spec/records.md v1 in Rust — the one implementation, NDK-bound
+spike/p2panda-seal     What p2panda-encryption 0.7.1 actually does, measured
 tools/canon.py         AAPS SQLite → canonical records. Works today
 tools/seal.py          Canonical records → epochs, sealed and wrapped per grantee
 tools/mkfixture.py     A synthetic AAPS database, so the above runs with no real data
@@ -209,7 +211,11 @@ donation is a good second. So, next:
   is that nobody in the middle can read or withhold anything. A real exclusion,
   stated rather than engineered around.
 - **The AAPS plugin**, a `DataSyncSelector` sibling of `plugins/sync/xdrip`
-  (~1,100 lines there as the template). Read-only out of AAPS, always.
+  (1,109 lines there as the template, verified against the checkout). Read-only
+  out of AAPS, always. The record logic is not written twice: the plugin is a
+  thin Kotlin shell over [`crates/diaswarm-core`](crates/diaswarm-core) via the
+  NDK, and that crate is asserted byte-identical to `canon.py` over 19,129 real
+  records.
 - **Group-per-window**, now that it is in the main path rather than a research
   edge case.
 
