@@ -567,18 +567,29 @@ layer, and it is built on iroh 1.0.
 | **Keys** | **`p2panda-encryption`, data mode. Purpose-built for exactly this** |
 | **Grants** | `p2panda-auth` — signed, eventually-consistent group membership |
 
-**The gap is precise, and it is the integration.** v0.7.1 (Aug 2025) is the
-latest release — **thirteen months ago as this is written**, which is a fact
-about cadence this document should not state without drawing the inference:
-`docs/decisions.md` D2 reopens the framework choice "if `p2panda-spaces` stalls
-past the point of usefulness", and a year without a release is the leading
-indicator of exactly that. Re-check it before the spike in §10.2, and treat the
-MLS fallback (§8.7) as live rather than theoretical until it is re-checked.
-There is no 1.0; `p2panda-spaces` is unreleased and on a branch,
-with open items for **bundle rotation, expiry configuration, credential
-unification and concurrent auth messages** — which is to say, the
-membership-change machinery that revocation is entirely about. Under §8.0 the
-0.x objection is survivable.
+**The gap has narrowed, and the earlier account of it was wrong. Checked
+2026-09-08:**
+
+| | |
+|---|---|
+| Latest release | **v0.7.1, published 21 August 2026** — eighteen days ago |
+| Cadence | 0.5.0 Jan · 0.6.0 May · 0.7.0 Jul · 0.7.1 Aug, all 2026 |
+| `p2panda-spaces` | **Published on crates.io at 0.7.1**, and listed on p2panda.org as an available crate |
+| Tracking issue #774 | **Closed**, merged |
+| Still open | Documentation; key-bundle automatic rotation and renewal; concurrent encryption messages; group promotion and demotion |
+
+**Two corrections.** This document previously dated v0.7.1 to **August 2025** —
+off by a year — and described `p2panda-spaces` as *"unreleased and on a branch"*,
+which was the stated blocker on the recommended track. A review then compounded
+the first error by inferring a stalled cadence from the wrong date. Both are
+wrong in the same direction: **the framework choice is firmer than this document
+claimed, not shakier.**
+
+There is still no 1.0, and the remaining open items are real — key-bundle
+rotation and concurrent encryption messages are membership-change machinery, and
+revocation is entirely about membership change. But they are open items on a
+released crate, not an unreleased branch. Under §8.0 the 0.x objection is
+survivable.
 
 **Verdict: the recommended track.** It is the only candidate that supplies all
 three layers, it was designed against this exact problem, and the missing piece

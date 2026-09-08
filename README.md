@@ -149,9 +149,9 @@ Stage order and reasoning are in
   the one property worth demonstrating first — *after revocation the reader
   decrypts nothing new, and everything they already held still opens.*
   Priced on real data: 24 KB of key records against 1.66 MB of history.
-- **Re-check p2panda's release cadence first** — v0.7.1 is thirteen months old
-  and `p2panda-spaces` is still on a branch, which is the condition
-  [D2](docs/decisions.md) says reopens the framework choice.
+- **The dependency is checked and healthy** (2026-09-08): p2panda v0.7.1 shipped
+  three weeks ago, and `p2panda-spaces` — the piece the plan called a blocker —
+  is published rather than sitting on a branch. See [D2](docs/decisions.md).
 - **The AAPS plugin**, a `DataSyncSelector` sibling of `plugins/sync/xdrip`
   (~1,100 lines there as the template). Read-only out of AAPS, always.
 

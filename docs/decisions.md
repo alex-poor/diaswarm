@@ -40,12 +40,18 @@ Meadowcap gates sync, not rest.
 OpenMLS for the key layer — audited, an RFC, and its Delivery Service problem
 mostly dissolves because the subject's phone is the only writer of its own data.
 
-⚠️ **That condition may already be partly met, and this decision was taken
-without noticing.** The latest p2panda release is v0.7.1, August 2025 — thirteen
-months before this was written — and `p2panda-spaces` is still unreleased and on
-a branch. feasibility.md §8.4 states the date and draws no conclusion from it.
-**Re-check the cadence before the spike**, and treat the OpenMLS fallback as live
-rather than theoretical until someone has.
+✅ **Checked 2026-09-08, and the condition is not met — the opposite.** v0.7.1
+was published **21 August 2026, eighteen days ago**, with 0.5.0/0.6.0/0.7.0 in
+January, May and July of the same year. **`p2panda-spaces` is published** at
+0.7.1, and its tracking issue is closed. What remains open — documentation,
+key-bundle auto-rotation, concurrent encryption messages, group promotion and
+demotion — are open items on a released crate.
+
+This decision was previously annotated with the reverse conclusion, from a date
+in feasibility.md that was off by a year. **The recommended track is in better
+shape than the documents said**, and OpenMLS stays a fallback rather than
+becoming live. Re-check again before committing to the sealing work, since a
+crate three weeks old is a moving target in a different way.
 
 *Watch:* proxy re-encryption (Umbral/TACo lineage). Uniquely allows granting
 access to already-published data without the subject's device participating,
