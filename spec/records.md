@@ -1,6 +1,23 @@
 # The canonical record stream
 
-**Status: v1 — frozen, 2026-09-08.** Every later stage encodes against this.
+**Status: v2 — 2026-09-09.** Every later stage encodes against this.
+
+> **v1 was wrong about durations and lasted one day.** It said `dur` is minutes.
+> AAPS stores every duration in **milliseconds** — a 15-minute temp basal is
+> `900000` — and the emitter passed the column through verbatim, so a v1 stream
+> declared minutes and carried milliseconds. A consumer applying the
+> specification would have read a 15-minute temp basal as **625 days**.
+>
+> **The bytes do not change; the contract does.** The fix is that the document
+> now says what the data always was. The version is bumped anyway, because a
+> consumer that implemented v1 correctly was wrong, and §5.2 exists precisely so
+> that is detectable rather than discovered by getting wrong answers. Nothing had
+> been published, so no compatibility window is owed — which is the only reason
+> this was cheap.
+>
+> It is the same defect as the mmol/mg-dL one in §2, found the same way: by
+> reading what the device actually writes rather than what a table looked like it
+> meant.
 Changing it now costs a compatibility window, which is the point of freezing it:
 the sealing layer, the AAPS plugin and the commons gateway can all be built
 against a contract that will not move under them.
@@ -83,8 +100,13 @@ real extended bolus to reach a consumer will be the first one this emitter has
 ever produced, and it should be treated that way.
 
 **Units are fixed and never carried per-record.** `mgdl` is mg/dL, `u` is units
-of insulin, `g` is grams, `dur` is minutes, `rate` is U/h when `abs` is true and
-percent otherwise. A stream that lets each record declare its own units is a
+of insulin, `g` is grams, **`dur` is milliseconds**, `rate` is U/h when `abs` is
+true and percent otherwise.
+
+**Milliseconds, not minutes, and not by preference.** It is what AAPS stores, it
+matches `t`, and it is the only choice that stays an integer: real durations
+include `36690` and `1195731` ms, which are 0.61 and 19.93 minutes. A unit that
+forces the emitter to round is a unit that loses information the device had. A stream that lets each record declare its own units is a
 stream where one mis-set flag becomes a dosing-scale error in somebody's
 analysis.
 
@@ -104,6 +126,11 @@ consumer meets an explicit *"this one is not normalised"* rather than a
 plausible wrong number. `--stats` names them.
 
 **`basal` (U/h) and `ic` (g/U) carry no glucose unit and are never scaled.**
+
+**Profile blocks carry their own `duration`, also in milliseconds** — a
+whole-day block is `86400000`. And **`shift` is unverified**: it is zero on every
+profile in every snapshot checked, so nothing here establishes its unit. Anyone
+emitting a non-zero `shift` should measure it first rather than trust this table.
 
 **`profile` carries the blocks, not just the name**, and carries them as
 **parsed arrays, not as strings**. AAPS stores each block column as a JSON

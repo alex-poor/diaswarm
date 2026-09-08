@@ -58,7 +58,7 @@ object SwarmNative {
     external fun emitterAmendments(handle: Long): Long
 
     /** The spec version this Kotlin was written against. */
-    const val EXPECTED_SPEC_VERSION = 1
+    const val EXPECTED_SPEC_VERSION = 2
 
     /**
      * Load the native library and refuse to run against a mismatched one.

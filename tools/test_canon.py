@@ -83,6 +83,15 @@ def main() -> int:
     check("no record carries an explicit null",
           all(v is not None for r in recs for v in r.values()))
 
+    # --- §2: durations are milliseconds, the thing v1 got wrong -------------
+    tbrs = of_kind(recs, "tbr")
+    check("a temp basal duration is milliseconds, not minutes",
+          any(r.get("dur") == 30 * 60_000 for r in tbrs),
+          f"got {[r.get('dur') for r in tbrs]}")
+    check("a temporary target duration is milliseconds",
+          of_kind(recs, "target")[0].get("dur") == 45 * 60_000)
+    check("the stream declares spec v2", canon.SPEC_VERSION == 2)
+
     # --- §2: units are fixed, never per-record ------------------------------
     profiles = {r["name"]: r for r in of_kind(recs, "profile")}
     check("profile blocks are parsed, not JSON inside JSON",
@@ -133,7 +142,8 @@ def main() -> int:
     # --- v1: the stream says what it is ------------------------------------
     blob = canon.encode(recs)
     first = json.loads(blob.split(b"\n")[0])
-    check("the stream declares its spec version", first.get("spec") == 1, f"{first}")
+    check("the stream declares its spec version",
+          first.get("spec") == canon.SPEC_VERSION, f"{first}")
     check("the stream declares how epochs are cut", first.get("epoch") == "utc-day")
     check("the stream declares its glucose unit", first.get("unit") == "mgdl")
     check("the header sorts ahead of every event", first["t"] == 0

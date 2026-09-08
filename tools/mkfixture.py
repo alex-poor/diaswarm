@@ -18,6 +18,7 @@ contains one of each hazard:
     can tell "kept the first" from "kept the last"
   * a carb entry with a NULL duration, and one with a real zero, which must
     not survive as the same record
+  * durations in milliseconds, the unit v1 of the spec got wrong
   * profiles in MMOL, in MGDL, and in a unit nobody recognises
   * an `extendedBoluses` table missing `referenceId`, i.e. an older schema,
     which must be reported as unread rather than silently yielding no records
@@ -114,10 +115,13 @@ def rows() -> list[tuple[str, dict]]:
     add("carbs", timestamp=T0 + 20 * MIN, amount=12.0, duration=0)
     add("carbs", timestamp=T0 + 25 * MIN, amount=99.0, duration=0, isValid=0)
 
+    # Durations are MILLISECONDS, as AAPS stores them and as spec §2 says since
+    # v2. Writing 30 here would mean thirty milliseconds, and a fixture that is
+    # wrong about units teaches the wrong thing to whoever reads it first.
     add("temporaryBasals", timestamp=T0 + 5 * MIN, type="NORMAL", isAbsolute=1,
-        rate=0.75, duration=30)
+        rate=0.75, duration=30 * MIN)
     add("temporaryBasals", timestamp=T0 + 35 * MIN, type="EMULATED_PUMP_SUSPEND",
-        isAbsolute=0, rate=0.0, duration=15)
+        isAbsolute=0, rate=0.0, duration=15 * MIN)
 
     add("therapyEvents", timestamp=T0 + 15 * MIN, duration=0, type="SENSOR_CHANGE",
         note=None, glucose=None)
@@ -127,7 +131,7 @@ def rows() -> list[tuple[str, dict]]:
         note=None, glucose=94.0)
 
     add("temporaryTargets", timestamp=T0 + 18 * MIN, reason="HYPOGLYCEMIA",
-        highTarget=160.2, lowTarget=160.2, duration=45)
+        highTarget=160.2, lowTarget=160.2, duration=45 * MIN)
 
     add("totalDailyDoses", timestamp=T0, basalAmount=12.0, bolusAmount=18.5,
         totalAmount=30.5, carbs=180.0)

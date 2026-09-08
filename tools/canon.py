@@ -72,7 +72,7 @@ CGM_BUCKET_MS = 5 * 60 * 1000
 # The version of spec/records.md this emitter conforms to. Declared in the
 # stream's own header, because after glucose normalisation a consumer cannot
 # otherwise tell a normalised stream from an un-normalised one by looking at it.
-SPEC_VERSION = 1
+SPEC_VERSION = 2
 
 # One epoch, one content key (feasibility.md §7.2). UTC so that an epoch has the
 # same identity on every device: a local-midnight boundary is ambiguous across

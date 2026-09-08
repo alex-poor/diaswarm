@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 
 /// The version of `spec/records.md` this implements. Declared in the header.
-pub const SPEC_VERSION: u64 = 1;
+pub const SPEC_VERSION: u64 = 2;
 
 /// One epoch, one content key. UTC so an epoch has the same identity on every
 /// device — see spec §5.1 for why local midnight is not an option.
