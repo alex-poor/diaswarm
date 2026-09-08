@@ -1,0 +1,5 @@
+<resources>
+    <string name="swarm">Swarm sharing</string>
+    <string name="swarm_shortname">SWARM</string>
+    <string name="description_swarm">Share your records with named people, revocably, with no server in the middle. Off by default; reads only, and never writes to the loop.</string>
+</resources>
