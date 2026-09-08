@@ -3,7 +3,7 @@ package app.aaps.plugins.sync.swarm
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.plugin.PluginDescription
-import app.aaps.core.interfaces.plugin.PluginType
+import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.interfaces.resources.ResourceHelper
 import javax.inject.Inject
 import javax.inject.Singleton
