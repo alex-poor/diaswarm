@@ -1,0 +1,31 @@
+# Real diabetes data never enters this repo.
+# Snapshots live outside it and are referenced by path.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*
+/data/
+/out/
+*.ndjson
+*.ndjson.gz
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Rust
+/target/
+**/target/
+
+# Android / Gradle
+.gradle/
+/build/
+local.properties
+*.apk
+
+# Editors / OS
+.DS_Store
+.idea/
+*.swp
