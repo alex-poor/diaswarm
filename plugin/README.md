@@ -19,26 +19,29 @@ check, and this plugin's own high-water marks.
 
 ## Wiring it into an AAPS checkout
 
-**The checkout this is wired into builds a live closed loop.** So the wiring is
-opt-in, and the default build is byte-for-byte what it was before the block
-existed. `settings.gradle`:
-
-```groovy
-if (System.getenv('DIASWARM') == '1') {
-    include ':plugins:sync:swarm'
-    project(':plugins:sync:swarm').projectDir = new File('/path/to/diaswarm/plugin')
-}
-```
-
-Verified both ways: without the variable Gradle reports no such project; with it,
-`:plugins:sync:swarm` appears. An unconditional include would have put this
-module in the configuration of every build of an app that doses insulin, for no
-benefit, which is not a trade worth making even when the module is inert.
+**The checkout this is wired into builds a live closed loop**, and more than one
+session works in it at once. So the wiring lives on a branch **in its own git
+worktree**, never in the working tree that builds the pump APK:
 
 ```sh
-export ANDROID_NDK_HOME=/path/to/ndk        # 28.2 and r29 both work
-DIASWARM=1 ./gradlew :plugins:sync:swarm:assembleDebug
+git worktree add ../aaps-diaswarm diaswarm-addon
+cd ../aaps-diaswarm
+export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358
+./gradlew :app:assembleFullLoop -PappVersionSuffix=diaswarm
 ```
+
+**A branch is not enough on its own, and this was learned the hard way.**
+Uncommitted changes are not on a branch — they are in the working tree, and the
+working tree is shared by every branch that tree checks out. Wiring committed to
+no branch was carried onto `main` by someone else's `git checkout`, which is
+precisely the thing branching was supposed to prevent. A worktree isolates the
+files as well as the history; commit early there, and never leave that repository
+dirty.
+
+Verified both ways: the `main` build produces an APK with no swarm classes, no
+`libdiaswarm` `.so` and zero occurrences in the dex; the branch build produces
+one containing `lib/arm64-v8a/libdiaswarm_android.so` and all five plugin
+classes, signer unchanged so `install -r` stays an update.
 
 `buildRustCore` cross-compiles the core for `arm64-v8a` and `armeabi-v7a` and
 copies the `.so` into `src/main/jniLibs`, where the library packages it from.
