@@ -65,7 +65,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_canonicalLin
     };
     let raw: String = raw.into();
     match Record::from_json(&raw) {
-        Ok(record) => to_jstring(env, record.to_canonical_json()),
+        Ok(record) => to_jstring(env, record.normalise().to_canonical_json()),
         Err(_) => to_jstring(env, String::new()),
     }
 }
@@ -116,6 +116,10 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterAccep
     let Ok(record) = Record::from_json(&raw) else {
         return to_jstring(env, String::new());
     };
+    // Normalise BEFORE the duplicate check: two raw records differing only below
+    // the precision the device has are the same record, and must not both be
+    // emitted just because Kotlin handed over unrounded doubles.
+    let record = record.normalise();
     if emitter.accept(&record) {
         to_jstring(env, record.to_canonical_json())
     } else {

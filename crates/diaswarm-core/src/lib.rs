@@ -89,6 +89,20 @@ impl Record {
         epoch_of(self.t())
     }
 
+    /// Apply the spec's precision rules. Idempotent, and asserted so on real
+    /// data: normalising an already-canonical stream must not move a single byte.
+    pub fn normalise(mut self) -> Self {
+        let kind = self.kind().to_string();
+        for (key, value) in self.0.iter_mut() {
+            let Some(digits) = precision(&kind, key) else { continue };
+            let Some(n) = value.as_f64() else { continue };
+            if let Some(rounded) = serde_json::Number::from_f64(round_half_even(n, digits)) {
+                *value = Value::Number(rounded);
+            }
+        }
+        self
+    }
+
     /// The one canonical serialisation: keys sorted, no spaces.
     ///
     /// Byte-identical to `json.dumps(r, separators=(",", ":"), sort_keys=True)`
@@ -115,6 +129,40 @@ impl Record {
         }
         Ok(Record(m))
     }
+}
+
+/// How many decimal places each numeric field carries, by kind.
+///
+/// The precision the device actually has. A pump delivering in 0.01 U steps has
+/// no business emitting seventeen significant figures, and the extra digits cost
+/// real bytes at one record every four minutes for a decade.
+///
+/// THIS TABLE IS WHY ROUNDING IS HERE AND NOT IN KOTLIN. It is part of the
+/// canonical form: two emitters that round differently produce different bytes
+/// for the same reading, and the difference is invisible until two peers compare
+/// streams. The plugin passes raw doubles across the boundary and lets this
+/// decide, which is the same reason the encoding lives here.
+fn precision(kind: &str, key: &str) -> Option<i32> {
+    match (kind, key) {
+        (kind::CGM, "mgdl") | (kind::EVENT, "mgdl") => Some(1),
+        (kind::CARB, "g") => Some(1),
+        (kind::BOLUS, "u") | (kind::EXT_BOLUS, "u") => Some(3),
+        (kind::TBR, "rate") => Some(3),
+        (kind::TARGET, "lo") | (kind::TARGET, "hi") => Some(1),
+        _ => None,
+    }
+}
+
+/// Round the way Python's `round()` does — ties to even.
+///
+/// `tools/canon.py` is the oracle these implementations are tested against, and
+/// it rounds half-to-even. Rust's `f64::round` rounds half away from zero, so
+/// 0.125 at two places would be 0.13 here and 0.12 there: one reading in a
+/// thousand differing, which is exactly the kind of drift that is never noticed
+/// and never explained.
+fn round_half_even(value: f64, digits: i32) -> f64 {
+    let factor = 10f64.powi(digits);
+    (value * factor).round_ties_even() / factor
 }
 
 pub fn epoch_of(t: i64) -> i64 {

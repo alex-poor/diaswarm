@@ -34,3 +34,4 @@ local.properties
 /spike/*/target/
 /crates/*/target/
 /crates/*/jniLibs/
+/plugin/src/main/jniLibs/

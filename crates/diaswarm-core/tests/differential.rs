@@ -177,3 +177,40 @@ fn byte_identical_on_a_real_stream() {
     eprintln!("  {checked} records re-encoded byte-identically");
     assert!(checked > 1000, "expected a real stream, got {checked} records");
 }
+
+#[test]
+fn normalising_a_canonical_stream_moves_nothing() {
+    // Idempotence is the whole claim: canon.py already applied these rules, so
+    // if the Rust table disagrees anywhere it shows up as a changed line.
+    let Ok(path) = std::env::var("DIASWARM_STREAM") else { return };
+    let stream = std::fs::read_to_string(&path).expect("stream is readable");
+    let mut checked = 0usize;
+    for (n, line) in stream.lines().enumerate() {
+        let record = Record::from_json(line).expect("valid JSON");
+        assert_eq!(
+            record.normalise().to_canonical_json(),
+            line,
+            "line {} changed under normalisation — the precision table disagrees \
+             with tools/canon.py",
+            n + 1
+        );
+        checked += 1;
+    }
+    eprintln!("  {checked} records unchanged by normalisation");
+}
+
+#[test]
+fn rounding_matches_python_ties_to_even() {
+    // Python: round(0.125, 2) == 0.12, round(0.135, 2) == 0.14
+    let cgm = |v: f64| {
+        Record::new(1, "cgm")
+            .set("mgdl", Some(v.into()))
+            .normalise()
+            .get("mgdl")
+            .and_then(|x| x.as_f64())
+            .unwrap()
+    };
+    assert_eq!(cgm(100.25), 100.2, "ties round to even, as Python does");
+    assert_eq!(cgm(100.35), 100.4);
+    assert_eq!(cgm(163.04), 163.0);
+}
