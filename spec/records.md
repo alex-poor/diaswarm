@@ -267,7 +267,38 @@ What remains:
    nothing says what a consumer should do when it meets a number it does not
    know. Refusing is safe and useless; proceeding is useful and unsafe. This
    wants deciding before there is a second implementation, not after.
-3. **`event.note` and the grant that narrows it.** The note is free text a person
+3. **How a correction reaches an epoch that is already sealed.** This document's
+   filters were derived from *snapshots*, which show only the final state. The
+   AAPS sync queue shows the edits: `getNextModifiedOrNewAfter` is
+   `SELECT * FROM t WHERE id > :id ORDER BY id ASC LIMIT 1` — no filter on
+   `isValid` or `referenceId` — and when it lands on a version row it resolves to
+   the **current** record and emits that. So a live emitter receives the same
+   logical record again every time it is edited, and §7.4 says a published epoch
+   cannot be unpublished.
+
+   **Measured on the reference snapshot, and it is small.** Of 12,876 version
+   rows, **12,874 are semantically identical** to the record they supersede —
+   NSClient stamping a `nightscoutId`, no clinical change. **Two are real edits**,
+   both carbs, over 48.5 days.
+
+   | | |
+   |---|---|
+   | Re-emissions carrying no change | **12,874** — deduplicate by canonical content, no vocabulary needed |
+   | Genuine edits | **2 in 48.5 days**, roughly 15 a year |
+   | Retractions (`isValid = 0`) | 3 in the same window |
+
+   So the emitter must deduplicate by canonical content regardless, and that
+   settles 99.98% of it. What is left is **an edit or retraction arriving after
+   its epoch was sealed**, perhaps fifteen times a year. A retraction of
+   published data is the "delete my data" that §7.4 says is not available; the
+   most that can be offered is a correction consumers apply.
+
+   **Deliberately not designed yet.** Fifteen events a year is too few to guess a
+   mechanism from, and an `amend` kind would push exactly the edit-log-application
+   that §3 refuses onto consumers. The plugin should count them first. The kind
+   name `amend` is reserved so a v2 can take it.
+
+4. **`event.note` and the grant that narrows it.** The note is free text a person
    typed, and §2 already says it is the field most likely to name a third party.
    Nothing yet expresses *"this grant covers the stream without the notes"*,
    which is the narrowing a person is most likely to want first.
