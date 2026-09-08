@@ -1015,13 +1015,29 @@ useful to other people even if the swarm never ships.
 
 ### 10.2 — Spike the key layer on that one emit layer
 
+**Done, as the framework-neutral floor.** `tools/seal.py` implements §7.3's
+per-recipient wrapping — X25519 + HKDF + ChaCha20-Poly1305, Ed25519 grants — and
+demonstrates the property on 47 epochs of real history: a reader revoked two
+thirds of the way through gains none of the 16 epochs sealed afterwards and
+keeps all 31 they held. Measured overhead is **164 KB/year for five readers
+granted throughout**, against the 180 KB §7.2 estimated from first principles.
+
+That was built first deliberately, the way §10.1 was: it demonstrates the
+property today rather than gambling the demonstration on an unfamiliar 0.x API,
+and it is now **the behavioural specification the p2panda version has to match**.
+Anything p2panda does differently is a question about p2panda.
+
+**What remains, and it is the real question:** whether
+`p2panda-encryption`'s rotation-on-removal gives per-epoch granularity or
+something coarser. §7.2 assumes the former and nobody has checked.
+
 **Corrected.** This stage previously read "spike both tracks" and described a
 Holochain DNA with *a private entry type for records and an assigned `CapGrant`
 per recipient* — the architecture §7 retracts and D1 settles against. A build
 plan that still executes the rejected design is worse than no build plan, so it
 is removed rather than softened.
 
-One spike, on the recommended track (§8.9):
+The remaining spike, on the recommended track (§8.9):
 
 - **p2panda**: `p2panda-auth` + `p2panda-encryption` directly, without waiting
   for `spaces`, since the crates work over raw bytes. Replicate a window to one

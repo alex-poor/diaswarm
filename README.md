@@ -48,8 +48,10 @@ docs/feasibility.md    The assessment. Architecture, frameworks, costs, plan
 docs/decisions.md      What is settled, and what would reopen it
 spec/records.md        The canonical record stream — the wire contract
 tools/canon.py         AAPS SQLite → canonical records. Works today
+tools/seal.py          Canonical records → epochs, sealed and wrapped per grantee
 tools/mkfixture.py     A synthetic AAPS database, so the above runs with no real data
 tools/test_canon.py    Tests for the filters spec/records.md rests on
+tools/test_seal.py     Tests for the one property revocation has to have
 tools/port-session.sh  Make a Claude Code session resumable from this repo
 ```
 
@@ -136,6 +138,50 @@ mg/dL and in a unit nobody recognises, and a table on an older schema. The tests
 assert what §3 of the spec claims, and they have been checked against a
 deliberately broken canonicaliser to confirm they fail when it is wrong.
 
+## The property, demonstrated
+
+`seal.py` cuts a canonical stream into UTC-day epochs, seals each under its own
+content key, and wraps that key to every live grantee. **Granting starts the
+wrapping; revoking stops it.** There is no delete step and no message to anyone —
+a revoked reader is simply one the loop no longer wraps for.
+
+```sh
+tools/canon.py snapshot.db -o stream.ndjson && tools/seal.py stream.ndjson --demo
+```
+
+On the same 48-day history, sealed a day at a time with the revocation landing
+two thirds of the way through:
+
+```
+  sealed  47 epochs, 19,128 records, one day at a time
+  partner revoked at epoch 20663, with 16 of 47 epochs still to come
+
+  what each reader can open, at the end
+    partner    31 of 47 epochs  follow
+    clinic     47 of 47 epochs  clinician
+    cohort      7 of 47 epochs  cohort
+
+  the property
+    nothing new          0 epochs gained after the stop   PASS
+    nothing recalled     31/31 previously held epochs still open   PASS
+    per-recipient        clinic unaffected: 47 of 47 epochs   PASS
+    revocation bites     partner holds 31 of 47, blind to 16   PASS
+
+  on the wire
+    key records       7.6 KB   85 wraps of 92 bytes
+    five readers      164 KB/year   granted throughout, against §7.2's estimate of 180
+```
+
+**Both halves of that are the promise.** A design where the revoked reader keeps
+reading is a broken revocation; one where their existing copy goes dark is
+claiming a recall it cannot perform, which
+[§11](docs/feasibility.md) says never to claim.
+
+It needs `cryptography` (X25519, ChaCha20-Poly1305, Ed25519), and it is
+**not reviewed cryptography** — standard primitives composed by hand, which is
+what stage 10.6's review gate exists to catch. It is also not a swarm: it writes
+files, and where those bytes go is a later stage.
+
 ## Next
 
 Stage order and reasoning are in
@@ -145,10 +191,14 @@ Stage order and reasoning are in
   is v1 as of 2026-09-08: UTC-day epochs, an in-band schema version, `tdd`
   removed, and ordering that two implementations agree on. Streams declare the
   version they conform to, so a v2 is detectable rather than discovered.
-- **Epoch sealing**, per §7.2: content key per UTC day, wrapped per grantee, and
-  the one property worth demonstrating first — *after revocation the reader
-  decrypts nothing new, and everything they already held still opens.*
-  Priced on real data: 24 KB of key records against 1.66 MB of history.
+- ~~**Epoch sealing**~~ — **done as the framework-neutral reference.**
+  [`tools/seal.py`](tools/seal.py) demonstrates the property on real history and
+  prices it at 164 KB/year for five readers, against §7.2's estimate of 180.
+- **Now port that to `p2panda-encryption` data mode**, which is what ships. The
+  reference above is the behavioural spec it has to match — and the open
+  question is whether rotation-on-removal gives per-epoch granularity or
+  something coarser. That is the one assumption §7.2 makes about the library
+  that nobody has tested.
 - **The dependency is checked and healthy** (2026-09-08): p2panda v0.7.1 shipped
   three weeks ago, and `p2panda-spaces` — the piece the plan called a blocker —
   is published rather than sitting on a branch. See [D2](docs/decisions.md).

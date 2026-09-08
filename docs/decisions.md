@@ -170,6 +170,29 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D10 · The sealing reference is per-recipient wrapping; p2panda is what ships
+
+**Settled.** §7.3 already said per-recipient wrapping is "the floor and it is
+sufficient" at five readers. `tools/seal.py` is that floor, built
+framework-neutrally for the same reason `canon.py` was: it demonstrates the
+property on real data today instead of gambling the demonstration on an
+unfamiliar 0.x API, and it prices the construction — 164 KB/year for five
+readers, against the 180 KB §7.2 estimated.
+
+**It is a reference, not a competitor.** The shipping key layer is
+`p2panda-encryption` data mode (D2). What this buys is that the port has a
+behavioural specification to match rather than a paragraph, and that anything
+p2panda does differently becomes a visible question about p2panda.
+
+*Reopens if:* p2panda's rotation-on-removal turns out not to give per-epoch
+granularity. Then the question is whether to keep this construction on top of
+p2panda's transport, or accept coarser revocation — and that is a decision about
+what to promise a person, not an implementation detail.
+
+⚠️ **Not reviewed cryptography.** Standard primitives composed by hand. Stage
+10.6 exists to catch exactly this, and nothing here should be described as
+reviewed until it has been.
+
 ---
 
 ## Open, and blocking nothing yet
