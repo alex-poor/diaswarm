@@ -29,3 +29,6 @@ local.properties
 .DS_Store
 .idea/
 *.swp
+
+# Rust spike build output
+/spike/*/target/

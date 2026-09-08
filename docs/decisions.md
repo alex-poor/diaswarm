@@ -40,7 +40,16 @@ Meadowcap gates sync, not rest.
 OpenMLS for the key layer — audited, an RFC, and its Delivery Service problem
 mostly dissolves because the subject's phone is the only writer of its own data.
 
-✅ **Checked 2026-09-08, and the condition is not met — the opposite.** v0.7.1
+⚠️ **One claim this decision rested on is now measured false.** feasibility.md
+§8.4 said the library could "withhold history from a researcher while granting it
+to a clinician", because history-on-join is a per-join choice. It is not:
+`add()` welcomes a joiner with the entire secret bundle, and a member added at
+the end of the spike opened every epoch including six from before it existed.
+**Time-scoped grants need one group per window**, which is more group management
+than the design assumed. This does not reverse D2 — the key layer is still the
+only one on offer — but it moves work into the integration.
+
+✅ **Cadence checked 2026-09-08, and that condition is not met — the opposite.** v0.7.1
 was published **21 August 2026, eighteen days ago**, with 0.5.0/0.6.0/0.7.0 in
 January, May and July of the same year. **`p2panda-spaces` is published** at
 0.7.1, and its tracking issue is closed. What remains open — documentation,
@@ -184,10 +193,17 @@ readers, against the 180 KB §7.2 estimated.
 behavioural specification to match rather than a paragraph, and that anything
 p2panda does differently becomes a visible question about p2panda.
 
-*Reopens if:* p2panda's rotation-on-removal turns out not to give per-epoch
-granularity. Then the question is whether to keep this construction on top of
-p2panda's transport, or accept coarser revocation — and that is a decision about
-what to promise a person, not an implementation detail.
+**Measured, 2026-09-08** (`spike/p2panda-seal`): p2panda 0.7.1 gives the same
+property, and its revocation is **finer** than the epoch — `remove()` rotates
+immediately rather than at the day boundary. So the reference's promise is the
+pessimistic one, which is the safe direction to be wrong in.
+
+*Reopens if:* the reference stays more expressive in a way that matters. It
+already is in one way — **per-recipient wrapping scopes history by which keys you
+wrapped, and p2panda's `add()` cannot scope history at all** (see D2). If windowed
+research grants become the flagship, that difference decides whether this
+construction rides on top of p2panda's transport rather than being replaced by
+its group.
 
 ⚠️ **Not reviewed cryptography.** Standard primitives composed by hand. Stage
 10.6 exists to catch exactly this, and nothing here should be described as

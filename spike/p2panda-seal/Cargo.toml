@@ -1,0 +1,10 @@
+[package]
+name = "p2panda-seal-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pinned exactly. This spike exists to find out what THIS release does, and a
+# version range would let the answer move underneath the finding.
+[dependencies]
+p2panda-encryption = { version = "=0.7.1", features = ["test_utils"] }

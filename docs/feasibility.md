@@ -551,10 +551,23 @@ kind of agreement worth trusting.
 
 **That is the requirement, described in the library's own terms.** Long-lived
 encrypted data on a replicated store; membership decides who can decrypt; removal
-rotates forward; a new reader can be given history deliberately. The "give
-joiners prior secrets" behaviour is exactly §7.2's time-scoping — and because it
-is a *choice* per join, the design can withhold history from a researcher while
-granting it to a clinician.
+rotates forward; a new reader is given prior secrets.
+
+⚠️ **The rest of that paragraph used to read "and because it is a *choice* per
+join, the design can withhold history from a researcher while granting it to a
+clinician." That was wrong, and it has been measured** —
+`spike/p2panda-seal/FINDINGS.md`. In 0.7.1 `add()` takes no subset argument and
+welcomes a joiner with the **whole** secret bundle: a member added at the end of
+the spike opened all ten epochs, including six from before it existed. The
+obvious workaround — trim the bundle, add, restore — produced a member with
+*zero* secrets rather than a windowed one.
+
+**Time-scoping therefore comes from group partitioning**, not from a per-join
+choice: a cohort with a 90-day window needs its own group, whose bundle only ever
+holds that window. That is §7.2's "purpose scoping is the same trick twice"
+applied to time as well — more groups to manage than this document assumed, and
+the one place where §7.3's per-recipient wrapping is strictly more expressive,
+since there a window is simply which keys you wrapped.
 
 `p2panda-auth` supplies layer 3 — a decentralised authorisation CRDT with
 per-member permissions, which is the signed grant record. `p2panda-spaces`
@@ -1027,9 +1040,18 @@ property today rather than gambling the demonstration on an unfamiliar 0.x API,
 and it is now **the behavioural specification the p2panda version has to match**.
 Anything p2panda does differently is a question about p2panda.
 
-**What remains, and it is the real question:** whether
-`p2panda-encryption`'s rotation-on-removal gives per-epoch granularity or
-something coarser. §7.2 assumes the former and nobody has checked.
+**Checked, and the answer is better than assumed.** `spike/p2panda-seal`
+measures 0.7.1 directly: the property holds (a member removed with four epochs
+still to come opens none of them and keeps all six it held), `update()` rotates
+without a membership change so a per-epoch key is expressible, and **`remove()`
+rotates immediately — so revocation is finer than the epoch**, not coarser. The
+reference's "they keep the rest of the epoch" is a pessimistic bound.
+
+**What it cost instead** was the history-scoping claim in §8.4, plus two
+practical notes: 0.7.1 needs **rustc ≥ 1.96** (an older toolchain silently
+resolves to 0.6.1 rather than failing — a trap the Android NDK chain inherits),
+and `EncryptionGroup` takes **six generic parameters** whose real implementations
+are the integration work this stage calls the gap.
 
 **Corrected.** This stage previously read "spike both tracks" and described a
 Holochain DNA with *a private entry type for records and an assigned `CapGrant`
