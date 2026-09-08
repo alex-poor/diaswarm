@@ -78,6 +78,10 @@ rows per reading, and the current rows account for *every distinct timestamp*:
 | snap_0721 | 10,498 | 5,435 | 5,435 |
 | androidaps2 | 1,708 | 854 | 854 |
 
+And after filtering, `rows == distinct timestamps == distinct 5-minute buckets`,
+ratio **1.000** on every snapshot — so there is no same-bucket duplication
+either, only version history.
+
 A version row is written when NSClient stamps a `nightscoutId`; the pair differs
 only in `version`, `referenceId` and that id.
 

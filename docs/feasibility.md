@@ -173,7 +173,8 @@ double-broadcast at ~1.85×. **Measured, it is not: it is AAPS version history.*
 | snap_0721 | 10,498 | 5,435 | 5,435 |
 | androidaps2 | 1,708 | 854 | 854 |
 
-The current rows account for **every distinct timestamp** on all four snapshots.
+The current rows account for **every distinct timestamp — and every distinct
+5-minute bucket, ratio 1.000** — on all four snapshots.
 A version row is written when NSClient stamps a `nightscoutId`; the pair differs
 only in `version`, `referenceId` and that id. Filter `referenceId IS NULL` and
 there are **zero duplicate CGM timestamps**, at a plausible **246.6/day**.
