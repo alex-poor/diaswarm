@@ -203,8 +203,12 @@ were the wrong reason to pick the first surface.
   peer.
 - **Windowing lands in the main path.** "A clinician gets the last 90 days" is a
   window, and D2's measurement says p2panda cannot scope history on join.
-- **The incumbent to beat is Nightscout, not Open Humans** — harder on
-  convenience, easier on custody. feasibility.md §11 states the pitch.
+- **The incumbent to beat is Nightscout, not Open Humans** — and on the
+  subject's own side this is *easier* on convenience, not harder: Nightscout
+  means a ~$5/month host plus a mandatory database, and a forced migration
+  whenever a platform drops a tier. This means a toggle in an app already
+  installed. The convenience losses are on the **follower** side — iOS above all
+  — and feasibility.md §11 has the table.
 
 *Reopens if:* the sovereignty argument turns out not to move anyone, and a
 research group turns out to be willing to fund or host. That is an adoption

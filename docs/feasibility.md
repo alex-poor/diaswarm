@@ -1230,20 +1230,49 @@ funder and a kaupapa; this has an incumbent that works, a community that already
 solved 80% of the problem in a way they are used to, and a real setup-friction
 disadvantage.
 
-**With personal sharing as the flagship (§10.0), the adoption case can no longer
-rest on a gap in the incumbent's features. It rests on custody.** Nightscout
-works. It also asks each person to run and fund a server, on a host that can read
-everything on it; it revokes everyone at once when it revokes anyone; and it
-keeps no record of who was given what. Against that:
+**With personal sharing as the flagship (§10.0), the adoption case rests on
+custody — and, correcting an earlier draft of this section, on convenience too.**
 
-> **No server to run or fund. Nobody who can read what they hold. Revocation per
-> person, by key. And a signed record of every grant and every withdrawal.**
+**An earlier version of this paragraph said the swarm was "a better story about
+custody and a worse story about convenience". That was wrong**, and wrong in the
+direction that flatters the incumbent. It ignored the largest convenience cost in
+Nightscout, which is the one thing this design removes outright.
 
-**That is a better story about custody and a worse story about convenience**, and
-the honest position is that it wins only with people for whom custody is the
-point — which is a smaller group than "people who use Nightscout", and is not
-nothing. Anyone selling it on features against an incumbent with years of
-follower apps, watch faces and alarms will lose, and should expect to.
+**What Nightscout actually asks of a person, in 2026.** A host — Heroku Eco or
+Railway at about **$5 a month** — plus a **mandatory database**, plus the
+configuration to wire them together. Or self-hosting on a NAS, a Pi or a Home
+Assistant box, which trades the fee for the operational burden. And it recurs:
+Salesforce ended Heroku's free plan in 2022 and thousands of people had to
+migrate an instance they did not want to be administering in the first place.
+**A person with diabetes is running a database in production so that their
+partner can see their glucose.**
+
+Against that, this design asks for a plugin toggle in an app already installed.
+
+So the comparison is not custody-versus-convenience. It is:
+
+| | Nightscout | This |
+|---|---|---|
+| **Server, database, monthly fee** | Yes, and a migration when a host changes its mind | **None** |
+| **Who can read it** | The host, and anyone with the URL and a token | **Nobody who was not granted a key** |
+| **Revoking one person** | Rotate `API_SECRET`; **everyone is revoked** | **Per person, by key** |
+| **Record of who you gave it to** | None | **Signed, public, tamper-evident** |
+| **iOS followers** | **Works** — it is a URL | **Cannot be a peer** (§9.5) |
+| **Ecosystem** | **Years of it** — follower apps, watch faces, clinic dashboards | Nothing yet |
+| **Losing your phone** | Data is on the server; log back in | Depends on multi-device and backup, both unfinished (§12.5, §10.4) |
+| **Someone to ask for help** | **Thousands of people** | Nobody |
+
+**The convenience losses are real but they are specific, and three of the four
+are the kind that close with work.** Ecosystem and support close with adoption;
+recovery closes with multi-device, which is §12.5 and has to be built anyway.
+**iOS is the one that does not close by itself**, and that is why §9.5 calls it
+the flagship's biggest single risk rather than a gap to concede.
+
+**The honest pitch is therefore stronger than the earlier draft allowed:** for
+the person whose data it is, this is *cheaper, simpler and more private* than
+what they run today. What it is currently worse at is the people they share
+with — an iPhone follower cannot participate, and none of the surrounding
+ecosystem exists. Sell it on the first and be straight about the second.
 
 The research commons stays worth building (§9.9) and stays the place where the
 strong audit claim is true. It is no longer the wedge.
