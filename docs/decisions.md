@@ -4,6 +4,11 @@ What is settled, why, and what evidence would reopen it. Reasoning lives in
 [feasibility.md](feasibility.md); this is the index so a decision is not quietly
 re-litigated six weeks from now.
 
+**`D1`–`D9` here are decisions. `RQ1`–`RQ10` in feasibility.md §8 are the
+requirements frameworks are judged against.** Both were `D` until a review found
+that `D3` meant *"audit is given up"* in this document and *"data survives for
+years"* in the other one — in two documents that cite each other on every page.
+
 ---
 
 ### D1 · Records are public ciphertext, not private and pull-only
@@ -35,10 +40,18 @@ Meadowcap gates sync, not rest.
 OpenMLS for the key layer — audited, an RFC, and its Delivery Service problem
 mostly dissolves because the subject's phone is the only writer of its own data.
 
+⚠️ **That condition may already be partly met, and this decision was taken
+without noticing.** The latest p2panda release is v0.7.1, August 2025 — thirteen
+months before this was written — and `p2panda-spaces` is still unreleased and on
+a branch. feasibility.md §8.4 states the date and draws no conclusion from it.
+**Re-check the cadence before the spike**, and treat the OpenMLS fallback as live
+rather than theoretical until someone has.
+
 *Watch:* proxy re-encryption (Umbral/TACo lineage). Uniquely allows granting
 access to already-published data without the subject's device participating,
 which is what a commons enrolling at scale would want. Too immature to build on;
-TACo is being forked and relaunched H2 2026.
+TACo is being forked and relaunched H2 2026 — **which is now**, so this is a
+thing to go and look at rather than a thing to wait for.
 
 ### D3 · Audit is given up, deliberately
 
@@ -54,18 +67,33 @@ act on it.
 organisation under an agreement, so the strong claim holds there — socially, not
 cryptographically.
 
-### D4 · Epoch keys, one day each
+### D4 · Epoch keys, one UTC day each
 
-**Settled** as the default; the length is a real choice, not a constant.
+**Settled, and now specified.** spec/records.md §5.1 freezes it:
+`epoch = floor(t / 86400000)`.
+
+**UTC, deliberately, and it costs something.** An epoch must have the same
+identity on every device — a local-midnight boundary is ambiguous across travel
+and DST, and two peers disagreeing about which epoch a record belongs to is a
+correctness problem in a replicated store. The price is that away from UTC the
+boundary falls inside the waking day (in NZ, near noon), which makes *"they keep
+the rest of the epoch"* harder to say plainly to the person deciding whether that
+is acceptable. A wording problem in one place against an ambiguity problem
+everywhere.
+
+*Reopens if:* asking real people about revocation granularity (below) shows the
+"rest of the epoch" promise is unsayable at a noon boundary. The fix would be a
+per-subject fixed offset, not local time.
 
 A content key per epoch, wrapped to each live grantee and published beside the
 data. Granting starts the wrapping; revoking stops it. This buys time-scoped
 access for free (give a researcher one year's keys), and it bounds what a revoked
 reader keeps to **one epoch**.
 
-Cost is irrelevant to the choice: five readers × daily epochs × ~100 bytes is
-about **180 KB a year** against 1–2 MB of data. **Choose on revocation
-granularity.** Nobody has yet asked a person whether "they keep up to 24 more
+**Cost is now measured, not estimated.** The reference snapshot spans 49 epochs:
+245 wraps for five readers, about **24 KB of key records beside 1.66 MB of
+data** — 179 KB/year against the 180 KB/year §7.2 predicted. So cost is
+irrelevant to the choice, as claimed. **Choose on revocation granularity.** Nobody has yet asked a person whether "they keep up to 24 more
 hours" is acceptable, and that is a question for people, not for this repo.
 
 ### D5 · The commons is a gateway, not a bigger phone
@@ -92,9 +120,18 @@ retracted rows (`isValid = 0`) are removed at the emit boundary, never
 downstream, because a consumer that takes the tables at face value over-counts
 insulin and carbs and biases every model fitted on them.
 
-Loop telemetry (`deviceStatus`, `apsResults`) is excluded by default: two thirds
-of the file, no clinical content, and the tables most likely to hold something
-nobody meant to share.
+Loop telemetry (`deviceStatus`, `apsResults`) is excluded: two thirds of the
+file, no clinical content, and the tables most likely to hold something nobody
+meant to share. There is no flag to re-include it — the record vocabulary is
+closed, and the flag that claimed to do this never did anything.
+
+**Units are normalised at the same boundary, for the same reason.** AAPS stores
+glucose values and temporary targets in mg/dL but profile blocks in whichever
+unit the user set, so an un-normalised stream carries the same kind of quantity a
+factor of 18 apart in two different records, separated only by a flag. That is
+the failure spec/records.md §2 exists to prevent, and it was live in the emitter
+until it was measured. A unit the emitter does not recognise is passed through
+untouched *and* marked, because a visible gap beats a plausible wrong number.
 
 ### D7 · The AAPS plugin is read-only, structurally
 
@@ -131,17 +168,17 @@ against a moving codebase.
 
 ## Open, and blocking nothing yet
 
-1. **Do grant records need to be private too?** A signed public record saying
-   *"S granted R"* discloses that R is your endocrinologist, and when you joined
-   and left a study. **The data is encrypted and the social graph is not.** This
-   pulls directly against the tamper-evidence D3 offers as the substitute for a
-   read log. *The sharpest unsolved problem in the design.*
-2. **Cohort re-identification.** A 5-minute CGM trace is close to a fingerprint.
-   The question an ethics committee asks first.
-3. **Multi-device.** A phone and a spare is the problem `p2panda-spaces` exists
-   to solve, and it is not optional — loop phones get replaced.
-4. **Delegation.** Diabetes has minors and has emergencies. The delegate for a
-   child is permanent; the delegate in an emergency is unplanned.
-5. **Who operates the commons**, and does being a named, revocable peer actually
-   change what an ethics committee thinks? That is the claim this design makes to
-   that audience and it has never been tested on one.
+One line per open question in [feasibility.md §12](feasibility.md), in its
+numbering, plus one this index adds. **This list previously held five of the
+seven and renumbered them**, which is how an open question stops being tracked.
+
+| §12 | Question | |
+|---|---|---|
+| **0** | **Do grant records need to be private too?** A signed public record saying *"S granted R"* discloses that R is your endocrinologist, and when you joined and left a study. **The data is encrypted and the social graph is not.** It pulls directly against the tamper-evidence D3 offers as the substitute for a read log | *The sharpest unsolved problem in the design* |
+| 1 | **Does MLS tolerate a Delivery Service that is offline half the day?** The commit chain has to survive Doze, a flat battery and a week in a drawer | Decides whether D2's fallback is real |
+| 2 | **Replicate or fetch**, per grant type rather than per architecture. A design that quietly picks one has picked the use case too | The D3 trade, applied case by case |
+| 3 | **What does a follower see when the phone has been dark six hours?** A swarm must distinguish *"nothing happened"* from *"nothing arrived"* | Nightscout answers this badly |
+| 4 | **Cohort re-identification.** A 5-minute CGM trace is close to a fingerprint | The question an ethics committee asks first |
+| 5 | **Multi-device.** A phone and a spare is the problem `p2panda-spaces` exists to solve, and it is not optional — loop phones get replaced | Blocked on the same gap as D2 |
+| 6 | **Delegation.** Diabetes has minors and has emergencies. The delegate for a child is permanent; the delegate in an emergency is unplanned | |
+| — | **Who operates the commons**, and does being a named, revocable peer actually change what an ethics committee thinks? That is the claim this design makes to that audience and it has never been tested on one | Not in §12; the gate on D5 |

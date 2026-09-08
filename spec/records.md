@@ -1,7 +1,13 @@
 # The canonical record stream
 
-**Status:** draft, and the thing to freeze first. Every later stage encodes
-against this; changing it once a peer exists costs a compatibility window.
+**Status: v1 — frozen, 2026-09-08.** Every later stage encodes against this.
+Changing it now costs a compatibility window, which is the point of freezing it:
+the sealing layer, the AAPS plugin and the commons gateway can all be built
+against a contract that will not move under them.
+
+A stream declares the version it conforms to, in its own first line (§5.2), so a
+v2 is a thing a consumer can detect rather than a thing it discovers by getting
+wrong answers.
 
 Produced by [`tools/canon.py`](../tools/canon.py). Consumed by the sealing layer,
 the AAPS plugin and the commons gateway.
@@ -14,21 +20,39 @@ One event, at one instant, as the device actually recorded it. Not a database
 row — see §3.
 
 ```json
-{"t":1782938503230,"k":"cgm","mgdl":163.0,"src":"Dexcom G6","trend":"FLAT"}
-{"t":1782938700000,"k":"bolus","u":1.25,"type":"NORMAL","basal":false}
-{"t":1782938700000,"k":"carb","g":30.0,"dur":0}
+{"k":"cgm","mgdl":163.0,"src":"Dexcom G6","t":1782938503230,"trend":"FLAT"}
+{"basal":false,"k":"bolus","t":1782938700000,"type":"NORMAL","u":1.25}
+{"g":30.0,"k":"carb","t":1782938700000}
 ```
+
+**Keys are sorted and field order is not semantic.** The canonical encoding
+sorts them so that two implementations emit byte-identical lines for the same
+record, which is what makes a stream diffable and hashable. Read records by
+name, never by position.
 
 - **`t`** — epoch milliseconds, UTC. The sort key and the only mandatory field
   besides `k`. Local time is a rendering concern; a stream that carries local
   time cannot be merged across a timezone change, and people travel.
 - **`k`** — the kind. A closed, versioned vocabulary (§2).
 - Everything else is per-kind and **optional**: a missing field means the device
-  did not report one, which is different from zero and must stay different.
+  did not report one, which is different from zero and must stay different. The
+  third line above is a carb entry the device gave **no** duration for — so it
+  carries no `dur` at all. A carb entry with a real duration of zero carries
+  `"dur":0`. An emitter that writes an explicit `null`, or that helpfully
+  substitutes a zero, has destroyed that distinction for every consumer
+  downstream.
 
-**Ordering** is by `(t, k)`. Ties are real — a bolus and its carbs share a
-timestamp — so `k` breaks them deterministically rather than leaving two peers to
-disagree about order.
+**Ordering** is by `(t, k)`, and ties break on the record's own canonical
+encoding. Ties are real — a bolus and its carbs share a timestamp, and two carb
+entries in one millisecond are possible — so `k` alone is not enough. Without the
+third key, equal-`(t, k)` records fall back to whatever order a database handed
+them over in, and two peers reading two snapshots of the same history order them
+differently. There is deliberately **no record id**: ordering does not need one,
+and a consumer that wants a handle can hash the canonical line (§7).
+
+**One line is not an event: the header** (§5.2). It carries `t = 0` so it sorts
+ahead of everything, and it is the only record in the vocabulary that describes
+the stream rather than something that happened.
 
 ## 2. Kinds
 
@@ -41,18 +65,57 @@ disagree about order.
 | `extbolus` | Extended bolus | `u`, `dur` |
 | `event` | Site change, sensor change, note, finger-stick | `type`, `dur`, `note`, `mgdl` |
 | `target` | Temporary target | `lo`, `hi`, `dur`, `why` |
-| `profile` | Profile switch, with the blocks | `name`, `pct`, `shift`, `dur`, `basal`, `isf`, `ic`, `target`, `unit` |
-| `tdd` | Total daily dose | `basal`, `bolus`, `total`, `g` |
+| `profile` | Profile switch, with the blocks | `name`, `pct`, `shift`, `dur`, `basal`, `isf`, `ic`, `target` |
+| `meta` | **The stream header, not an event** (§5.2) | `spec`, `epoch`, `unit` |
+
+**`tdd` was in this table and is not in v1.** Total daily dose is derived — a
+consumer holding boluses and basals computes it — and derived data in a stream is
+a second source of truth that will eventually disagree with the first. The
+measurement settled it: across five real snapshots AAPS had written **0, 0, 0, 1
+and 19 rows**. A consumer cannot rely on a field that is absent three times in
+five, so it has to compute the value anyway, and then it has two. Removing a kind
+before the freeze is free; after it costs a compatibility window.
+
+**`extbolus` stays and has never been exercised.** It is zero on all five
+snapshots, because this pump and configuration do not use extended boluses. That
+is an argument about one person's setup, not about the vocabulary — but the first
+real extended bolus to reach a consumer will be the first one this emitter has
+ever produced, and it should be treated that way.
 
 **Units are fixed and never carried per-record.** `mgdl` is mg/dL, `u` is units
 of insulin, `g` is grams, `dur` is minutes, `rate` is U/h when `abs` is true and
 percent otherwise. A stream that lets each record declare its own units is a
-stream where one mis-set flag becomes a tenfold dosing error in somebody's
+stream where one mis-set flag becomes a dosing-scale error in somebody's
 analysis.
 
-**`profile` carries the blocks, not just the name.** Without basal rates, ISF, IC
-and targets by time of day, a consumer cannot say what the loop was *trying* to
-do, and the insulin records become uninterpretable.
+**That rule cost the `profile` record its `unit` field, and it was not free.**
+AAPS stores `glucoseValues` and `temporaryTargets` in mg/dL always, but it
+stores *profile blocks in whichever unit the user set*. On this project's own
+reference snapshot that put `target.lo = 160.2` (mg/dL) and
+`profile.target[].lowTarget = 5` (mmol/L) in the same stream, meaning the same
+kind of quantity **a factor of 18.0182 apart**, distinguishable only by reading
+a flag on one of them. So the conversion happens **at the emit boundary**: ISF
+and target blocks are normalised to mg/dL using AAPS's own constant — the one
+the loop dosed on — and the record carries no unit.
+
+The one case that cannot be resolved is a `glucoseUnit` the emitter does not
+recognise. Those blocks are passed through untouched **and** carry `unit`, so a
+consumer meets an explicit *"this one is not normalised"* rather than a
+plausible wrong number. `--stats` names them.
+
+**`basal` (U/h) and `ic` (g/U) carry no glucose unit and are never scaled.**
+
+**`profile` carries the blocks, not just the name**, and carries them as
+**parsed arrays, not as strings**. AAPS stores each block column as a JSON
+string; passing it through verbatim would hand every consumer JSON inside JSON
+and charge for the escaping on every profile record. Anything that will not
+parse is carried verbatim rather than dropped — a profile without its blocks is
+uninterpretable, and losing one silently is worse than handing on a string
+somebody has to look at.
+
+Without basal rates, ISF, IC and targets by time of day, a consumer cannot say
+what the loop was *trying* to do, and the insulin records become
+uninterpretable.
 
 **`event.note` is free text a person typed.** It is the field most likely to name
 a third party, and anything that narrows a grant should narrow this first.
@@ -88,8 +151,14 @@ only in `version`, `referenceId` and that id.
 > **Correction to an earlier belief.** This doubling was previously attributed to
 > an xDrip double-broadcast, at ~1.85x. It is not — it is version history, on
 > every snapshot checked. Once `referenceId IS NULL` is applied there are **zero
-> duplicate CGM timestamps**, and the rate falls to a plausible 246.6/day against
-> the 288 a 5-minute sensor can produce.
+> duplicate CGM timestamps**, and the rate falls to **272.4/day — 95% of the 288**
+> a 5-minute sensor can produce, which is ordinary sensor uptime.
+>
+> **A second correction, to the correction.** That rate was first reported here
+> as 246.6/day, which divided the CGM count by the span of the *whole stream*.
+> The stream starts 4.6 days before the sensor produced anything, so the figure
+> counted days on which no CGM existed. A rate is only a rate over the period the
+> thing was running.
 
 ### 3.2 Retracted rows — `isValid = 0`
 
@@ -112,9 +181,56 @@ MB in the reference snapshot. Loop telemetry: Nightscout plumbing and algorithm
 debug. They triple the payload for no clinical content and are the tables most
 likely to hold something nobody meant to share.
 
-`--include-telemetry` exists for debugging a loop, not for sharing a history.
+There is no flag to include them. There was one — `--include-telemetry` — and it
+never did anything but print a warning claiming it had. Loop telemetry is not in
+the vocabulary in §2 at all, so a flag that injected it would emit records
+outside the contract this document exists to fix; dumping it is a job for
+`sqlite3`.
 
-## 5. Encoding
+## 5. Epochs, and the header
+
+### 5.1 An epoch is a UTC day
+
+**The unit of key custody, not of storage.** One content key per epoch, wrapped
+to each live grantee (feasibility.md §7.2); revoking stops the wrapping, so what
+a revoked reader keeps is bounded by the epoch length.
+
+```
+epoch = floor(t / 86400000)
+```
+
+**UTC, and the cost of that is named.** An epoch has to have the same identity on
+every device: a local-midnight boundary is ambiguous across travel and DST, and
+two peers disagreeing about which epoch a record belongs to is a correctness
+problem in a replicated store, not a cosmetic one. The price is that away from
+UTC the boundary falls inside the waking day — in NZ, near noon — which makes
+*"they keep the rest of the epoch"* harder to say plainly to a person. That is a
+wording problem in one place, against an ambiguity problem everywhere.
+
+**Measured, on the reference snapshot:** 49 epochs, so 245 key wraps for five
+readers — about **24 KB of key records beside 1.66 MB of data**, which is
+179 KB/year against the 180 KB/year feasibility.md §7.2 predicted.
+
+### 5.2 The header declares what a consumer cannot infer
+
+The first line of an encoded stream:
+
+```json
+{"epoch":"utc-day","k":"meta","spec":1,"t":0,"unit":"mgdl"}
+```
+
+- **`spec`** — the version of this document the stream conforms to.
+- **`epoch`** — how epochs are cut, so the sealing layer and a reader agree
+  without a side channel.
+- **`unit`** — that **every** glucose quantity in the stream is mg/dL, *including
+  the profile blocks*, which AAPS itself stores in the user's own unit.
+
+**The third one is why this exists.** After §2's normalisation a normalised
+stream and an un-normalised one are indistinguishable by inspection — the numbers
+are simply eighteen times apart — and a consumer that guesses wrong is wrong by
+a dosing scale factor. A stream that carries insulin should say what it is.
+
+## 6. Encoding
 
 **NDJSON is the POC format, not the wire format.** It was chosen so a stream can
 be eyeballed, diffed and piped.
@@ -124,22 +240,34 @@ gzip stands in for it as an upper bound:
 
 ```
 1.66 MB ndjson → 0.19 MB gzip   over 48.5 days
-12.5 MB/year   → 1.5 MB/year    projected
+12.4 MB/year   → 1.5 MB/year    projected
 ```
+
+Measured on the reference snapshot: 19,128 records, 1,655,863 bytes of NDJSON,
+194,518 gzipped. The 48.5 days is the span of the **whole stream**; the CGM in it
+covers 44.0 of those days (§3.3).
 
 **Treat the record shape as the contract and the encoding as replaceable.**
 
-## 6. Still to decide
+## 7. Still open, after v1
 
-1. **Epoch boundaries.** Where a day starts, and in whose timezone. UTC is
-   simplest and puts the boundary in the middle of the night for nobody in
-   particular; local time makes epochs ambiguous across travel.
-2. **A record id.** Currently a record is identified by `(t, k)`, which is
-   unique in every snapshot checked but is not guaranteed to be — two carb
-   entries in the same millisecond are possible, if unlikely.
-3. **Schema version in-band.** Nothing currently says which version of this
-   document a stream conforms to. It should, before there is a second
-   implementation.
-4. **Whether `tdd` belongs at all.** It is derived — a consumer holding boluses
-   and basals can compute it — and derived data in a stream is a second source
-   of truth that will eventually disagree with the first.
+**Settled by v1**, and recorded here so they are not re-opened by accident:
+epoch boundaries (§5.1, UTC), the schema version (§5.2, in-band), `tdd` (§2,
+removed), and record ordering (§1, canonical-encoding tie-break, no id).
+
+What remains:
+
+1. **A stable record id, for the things ordering does not cover.** Citation —
+   *"this finding rests on these records"* — and any future notion of retraction
+   both want one. A consumer that needs a handle today can hash the canonical
+   line, which is free and requires no agreement; what does not exist is a
+   *stable* id that survives the record being re-encoded under a v2. Deferred
+   deliberately: adding a field is a version bump, and nothing needs it yet.
+2. **What a v2 is allowed to do.** The version number is now declared, and
+   nothing says what a consumer should do when it meets a number it does not
+   know. Refusing is safe and useless; proceeding is useful and unsafe. This
+   wants deciding before there is a second implementation, not after.
+3. **`event.note` and the grant that narrows it.** The note is free text a person
+   typed, and §2 already says it is the field most likely to name a third party.
+   Nothing yet expresses *"this grant covers the stream without the notes"*,
+   which is the narrowing a person is most likely to want first.

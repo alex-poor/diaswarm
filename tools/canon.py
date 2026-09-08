@@ -21,12 +21,21 @@ WHY THIS EXISTS AT ALL, rather than "just sync the tables".
     2. INVALIDATED ROWS.  `isValid = 0` means the user or the loop retracted
        it. It stays in the table.
 
-    3. CGM DOUBLE-BROADCAST.  xDrip broadcasts can arrive more than once, at
-       ~1.85x on this project's own data — 544 readings a day against the 288
-       a 5-minute sensor can physically produce. Nothing in the schema marks
-       them as duplicates; they differ only by `id`.
+    3. CGM OUTSIDE ITS BUCKET.  One reading per five minutes, keeping the
+       first — the one the loop actually saw and acted on.
 
-  Ship the tables raw and a downstream model sees roughly 1.9x the real insulin
+  CORRECTION, 2026-09-08.  Hazard 3 was previously written here as an xDrip
+  double-broadcast at ~1.85x: 544 readings a day against the 288 a 5-minute
+  sensor can physically produce. Measured across four snapshots, it is not.
+  It is hazard 1 — version history — on every one of them. Once
+  `referenceId IS NULL` is applied there are zero duplicate CGM timestamps and
+  zero same-bucket duplicates, at 272.4 readings/day — 95% of the 288 a 5-minute
+  sensor can produce, which is ordinary sensor uptime. The debounce
+  stays as defence in depth, because a genuinely double-broadcasting source
+  would otherwise reach consumers unnoticed and the check is free.
+  See spec/records.md §3.1 for the four-snapshot table.
+
+  Ship the tables raw and a downstream model sees roughly 2x the real insulin
   and carbs, which biases every fit in the same direction. Canonicalisation is
   therefore part of the protocol, not a consumer's problem.
 
@@ -36,8 +45,9 @@ WHAT IS EXCLUDED, AND WHY IT MATTERS MORE THAN IT SOUNDS.
   MB in the reference snapshot — and they are loop telemetry: Nightscout
   plumbing and algorithm debug. Carrying them triples the payload for no
   clinical content, and they are the tables most likely to contain something
-  nobody meant to share. Off by default; --include-telemetry if you are
-  debugging the loop rather than sharing a history.
+  nobody meant to share. They are not in the record vocabulary at all — the
+  canonical stream is a closed set of kinds (spec/records.md §2) — so dumping
+  loop telemetry is a job for `sqlite3`, not for this tool.
 
 Usage:
     tools/canon.py SNAPSHOT.db --stats
@@ -59,8 +69,40 @@ from pathlib import Path
 # hardware rather than a tuning knob.
 CGM_BUCKET_MS = 5 * 60 * 1000
 
-# Loop telemetry. Excluded by default — see the module docstring.
-TELEMETRY = ("deviceStatus", "apsResults")
+# The version of spec/records.md this emitter conforms to. Declared in the
+# stream's own header, because after glucose normalisation a consumer cannot
+# otherwise tell a normalised stream from an un-normalised one by looking at it.
+SPEC_VERSION = 1
+
+# One epoch, one content key (feasibility.md §7.2). UTC so that an epoch has the
+# same identity on every device: a local-midnight boundary is ambiguous across
+# travel and DST, and two peers disagreeing about which epoch a record belongs
+# to is a correctness problem in a replicated store, not a cosmetic one. The
+# cost is real and named — away from UTC the boundary falls inside the waking
+# day, so "they keep the rest of the epoch" is harder to say plainly.
+EPOCH_MS = 24 * 60 * 60 * 1000
+EPOCH_BASIS = "utc-day"
+
+# AAPS's own constant (Constants.MMOLL_TO_MGDL), not the textbook 18. Profile
+# blocks are stored in whichever unit the user set, so converting with the same
+# constant the loop used is what reproduces the numbers it actually dosed on.
+MMOLL_TO_MGDL = 18.0182
+
+# Profiles whose glucoseUnit was neither MGDL nor MMOL, collected for the
+# report. Their blocks cannot be normalised, so they carry `unit` and the
+# ambiguity is made visible rather than guessed at.
+UNKNOWN_UNITS: list[str] = []
+
+# Every table the canonical stream is built from. One list, because extract()
+# and report() drifting apart is how a table quietly stops being counted.
+TABLES = (
+    "glucoseValues", "boluses", "carbs", "temporaryBasals", "therapyEvents",
+    "temporaryTargets", "extendedBoluses", "profileSwitches",
+)
+
+# Tables _rows() could not read, collected for the report. A schema mismatch
+# that only prints to stderr is a kind silently missing from the output.
+SKIPPED: list[tuple[str, str]] = []
 
 
 class Kind:
@@ -74,7 +116,9 @@ class Kind:
     EVENT = "event"
     TARGET = "target"
     PROFILE = "profile"
-    TDD = "tdd"
+
+    # Not an event: the stream's own header. See header().
+    META = "meta"
 
 
 def _rows(db: sqlite3.Connection, table: str, columns: str) -> list[sqlite3.Row]:
@@ -96,15 +140,22 @@ def _rows(db: sqlite3.Connection, table: str, columns: str) -> list[sqlite3.Row]
         )
         return cur.fetchall()
     except sqlite3.OperationalError as e:
+        SKIPPED.append((table, str(e)))
         print(f"  skip {table}: {e}", file=sys.stderr)
         return []
 
 
 def _dropped(db: sqlite3.Connection, table: str) -> tuple[int, int]:
-    """How many rows the two filters removed, for the stats report."""
+    """How many rows each filter removed, for the stats report.
+
+    The two counts are made disjoint — a retracted row that is also a version
+    row is counted once, as a version row. They are printed as a breakdown of
+    one total, and a breakdown whose parts overlap is a wrong total.
+    """
     try:
         invalid = db.execute(
-            f"SELECT count(*) FROM {table} WHERE isValid = 0"  # noqa: S608
+            f"SELECT count(*) FROM {table} "  # noqa: S608
+            "WHERE isValid = 0 AND referenceId IS NULL"
         ).fetchone()[0]
         versioned = db.execute(
             f"SELECT count(*) FROM {table} WHERE referenceId IS NOT NULL"  # noqa: S608
@@ -112,6 +163,104 @@ def _dropped(db: sqlite3.Connection, table: str) -> tuple[int, int]:
         return invalid, versioned
     except sqlite3.OperationalError:
         return 0, 0
+
+
+def _rec(**fields) -> dict:
+    """Build a record, dropping fields the device did not report.
+
+    A missing field and a zero are different facts — a carb entry with no
+    duration is not a carb entry with a duration of zero — and §1 of the spec
+    makes that distinction load-bearing. Emitting an explicit null for every
+    unreported field erases it, and pays for the null on every record of every
+    day for a decade.
+    """
+    return {k: v for k, v in fields.items() if v is not None}
+
+
+def _blocks(raw, scale: float = 1.0, fields: tuple[str, ...] = ()):
+    """Parse a profile block column, which AAPS stores as a JSON string.
+
+    Passed through as a string it would reach consumers as JSON inside JSON,
+    forcing a second parse and paying for the escaping. Anything unparseable is
+    carried verbatim rather than dropped: a profile without its blocks is
+    uninterpretable, and losing one silently is worse than handing a consumer a
+    string it has to look at.
+
+    `scale` and `fields` normalise the glucose-bearing blocks to mg/dL — see
+    _profile_scale(). Basal (U/h) and IC (g/U) carry no glucose unit and are
+    never scaled.
+    """
+    if raw is None:
+        return None
+    try:
+        blocks = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return raw
+    if scale == 1.0 or not isinstance(blocks, list):
+        return blocks
+    for b in blocks:
+        if not isinstance(b, dict):
+            continue
+        for f in fields:
+            if isinstance(b.get(f), (int, float)):
+                b[f] = round(b[f] * scale, 1)
+    return blocks
+
+
+def _profile_scale(unit) -> tuple[float, str | None]:
+    """How to get this profile's blocks into mg/dL, and what to admit if we can't.
+
+    THE HAZARD THIS EXISTS FOR. `glucoseValues.value` and
+    `temporaryTargets.{low,high}Target` are stored in mg/dL always, but profile
+    blocks are stored in whatever unit the user set. Emitting both untouched
+    puts a target of 108 (mg/dL) and a target of 5 (mmol/L) in the same stream
+    meaning nearly the same thing — a factor of eighteen apart — which is
+    exactly the failure §2 of the spec forbids: one mis-read unit flag becoming
+    a dosing-scale error in somebody's analysis.
+
+    So the conversion happens here, at the emit boundary, and the record carries
+    no unit. An unrecognised unit is the one case that cannot be resolved: those
+    blocks are emitted untouched WITH a `unit` field, so a consumer sees an
+    explicit "this one is not normalised" rather than a plausible wrong number.
+    """
+    u = (unit or "").strip().upper()
+    if u in ("MGDL", "MG/DL", "MGDL/L"):
+        return 1.0, None
+    if u in ("MMOL", "MMOLL", "MMOL/L"):
+        return MMOLL_TO_MGDL, None
+    UNKNOWN_UNITS.append(unit if unit is not None else "<null>")
+    return 1.0, unit
+
+
+def epoch_of(t: int) -> int:
+    """Which epoch a timestamp falls in. The unit of key custody, not of storage."""
+    return t // EPOCH_MS
+
+
+def header() -> dict:
+    """The first line of an encoded stream. The only record that is not an event.
+
+    It carries `t` and `k` like everything else, and `t` is 0 so that it sorts
+    ahead of every real record if anything ever re-sorts the stream. What it
+    declares is the three things a consumer cannot work out by looking:
+
+      spec   which version of spec/records.md this conforms to
+      epoch  how epochs are cut, so the sealing layer and a reader agree
+      unit   that every glucose quantity in the stream is mg/dL, INCLUDING the
+             profile blocks, which AAPS itself stores in the user's own unit
+    """
+    return {
+        "t": 0,
+        "k": Kind.META,
+        "spec": SPEC_VERSION,
+        "epoch": EPOCH_BASIS,
+        "unit": "mgdl",
+    }
+
+
+def _canon_json(record: dict) -> str:
+    """The one canonical serialisation of a record. Also the tie-break in sort."""
+    return json.dumps(record, separators=(",", ":"), sort_keys=True)
 
 
 def _round(value, digits: int):
@@ -125,62 +274,62 @@ def _round(value, digits: int):
     return None if value is None else round(value, digits)
 
 
-def extract(db: sqlite3.Connection, include_telemetry: bool = False) -> list[dict]:
+def extract(db: sqlite3.Connection) -> list[dict]:
     """Build the canonical record list from an AAPS database."""
     out: list[dict] = []
 
     for r in _rows(db, "glucoseValues", "timestamp, value, trendArrow, sourceSensor"):
         out.append(
-            {
-                "t": r["timestamp"],
-                "k": Kind.CGM,
-                "mgdl": _round(r["value"], 1),
-                "trend": r["trendArrow"],
-                "src": r["sourceSensor"],
-            }
+            _rec(
+                t=r["timestamp"],
+                k=Kind.CGM,
+                mgdl=_round(r["value"], 1),
+                trend=r["trendArrow"],
+                src=r["sourceSensor"],
+            )
         )
 
     for r in _rows(db, "boluses", "timestamp, amount, type, isBasalInsulin"):
         out.append(
-            {
-                "t": r["timestamp"],
-                "k": Kind.BOLUS,
-                "u": _round(r["amount"], 3),
-                "type": r["type"],
-                "basal": bool(r["isBasalInsulin"]),
-            }
+            _rec(
+                t=r["timestamp"],
+                k=Kind.BOLUS,
+                u=_round(r["amount"], 3),
+                type=r["type"],
+                basal=bool(r["isBasalInsulin"]),
+            )
         )
 
     for r in _rows(db, "carbs", "timestamp, amount, duration"):
         out.append(
-            {
-                "t": r["timestamp"],
-                "k": Kind.CARB,
-                "g": _round(r["amount"], 1),
-                "dur": r["duration"] or 0,
-            }
+            _rec(
+                t=r["timestamp"],
+                k=Kind.CARB,
+                g=_round(r["amount"], 1),
+                dur=r["duration"],
+            )
         )
 
     for r in _rows(db, "temporaryBasals", "timestamp, type, isAbsolute, rate, duration"):
         out.append(
-            {
-                "t": r["timestamp"],
-                "k": Kind.TBR,
-                "rate": _round(r["rate"], 3),
-                "abs": bool(r["isAbsolute"]),
-                "dur": r["duration"],
-                "type": r["type"],
-            }
+            _rec(
+                t=r["timestamp"],
+                k=Kind.TBR,
+                rate=_round(r["rate"], 3),
+                abs=bool(r["isAbsolute"]),
+                dur=r["duration"],
+                type=r["type"],
+            )
         )
 
     for r in _rows(db, "extendedBoluses", "timestamp, amount, duration"):
         out.append(
-            {
-                "t": r["timestamp"],
-                "k": Kind.EXT_BOLUS,
-                "u": _round(r["amount"], 3),
-                "dur": r["duration"],
-            }
+            _rec(
+                t=r["timestamp"],
+                k=Kind.EXT_BOLUS,
+                u=_round(r["amount"], 3),
+                dur=r["duration"],
+            )
         )
 
     # `note` is free text a person typed. It is carried because a site change or
@@ -189,73 +338,63 @@ def extract(db: sqlite3.Connection, include_telemetry: bool = False) -> list[dic
     # narrows a grant should narrow this first.
     for r in _rows(db, "therapyEvents", "timestamp, duration, type, note, glucose"):
         out.append(
-            {
-                "t": r["timestamp"],
-                "k": Kind.EVENT,
-                "type": r["type"],
-                "dur": r["duration"] or 0,
-                "note": r["note"] or None,
-                "mgdl": _round(r["glucose"], 1),
-            }
+            _rec(
+                t=r["timestamp"],
+                k=Kind.EVENT,
+                type=r["type"],
+                dur=r["duration"],
+                note=r["note"] or None,
+                mgdl=_round(r["glucose"], 1),
+            )
         )
 
     for r in _rows(db, "temporaryTargets", "timestamp, reason, highTarget, lowTarget, duration"):
         out.append(
-            {
-                "t": r["timestamp"],
-                "k": Kind.TARGET,
-                "lo": _round(r["lowTarget"], 1),
-                "hi": _round(r["highTarget"], 1),
-                "dur": r["duration"],
-                "why": r["reason"],
-            }
+            _rec(
+                t=r["timestamp"],
+                k=Kind.TARGET,
+                lo=_round(r["lowTarget"], 1),
+                hi=_round(r["highTarget"], 1),
+                dur=r["duration"],
+                why=r["reason"],
+            )
         )
 
     # Blocks are the profile itself (basal rates, ISF, IC, targets by time of
     # day). Without them a consumer cannot say what the loop was *trying* to do,
     # which makes the insulin records uninterpretable.
+    # The profile's glucose unit decides the scale; it is applied here and the
+    # unit is not carried onward. See _profile_scale().
     for r in _rows(
         db,
         "profileSwitches",
         "timestamp, profileName, percentage, timeshift, duration, "
         "basalBlocks, isfBlocks, icBlocks, targetBlocks, glucoseUnit",
     ):
+        scale, unresolved = _profile_scale(r["glucoseUnit"])
         out.append(
-            {
-                "t": r["timestamp"],
-                "k": Kind.PROFILE,
-                "name": r["profileName"],
-                "pct": r["percentage"],
-                "shift": r["timeshift"],
-                "dur": r["duration"],
-                "basal": r["basalBlocks"],
-                "isf": r["isfBlocks"],
-                "ic": r["icBlocks"],
-                "target": r["targetBlocks"],
-                "unit": r["glucoseUnit"],
-            }
+            _rec(
+                t=r["timestamp"],
+                k=Kind.PROFILE,
+                name=r["profileName"],
+                pct=r["percentage"],
+                shift=r["timeshift"],
+                dur=r["duration"],
+                basal=_blocks(r["basalBlocks"]),
+                isf=_blocks(r["isfBlocks"], scale, ("amount",)),
+                ic=_blocks(r["icBlocks"]),
+                target=_blocks(r["targetBlocks"], scale, ("lowTarget", "highTarget")),
+                unit=unresolved,
+            )
         )
 
-    for r in _rows(db, "totalDailyDoses", "timestamp, basalAmount, bolusAmount, totalAmount, carbs"):
-        out.append(
-            {
-                "t": r["timestamp"],
-                "k": Kind.TDD,
-                "basal": _round(r["basalAmount"], 2),
-                "bolus": _round(r["bolusAmount"], 2),
-                "total": _round(r["totalAmount"], 2),
-                "g": _round(r["carbs"], 1),
-            }
-        )
-
-    if include_telemetry:
-        print(
-            "  WARNING: telemetry included. deviceStatus and apsResults are loop "
-            "debug, not history — see the module docstring.",
-            file=sys.stderr,
-        )
-
-    out.sort(key=lambda rec: (rec["t"], rec["k"]))
+    # (t, k) is the spec's order, and it is not guaranteed unique — two carb
+    # entries in one millisecond are possible. Ties therefore break on the
+    # record's own canonical encoding: every implementation can compute it and
+    # none has to agree in advance. Without it, equal-(t, k) records fall back
+    # to whatever order the database handed them over in, and two peers reading
+    # two snapshots of the same history can order them differently.
+    out.sort(key=lambda rec: (rec["t"], rec["k"], _canon_json(rec)))
     return out
 
 
@@ -297,10 +436,7 @@ def encode(records: list[dict]) -> bytes:
     stands in for that until it exists. Anything downstream should treat the
     record SHAPE as the contract and the encoding as replaceable.
     """
-    return b"".join(
-        json.dumps(r, separators=(",", ":"), sort_keys=True).encode() + b"\n"
-        for r in records
-    )
+    return b"".join(_canon_json(r).encode() + b"\n" for r in [header(), *records])
 
 
 def report(db: sqlite3.Connection, records: list[dict], cgm_dropped: int, blob: bytes) -> None:
@@ -315,12 +451,8 @@ def report(db: sqlite3.Connection, records: list[dict], cgm_dropped: int, blob: 
     print(f"    {'TOTAL':<10} {len(records):>8,}", file=sys.stderr)
 
     print("\n  dropped", file=sys.stderr)
-    tables = [
-        "glucoseValues", "boluses", "carbs", "temporaryBasals", "therapyEvents",
-        "temporaryTargets", "extendedBoluses", "profileSwitches", "totalDailyDoses",
-    ]
     tot_inv = tot_ver = 0
-    for t in tables:
+    for t in TABLES:
         inv, ver = _dropped(db, t)
         tot_inv += inv
         tot_ver += ver
@@ -328,17 +460,65 @@ def report(db: sqlite3.Connection, records: list[dict], cgm_dropped: int, blob: 
     print(f"    {'version':<10} {tot_ver:>8,}   referenceId IS NOT NULL", file=sys.stderr)
     print(f"    {'cgm dup':<10} {cgm_dropped:>8,}   second+ reading in a 5-min bucket", file=sys.stderr)
 
+    # Per DAY OF CGM, not per day of stream. The stream starts at the first
+    # record of any kind, and on the reference snapshot that is 4.6 days before
+    # the sensor produced anything — dividing by the whole span reports a rate
+    # for days on which no CGM existed, and understates the real one by 10%.
     cgm = kinds.get(Kind.CGM, 0)
     if cgm:
-        per_day = cgm / days
+        cgm_t = [r["t"] for r in records if r["k"] == Kind.CGM]
+        cgm_days = (cgm_t[-1] - cgm_t[0]) / 86_400_000
+        per_day = cgm / cgm_days if cgm_days >= 1 else 0
+        if cgm_days >= 1:
+            print(
+                f"\n  cgm     {per_day:>6.1f}/day after debounce over {cgm_days:.1f} "
+                f"days of CGM\n          ({per_day / 288 * 100:.0f}% of the 288 a "
+                f"5-minute sensor can produce)",
+                file=sys.stderr,
+            )
+        else:
+            # A rate from under a day of data is noise wearing a decimal point.
+            print(
+                f"\n  cgm     {cgm:,} readings over {cgm_days * 24:.1f} hours — too "
+                f"short a span to quote a daily rate",
+                file=sys.stderr,
+            )
+        if cgm_dropped:
+            # Nothing measured has ever reached this branch — see the module
+            # docstring. If it fires, the source really is broadcasting twice.
+            ratio = (cgm + cgm_dropped) / cgm
+            print(
+                f"          raw was {ratio:.2f}x that — a source broadcasting "
+                f"more than once per bucket",
+                file=sys.stderr,
+            )
+
+    if UNKNOWN_UNITS:
         print(
-            f"\n  cgm     {per_day:>6.1f}/day after debounce "
-            f"(a 5-min sensor can produce 288)",
+            f"\n  UNRECOGNISED GLUCOSE UNIT on {len(UNKNOWN_UNITS)} profile(s): "
+            f"{', '.join(sorted(set(UNKNOWN_UNITS)))}\n"
+            "  Their blocks are NOT normalised to mg/dL and carry `unit` to say so.",
             file=sys.stderr,
         )
-        if cgm_dropped:
-            ratio = (cgm + cgm_dropped) / cgm
-            print(f"          raw was {ratio:.2f}x that — the double-broadcast", file=sys.stderr)
+
+    if SKIPPED:
+        print(
+            "\n  NOT READ — these tables are missing from the stream, and a kind\n"
+            "  absent from `kept` above may be absent for this reason rather than\n"
+            "  because nothing happened:",
+            file=sys.stderr,
+        )
+        for table, err in SKIPPED:
+            print(f"    {table:<20} {err}", file=sys.stderr)
+
+    if records:
+        epochs = epoch_of(records[-1]["t"]) - epoch_of(records[0]["t"]) + 1
+        print(
+            f"\n  epochs  {epochs:>7,}   UTC days — {epochs * 5:,} key wraps for five "
+            f"readers,\n          about {epochs * 5 * 100 / 1024:.0f} KB of key records "
+            f"beside {len(blob) / 1e6:.2f} MB of data",
+            file=sys.stderr,
+        )
 
     gz = gzip.compress(blob, 9)
     print(
@@ -347,12 +527,20 @@ def report(db: sqlite3.Connection, records: list[dict], cgm_dropped: int, blob: 
         f"   over {days:.1f} days",
         file=sys.stderr,
     )
-    print(
-        f"  year    {len(blob) / 1e6 * 365 / days:>7.1f} MB ndjson"
-        f"   {len(gz) / 1e6 * 365 / days:>6.1f} MB gzip"
-        f"   projected",
-        file=sys.stderr,
-    )
+    if days >= 1:
+        print(
+            f"  year    {len(blob) / 1e6 * 365 / days:>7.1f} MB ndjson"
+            f"   {len(gz) / 1e6 * 365 / days:>6.1f} MB gzip"
+            f"   projected",
+            file=sys.stderr,
+        )
+    else:
+        # Projecting a year from an hour is how §4's original estimate went
+        # wrong in the first place. Refuse rather than print it.
+        print(
+            "  year    not projected — the stream spans less than a day",
+            file=sys.stderr,
+        )
     print(
         "\n  The gzip column is the number docs/feasibility.md §4 rests on.\n"
         "  A real delta-and-varint encoding should beat it.",
@@ -365,7 +553,6 @@ def main() -> int:
     ap.add_argument("db", type=Path, help="AAPS SQLite snapshot (copy the -wal too)")
     ap.add_argument("-o", "--out", type=Path, help="write NDJSON here (default: stdout)")
     ap.add_argument("--stats", action="store_true", help="report to stderr and write nothing")
-    ap.add_argument("--include-telemetry", action="store_true", help="see the docstring first")
     args = ap.parse_args()
 
     if not args.db.exists():
@@ -377,7 +564,7 @@ def main() -> int:
     db.row_factory = sqlite3.Row
 
     print(f"  read {args.db}", file=sys.stderr)
-    records = extract(db, args.include_telemetry)
+    records = extract(db)
     records, cgm_dropped = debounce_cgm(records)
     blob = encode(records)
 

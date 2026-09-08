@@ -59,7 +59,7 @@ favoured the preferred answer. *"Documenting a confound is not controlling for
 it."* Worth re-reading before any claim here about battery or bandwidth.
 
 **The honesty section.** `seeder-architecture.md` §10 — "what is true", "what must
-never be said", "the stretch, named". Copy the structure verbatim. §10 of this
+never be said", "the stretch, named". Copy the structure verbatim. §11 of this
 document is that section for this project.
 
 **The adoption ladder.** `consent-usage-layer` — *lead with usage, not consent*.
@@ -98,7 +98,7 @@ exists to serve the requirement it reverses.
 | | whanau_voice | Diabetes swarm |
 |---|---|---|
 | Principle | **P3 — nothing promises the kōrero survives** | **The value is entirely longitudinal** |
-| Requirement | **R2 — replication must not extend a lifetime** | **D3 — data must survive for years** |
+| Requirement | **R2 — replication must not extend a lifetime** | **RQ3 — data must survive for years** |
 | Mechanism | `age` beside `hash` in `LIST`; `preserve_age` carries the original clock across a copy; the sweep deletes | The sweep is the thing you must *not* build |
 | Why | No permanent custody to fund; the participant's download is the lasting copy | Every finding in this project came from history: the site-change effect from six events, the ISF anchor fix from 25 days, TddAdapterV2 from 7-day windows |
 
@@ -133,7 +133,11 @@ Hypercore's rejection on R2 does not carry — see §8.2.
 ## 4. The volumes, measured
 
 From the largest real snapshot in `realdata/` — 44 days of live loop, this
-project's own data.
+project's own data. That directory is **outside this repo**, in the working
+directory this project was split out of; `.gitignore` refuses `*.db` and real
+snapshots never enter version control. `tools/mkfixture.py` builds a synthetic
+database with the same hazards, so everything below can be re-run by someone who
+has no diabetes data.
 
 | | rows | on disk |
 |---|---|---|
@@ -177,7 +181,15 @@ The current rows account for **every distinct timestamp — and every distinct
 5-minute bucket, ratio 1.000** — on all four snapshots.
 A version row is written when NSClient stamps a `nightscoutId`; the pair differs
 only in `version`, `referenceId` and that id. Filter `referenceId IS NULL` and
-there are **zero duplicate CGM timestamps**, at a plausible **246.6/day**.
+there are **zero duplicate CGM timestamps**, at **272.4/day — 95% of the 288**,
+which is ordinary sensor uptime.
+
+**Two spans, and they are not interchangeable.** This section says 44 days and
+the tool says 48.5: the snapshot's *records* span 48.5 days, its *CGM* spans
+44.0, because the first CGM reading arrives 4.6 days after the first record of
+any other kind. The rate above was briefly reported as 246.6/day by dividing
+readings by the longer span — counting days on which no CGM existed. Row counts
+here use the 48.5-day file; rates use the span of the thing being rated.
 
 The remedy is unchanged and the reason for it is stronger: a swarm that ships the
 tables as-is exports roughly **2× the real insulin and carbs** to every consumer,
@@ -187,8 +199,9 @@ and every model fitted on it is wrong in the same direction.
 source would otherwise reach consumers unnoticed.
 
 **Confirmed end-to-end.** `tools/canon.py` produces **1.66 MB of NDJSON over 48.5
-days, 0.19 MB gzipped — 1.5 MB/year projected**, which lands inside the 1–2 MB
-estimate this section rests on.
+days, 0.19 MB gzipped — 1.5 MB/year projected** (19,128 records; 1,655,863 and
+194,518 bytes exactly), which lands inside the 1–2 MB estimate this section rests
+on. `tools/test_canon.py` pins the filters those numbers depend on.
 
 ## 5. The AAPS integration seam
 
@@ -209,7 +222,7 @@ Three consequences:
 
 - **The Android-side work is bounded and well-understood.** Call it the xDrip
   plugin plus a transport — not a fork, not a patch to the loop.
-- **It is structurally read-only out of AAPS**, which is the isolation D10 needs.
+- **It is structurally read-only out of AAPS**, which is the isolation RQ10 needs.
   A selector drains a queue outward. Nothing in this shape can write back into
   the loop, and it must stay that way: anything that can influence dosing is
   inside the medical device's blast radius and inherits its whole risk posture.
@@ -386,20 +399,26 @@ something rather than against taste.
 
 | | |
 |---|---|
-| **D1** | The local write path is never blocked, delayed or made to depend on a network. AAPS is a loop; a sharing layer that can sit in front of a pump command or a CGM read is disqualified, not debated |
-| **D2** | The phone is the source of truth and works offline indefinitely |
-| **D3** | Data survives for years. **Inverts whanau_voice R2** (§3.2) |
-| **D4** | Named recipients, each with their own scope — a partner, a clinician, a cohort |
-| **D5** | Revocation is prospective and enforced by key, not by policy: after T, nothing new |
-| **D6** | Grants, withdrawals and egress are visible to the subject. Reads, only where the recipient must fetch (§6) |
-| **D7** | No operator and no server anyone must fund forever |
-| **D8** | The wire protocol survives a **release season**, not forever. See the correction below — this started as whanau_voice R6 and does not survive contact with AAPS |
-| **D9** | Battery and data are safety properties on a loop phone, not preferences |
-| **D10** | Hard isolation from dosing. Nothing here may write back into the loop |
+| **RQ1** | The local write path is never blocked, delayed or made to depend on a network. AAPS is a loop; a sharing layer that can sit in front of a pump command or a CGM read is disqualified, not debated |
+| **RQ2** | The phone is the source of truth and works offline indefinitely |
+| **RQ3** | Data survives for years. **Inverts whanau_voice R2** (§3.2) |
+| **RQ4** | Named recipients, each with their own scope — a partner, a clinician, a cohort |
+| **RQ5** | Revocation is prospective and enforced by key, not by policy: after T, nothing new |
+| **RQ6** | Grants, withdrawals and egress are visible to the subject. Reads, only where the recipient must fetch (§6) |
+| **RQ7** | No operator and no server anyone must fund forever |
+| **RQ8** | The wire protocol survives a **release season**, not forever. See the correction below — this started as whanau_voice R6 and does not survive contact with AAPS |
+| **RQ9** | Battery and data are safety properties on a loop phone, not preferences |
+| **RQ10** | Hard isolation from dosing. Nothing here may write back into the loop |
 
-### 8.0 A correction to D8, before anything is judged against it
+> **On the two numbering schemes.** These `RQ` tokens are the *requirements* this
+> document judges frameworks against. `docs/decisions.md` numbers the *decisions*
+> `D1`–`D9`. They were both `D` until a review pointed out that `D3` meant
+> "data survives for years" here and "audit is given up" there, in two documents
+> that cite each other constantly.
 
-**D8 was inherited, and it is wrong as originally written.** It came straight
+### 8.0 A correction to RQ8, before anything is judged against it
+
+**RQ8 was inherited, and it is wrong as originally written.** It came straight
 from whanau_voice R6 — *"a partner's box running whatever they pulled eighteen
 months ago must still interoperate"* — and that premise is false here.
 
@@ -416,13 +435,13 @@ is no population of active loopers on eighteen-month-old builds; there cannot be
 Every phone still running the loop is on a release from roughly the last year,
 and AAPS enforces that harder than any app store does.
 
-**D8 therefore relaxes from "freeze the wire forever" to "stay compatible across
+**RQ8 therefore relaxes from "freeze the wire forever" to "stay compatible across
 about a year of releases".** That is a requirement a 0.x framework can meet —
 especially for a contributor who tracks its release cadence and can see breaks
 coming. It removes the objection that did most of the work in §8.4 against
 p2panda, and part of the work in §8.2 against Holochain.
 
-What survives of D8: **followers are not loopers.** A follower app on a relative's
+What survives of RQ8: **followers are not loopers.** A follower app on a relative's
 phone has no expiry mechanism and no reason to update. Compatibility has to be
 carried on that side, or the follower app needs its own nag.
 
@@ -438,7 +457,7 @@ So the incumbent is: **coarse revocation, no audit, and a server every person
 must fund and maintain.** It is also the thing thousands of people actually use,
 which is the bar that matters. Any swarm is competing with a working system on
 convenience and losing, and must win on the two axes where Nightscout is weakest
-— which happen to be precisely D5 and D6.
+— which happen to be precisely RQ5 and RQ6.
 
 The research path is worse still: donation to the OpenAPS Data Commons via Open
 Humans is a one-way, irrevocable upload. There is no withdrawal and no use
@@ -473,10 +492,10 @@ That is not a rejection — it is a scoping. Holochain would be **the storage an
 validation layer**, with §7's epoch-key construction built on top as application
 code. The question then becomes whether the swarm is worth what it costs:
 
-- **D9/D10 — the conductor.** A process, not a library; Volla runs one per phone
+- **RQ9/RQ10 — the conductor.** A process, not a library; Volla runs one per phone
   as a system service. On a loop phone that is a second always-on runtime
   competing with the thing keeping someone alive. Contributable (§10.3), not free.
-- **D8 — breaking releases.** 0.7.0's database and wire protocol are incompatible
+- **RQ8 — breaking releases.** 0.7.0's database and wire protocol are incompatible
   with 0.6. Survivable on the AAPS side per §8.0; real on the follower side.
 - **You would be paying for the conductor to get replication**, having written
   the hard part yourself.
@@ -497,18 +516,18 @@ that embeds on Android and iOS rather than assuming a desktop.
 
 **The R2 rejection does not carry.** `seeder-architecture.md` §3 rejected
 Hypercore first for being append-only against a data model that must forget.
-Under D3 that reverses completely: append-only is the *correct* grain for a
+Under RQ3 that reverses completely: append-only is the *correct* grain for a
 diabetes time series, and it is the one framework whose data model needs no
 argument.
 
 Two objections survive, and one is decisive:
 
-- **D5, decisive.** *Knowing the key grants irrevocable read.* A hypercore read
+- **RQ5, decisive.** *Knowing the key grants irrevocable read.* A hypercore read
   capability cannot be withdrawn — revocation means writing a **new core** and
   re-sharing it with everyone who remains, and any follower who kept the old key
   keeps reading it forever. That is the exact problem Meadowcap and CGKA exist to
   fix, and it is the single requirement the user named first.
-- **D4/D9, survivable.** Hyperswarm discovers over a public DHT and connects by
+- **RQ4/RQ9, survivable.** Hyperswarm discovers over a public DHT and connects by
   UDP hole-punching with no traffic-carrying fallback. On phones this is mostly
   fine — the corporate-firewall case that killed it for whanau_voice (R4) barely
   applies — but carrier-grade NAT is real, and a public DHT announcement leaks
@@ -549,7 +568,13 @@ layer, and it is built on iroh 1.0.
 | **Grants** | `p2panda-auth` — signed, eventually-consistent group membership |
 
 **The gap is precise, and it is the integration.** v0.7.1 (Aug 2025) is the
-latest release; there is no 1.0; `p2panda-spaces` is unreleased and on a branch,
+latest release — **thirteen months ago as this is written**, which is a fact
+about cadence this document should not state without drawing the inference:
+`docs/decisions.md` D2 reopens the framework choice "if `p2panda-spaces` stalls
+past the point of usefulness", and a year without a release is the leading
+indicator of exactly that. Re-check it before the spike in §10.2, and treat the
+MLS fallback (§8.7) as live rather than theoretical until it is re-checked.
+There is no 1.0; `p2panda-spaces` is unreleased and on a branch,
 with open items for **bundle rotation, expiry configuration, credential
 unification and concurrent auth messages** — which is to say, the
 membership-change machinery that revocation is entirely about. Under §8.0 the
@@ -606,7 +631,7 @@ sounds like to a non-specialist.
 The gap in the whanau_voice survey. MLS is the **only standardised, audited,
 IETF-track CGKA**, with a permissively-licensed production implementation
 (OpenMLS) and years of adversarial review behind it. `Remove` plus a key rotation
-is precisely D5, done properly, with the security argument already written by
+is precisely RQ5, done properly, with the security argument already written by
 people who do this for a living — which directly answers the risk
 `local-first-decentralised-tier.md` §3.5 flags: *"we used an unaudited research
 CGKA" is a hard conversation.*
@@ -630,13 +655,13 @@ fatal. **This is the highest-value thing to spike.**
 ### 8.8 iroh
 
 Not a competitor to the above — the transport under most of them, and the only
-dependency here that passes D8. **1.0 shipped June 2026**, MIT/Apache,
+dependency here that passes RQ8. **1.0 shipped June 2026**, MIT/Apache,
 dial-by-public-key, hole-punching with relay fallback, WASM-capable, Android via
 the NDK. Holochain moved onto it; p2panda is built on it; whanau_voice deployed
 it (`relay.karo.wang`, upstream `iroh-relay` unmodified) and measured it on a
 Pixel 7.
 
-**Dial-by-public-key is the property that matters for D7.** A peer needs no
+**Dial-by-public-key is the property that matters for RQ7.** A peer needs no
 domain, no certificate and no inbound port, which is the whole reason a friend
 can seed for you without running infrastructure.
 
@@ -924,7 +949,7 @@ withdrawals is itself visible on any analysis that rests on a changed basis.
   person initiates, not a property of the schema, and a research gateway is the
   most tempting place in the whole design to break that rule.
 
-**And it fixes the residual D8 problem.** §8.0 left followers as the peers nobody
+**And it fixes the residual RQ8 problem.** §8.0 left followers as the peers nobody
 can make upgrade. A gateway is operated by an identifiable organisation that can
 be asked, which means wire-compatibility pressure lands on the one node in the
 network that has an administrator.
@@ -977,33 +1002,46 @@ toward whom and when.
 upstream contribution will sit on top of. It is also the piece most likely to be
 useful to other people even if the swarm never ships.
 
-### 10.2 — Spike both tracks on that one emit layer
+### 10.2 — Spike the key layer on that one emit layer
 
-Both are Rust over iroh 1.0, and the AAPS side is identical, so the spike is
-genuinely comparative rather than two projects:
+**Corrected.** This stage previously read "spike both tracks" and described a
+Holochain DNA with *a private entry type for records and an assigned `CapGrant`
+per recipient* — the architecture §7 retracts and D1 settles against. A build
+plan that still executes the rejected design is worse than no build plan, so it
+is removed rather than softened.
 
-- **Holochain**: a minimal DNA with a private entry type for records and an
-  assigned `CapGrant` per recipient; a remote zome call that serves a time range;
-  grant deletion as revocation. Measure what the conductor costs on the loop
-  phone — battery, memory, wake behaviour — because that is the decisive number
-  and nobody has it.
+One spike, on the recommended track (§8.9):
+
 - **p2panda**: `p2panda-auth` + `p2panda-encryption` directly, without waiting
   for `spaces`, since the crates work over raw bytes. Replicate a window to one
-  named peer; rotate on removal; confirm the removed peer gets nothing new.
+  named peer; rotate on removal; and demonstrate **the one property worth
+  demonstrating first — after revocation the removed reader decrypts nothing
+  new, and everything they already held still opens.**
 
-**Both spikes answer questions no amount of reading settles**, which is the whole
+**What is still worth measuring from the Holochain work**, because §8.2 leaves it
+as a credible storage layer with a key layer you supply: what an always-on peer
+runtime costs on a loop phone — battery, memory, wake behaviour. Nobody has those
+numbers, and they apply to *any* always-on peer, p2panda's included. Measure it
+against iroh 1.0 under the transport actually being shipped, not against a
+conductor nothing is going to run.
+
+**A spike answers questions no amount of reading settles**, which is the whole
 lesson of `seeder-architecture.md` §6.1.
 
 ### 10.3 — The gaps, and what contributing to them looks like
 
 | Project | Gap | Shape of the contribution |
 |---|---|---|
-| **Holochain** | Conductor embeddable **in-process on Android**, not as a system service | The Volla answer is an OS integration; an AAR embedding the conductor in an ordinary app is wanted well beyond this project. Prior art exists in the Tauri plugin work |
-| **Holochain** | Battery and Doze behaviour of the iroh transport under Android background limits | Measurement first, then whatever it implies. Nobody has published numbers |
-| **Holochain** | **Store-and-forward for an offline author** | The real protocol gap: a granted recipient cannot call a phone that is off. Deferred or proxied calls for private data is a genuine design question, not a bug |
 | **p2panda** | Finish **`p2panda-spaces`** — bundle rotation, expiry configuration, credential unification, concurrent auth messages | Already the project's own tracking issue and already the blocker. This is the highest-value external contribution available anywhere in this document |
 | **p2panda** | Android bindings and a mobile story | Currently targets desktop toolkits |
-| **Both** | A frozen-ish wire profile a follower app can hold for a year (§8.0) | The residual of D8, and the thing only a downstream consumer will notice |
+| **iroh / any** | Battery and Doze behaviour of an always-on peer under Android background limits | Measurement first, then whatever it implies. Nobody has published numbers, and they decide RQ9 for whichever transport is used |
+| **Anywhere** | A frozen-ish wire profile a follower app can hold for a year (§8.0) | The residual of RQ8, and the thing only a downstream consumer will notice |
+
+**Three Holochain gaps were listed here and are removed.** An embeddable
+conductor, its Doze behaviour, and *store-and-forward for an offline author* —
+the last of which is the personal-server failure mode §7 rejects, listed as a gap
+to fix. Contributing to a design this document has ruled out is how a settled
+decision gets quietly re-opened by a work plan.
 
 **Two notes on making this land.** NLnet/NGI funds this space and funded
 p2panda's group-encryption work specifically, so **the gap-filling is plausibly
@@ -1019,15 +1057,18 @@ phone on a charger runs the same app with a "keep this device syncing" toggle;
 and a periodic sealed export to whatever the person already uses is the backstop
 that survives every phone being lost at once.
 
-Under the Holochain track this matters more, because private entries have **no
-redundancy at all** — the backup is not a nicety there, it is the only copy
-besides the phone.
+The reason this is a nicety rather than the whole plan is §9.3: under public
+ciphertext, every named recipient already holds a complete encrypted replica. (A
+paragraph here previously made the backup load-bearing "under the Holochain
+track, because private entries have no redundancy at all" — that track is
+retracted in §7, and with it the argument.)
 
-### 10.6 — The commons gateway
+### 10.5 — The commons gateway
 
-Built to §9.9, and worth starting earlier than its position here suggests,
-because it is the only stage with an external party in it and external parties
-set their own timetable.
+Built to §9.9. It sits here, ahead of the review gate, because it is the only
+stage with an external party in it and external parties set their own timetable —
+it was numbered 10.6 and printed in this position, which is how a reader ends up
+executing a different order from the one intended.
 
 - **Swarm side**: one granted peer, per-participant capabilities with expiry.
 - **Research side**: an export in the shapes OPEN and the OpenAPS Data Commons
@@ -1044,7 +1085,7 @@ set their own timetable.
 be the first endpoint, and their answer decides whether §10.0's recommendation
 survives contact with reality.
 
-### 10.5 — Gate: external cryptographic review
+### 10.6 — Gate: external cryptographic review
 
 Unchanged. Anything that touches insulin data and claims revocation deserves one.
 Note that this direction *improves* the position: reviewing a contribution to an
@@ -1104,7 +1145,8 @@ make this claim.
 funder and a kaupapa; this has an incumbent that works, a community that already
 solved 80% of the problem in a way they are used to, and a real setup-friction
 disadvantage. The technical case is solid. **The adoption case rests entirely on
-§10.0(1) — picking the one use case where the incumbent is genuinely bad** — and
+§10.0's recommendation — picking the one use case where the incumbent is
+genuinely bad** — and
 research donation, where consent today is a one-way irrevocable upload with no
 use record, is the honest answer to that.
 
