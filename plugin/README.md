@@ -50,6 +50,19 @@ the frozen spec that nobody can diff and everybody trusts.
   user set while glucose values and temporary targets are always mg/dL.
   Emitting one un-normalised would put the same quantity in one stream a factor
   of eighteen apart. It needs the block API read properly first.
-- **Nothing has run on a phone.** It compiles as a module and the native half
-  links for both ABIs; that is not the same as working, and the difference is
-  the kind this project has already been caught by.
+- **Nothing has run on a phone.** The module builds against a real AAPS
+  checkout — `BUILD SUCCESSFUL`, all four flavours, with both `.so` files inside
+  the AAR — and the JNI contract is exercised on the host by
+  `crates/diaswarm-android/jni-test/run.sh`. That is further than it sounds and
+  still not the same as working: nothing has loaded the library on Android,
+  under Dalvik, in a process that is also running a loop.
+
+## Verified so far
+
+| | |
+|---|---|
+| Module compiles against AAPS | `:plugins:sync:swarm:assembleDebug`, 223 tasks, all four flavours |
+| Native half packaged | `jni/arm64-v8a` and `jni/armeabi-v7a` inside the AAR |
+| JNI symbols resolve | all eight, checked with `llvm-nm` and exercised from a JVM |
+| Record logic matches `canon.py` | byte-identical over 19,129 real records |
+| Rounding matches Python | ties-to-even; normalising a canonical stream moves nothing |
