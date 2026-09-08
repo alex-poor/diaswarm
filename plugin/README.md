@@ -19,18 +19,25 @@ check, and this plugin's own high-water marks.
 
 ## Wiring it into an AAPS checkout
 
-`settings.gradle`:
+**The checkout this is wired into builds a live closed loop.** So the wiring is
+opt-in, and the default build is byte-for-byte what it was before the block
+existed. `settings.gradle`:
 
 ```groovy
-include ':plugins:sync:swarm'
-project(':plugins:sync:swarm').projectDir = new File('/path/to/diaswarm/plugin')
+if (System.getenv('DIASWARM') == '1') {
+    include ':plugins:sync:swarm'
+    project(':plugins:sync:swarm').projectDir = new File('/path/to/diaswarm/plugin')
+}
 ```
 
-Then build with the NDK visible:
+Verified both ways: without the variable Gradle reports no such project; with it,
+`:plugins:sync:swarm` appears. An unconditional include would have put this
+module in the configuration of every build of an app that doses insulin, for no
+benefit, which is not a trade worth making even when the module is inert.
 
 ```sh
-export ANDROID_NDK_HOME=~/Android/Sdk/ndk/29.0.14206865
-./gradlew :plugins:sync:swarm:assembleRelease
+export ANDROID_NDK_HOME=/path/to/ndk        # 28.2 and r29 both work
+DIASWARM=1 ./gradlew :plugins:sync:swarm:assembleDebug
 ```
 
 `buildRustCore` cross-compiles the core for `arm64-v8a` and `armeabi-v7a` and
