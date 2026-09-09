@@ -143,6 +143,12 @@ impl Invite {
 mod tests {
     use super::*;
 
+    // OBVIOUSLY NOT REAL KEYS. These were copied from a live phone while the
+    // format was being worked out, which put a real subject key and a real
+    // endpoint id — together, a working invite to somebody's actual vault —
+    // into a repository that was always going to be public. The data is
+    // ciphertext and unreadable, but the address is not: it says whose device
+    // this is and when it is online.
     const S: &str = "5111111111111111111111111111111111111111111111111111111111111111";
     const E: &str = "9222222222222222222222222222222222222222222222222222222222222222";
 
