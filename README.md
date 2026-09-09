@@ -73,12 +73,43 @@ records ──▶ epochs ──▶ segments ──▶ sealed ──▶ served to
    **wrapped** separately to each reader (X25519 + HKDF-SHA256).
 5. Grants are **signed and hash-chained**, and filed under a tag derived from the
    shared secret — so the log proves what happened without naming anyone in it.
-6. Peers **hold what they follow and serve what they hold**. A peer stores segments,
-   every reader's wraps, and the grant log — and can read none of it.
+6. Peers **hold a share of the pool and serve what they hold**. A peer stores
+   segments, every reader's wraps, and the grant log — and can read none of it.
 
 Revocation is the absence of a file. Nobody is told; the departing reader is simply
 not wrapped for the next segment. What they already downloaded stays readable, and
 nothing here pretends otherwise.
+
+## The pool
+
+Turning swarm on is the whole instruction. There is no address to exchange and
+nobody to ask: a phone finds the other members, works out which slice of the
+subject space is its share, and holds what falls there — for people it has never
+met and cannot read.
+
+**A topic is a bucket of the subject space, not a person.** A subject lands in a
+bucket by the first bits of its hash; each peer carries a handful of buckets
+chosen from its own id, and everyone sharing a bucket holds everything in it.
+Redundancy is simply how many peers share a bucket.
+
+| peers | buckets | each carries | held per phone | copies |
+|---|---|---|---|---|
+| 5 | 8 | 5 | 78 MB/yr | 3 |
+| 100 | 128 | 4 | 78 MB/yr | 3 |
+| 100,000 | 131,072 | 4 | 76 MB/yr | 3 |
+
+**Roughly 1.6 MB a month, and three copies of everything, at any size.** Bucket
+depth tracks the number of peers, so a peer's share does not grow as the pool
+does — being an early member is not a tax.
+
+**Self-healing is arithmetic, not a process.** A peer disappears, the pool is
+smaller, depth and share adjust, and the survivors cover the gap on their next
+pass. Nothing has to notice a loss, nobody is elected to repair it, and two peers
+cannot repair the same thing twice.
+
+Membership, discovery and gossip are [p2panda-net](https://p2panda.org) over iroh —
+the decision recorded in [D2](docs/decisions.md), and the reason this repository
+does not contain a hand-written DHT.
 
 ## Sharing, from the phone
 
@@ -132,7 +163,8 @@ The whole design is one bargain, and it is worth reading before anything else.
 | Revocation enforced by key, not by a server's goodwill | Deletion. Publication is permanent |
 | A signed, tamper-evident record of every grant | A leaked key never expires |
 | No server, no hosting bill, no operator to trust | Discovery: you still have to exchange a code |
-| Peers find each other, so one phone sleeping is survivable | **The follower set is public.** Anyone with your key can ask who holds your data |
+| Peers find each other, so one phone sleeping is survivable | **Membership is visible.** Being in the pool is not private, though what you hold is unreadable |
+| Three copies of everything, for ~1.6 MB a month | You carry strangers' ciphertext too — the deal runs both ways |
 
 Language that must never be used about this — and the true version of each claim —
 is in [docs/feasibility.md §11](docs/feasibility.md). It is not decoration. Someone
@@ -178,10 +210,11 @@ cargo run --bin diaswarm-net -- peer  /tmp/store2 /tmp/n2.key /tmp/friend.id
 ```
 spec/records.md          The wire contract. Versioned in-band
 docs/feasibility.md      The assessment: architecture, costs, what must not be claimed
-docs/decisions.md        What is settled (D1–D15), and what would reopen each
+docs/decisions.md        What is settled (D1–D18), and what would reopen each
 
 crates/diaswarm-core     Records, sealing, the vault, grants. The reference implementation
-crates/diaswarm-net      Peers: serving, fetching, following, over iroh (QUIC)
+crates/diaswarm-net      The pool: membership and buckets (pool.rs, swarm.rs) over
+                         p2panda-net, and the vault protocol they carry
 crates/diaswarm-android  The JNI surface the phone calls
 plugin/                  The AAPS add-on: settings screen, QR scanner, sync worker,
                          and the follower that keeps other people's history current
@@ -189,6 +222,9 @@ plugin/                  The AAPS add-on: settings screen, QR scanner, sync work
 tools/canon.py           AAPS SQLite → canonical records, with a dropped-and-why report
 tools/seal.py            The sealing construction in Python, byte-identical to Rust
 tools/mkfixture.py       A synthetic AAPS database, so everything runs with no real data
+
+spike/p2panda-net        What p2panda-net 0.7.1 actually does, measured
+spike/p2panda-seal       What p2panda-encryption 0.7.1 actually does, measured
 ```
 
 The Python and Rust implementations are checked against each other over real record
@@ -198,7 +234,8 @@ implementation is an assertion.
 ## Building the AAPS add-on
 
 The plugin lives here; AAPS itself stays untouched, on its own branch, in a git
-worktree. You need the AAPS source, the Android SDK and NDK, and:
+worktree. You need the AAPS source, the Android SDK and NDK, and **rustc 1.96+**
+(p2panda's floor — `rust-toolchain.toml` pins it), then:
 
 ```sh
 CAMAPS=/path/to/your/aaps-checkout ./plugin/build-apk.sh --install
@@ -213,24 +250,24 @@ because on a looping phone a mismatch costs you a pump re-pairing.
   hand. Do not rely on this where being wrong would matter.
 - **No forward secrecy.** A key that leaks opens everything it was ever wrapped for.
 - **Reads are invisible.** Nobody can tell you who has read their copy, or when.
-- **First contact is manual.** You exchange a code. There is no directory and no
-  way to search for a person. Peers do find *each other* after that, which is how
-  a follower survives your phone sleeping — see below.
-- **The follower set is discoverable.** Anyone holding your public key can ask any
-  peer who else carries your data and get back their endpoint ids — pseudonyms, but
-  stable ones. Not what was said, but who is close enough to be watching. This is
-  the price of availability without a server, and it is not yet optional
-  ([D18](docs/decisions.md)). Addresses are advertised alongside those ids **only
-  when they are local** (same-wifi, no uplink); public addresses are never shared,
-  because a home IP is a place rather than a pseudonym.
+- **Peers find each other; people do not.** Joining the pool needs nothing, but to
+  *read* someone you still exchange a code and they still have to grant you. There
+  is no directory and no way to search for a person — deliberately.
+- **Being in the pool is visible.** Membership is a gossip topic anyone can join, so
+  who participates is not secret, even though everything they carry is unreadable
+  ciphertext ([D18](docs/decisions.md)).
+- **The pool has only ever been two phones.** Peers carrying genuinely disjoint
+  shares, and one adopting a stranger's subject unasked, are tested on a laptop and
+  unproven on hardware — that needs four or more devices.
 - **Metadata leaks.** The number of grants and roughly when they happened are
   visible in the log, even though who they name is not.
 - **Background sync is at Android's mercy.** Two minutes while awake; Doze stretches
   it, and a follower not excused from battery optimisation will be much slower. There
   is no push — a subscribe-and-notify protocol would fix the foreground case and Doze
   would still govern the rest.
-- **Storage only grows.** A follower keeps everything it fetches, about 25 MB per
-  year per person followed. There is no pruning and no way to hold only recent days.
+- **Storage only grows.** Around 78 MB a year for a peer's share of the pool, and
+  more if you also follow people directly. There is no pruning and no way to hold
+  only recent days.
 - **No pause.** The only controls are withdrawing the grant or turning the plugin
   off. There is nothing between "sharing" and "not sharing".
 - **iOS is out of scope.**
