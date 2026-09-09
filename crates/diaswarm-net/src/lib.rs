@@ -29,6 +29,7 @@
 //! not this one.
 
 pub mod peer;
+pub mod pool;
 pub mod wire;
 
 use std::path::{Path, PathBuf};
