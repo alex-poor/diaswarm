@@ -22,6 +22,15 @@ Two things have been done end to end on real hardware, with real data:
 
 Not reviewed cryptography. See [Limits](#limits) before trusting it with anything.
 
+> **Not affiliated with, endorsed by, or part of the AndroidAPS project.** This is
+> an independent add-on that compiles against AAPS's plugin interfaces. It contains
+> no AAPS source. AndroidAPS is the work of its own maintainers, and problems with
+> this add-on are not theirs — report them [here](https://github.com/alex-poor/diaswarm/issues).
+>
+> **No APK is distributed here, and none ever will be.** Running a loop is running
+> a medical device you assembled; you build it yourself, from source you have read.
+> Releases in this repository version *this project*, not AndroidAPS.
+
 ---
 
 ## Why

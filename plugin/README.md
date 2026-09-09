@@ -103,12 +103,12 @@ Installed on a live closed loop (Pixel 7, YpsoPump, HovorkaMPC), 2026-09-09.
 | Record logic matches `canon.py` | byte-identical over 19,129 real records |
 | Rounding matches Python | ties-to-even; normalising a canonical stream moves nothing |
 | JNI symbols resolve | all eight, `llvm-nm` and exercised from a JVM |
-| Builds into the loop APK | `3.4.2.3-hovorka-diaswarm`, git `ff4c807de9` |
-| Signer unchanged | `0a199dca…` — `install -r` stayed an update, pump key survived |
+| Builds into a loop APK | verified against a personal AAPS build |
+| Signer unchanged | `install -r` stayed an update; app data and pump pairing survived |
 | **AAPS registered it** | `ConfigBuilder_Enabled_SYNC_SwarmPlugin:false` at startup |
 | **…and hid it** | `ConfigBuilder_Visible_SYNC_SwarmPlugin:false` |
 | **Native library loads only when enabled** | `nativeloader: Load …libdiaswarm_android.so … ok` appears once, when the worker first runs. **Not** `/proc/<pid>/maps`: the `.so` is packaged uncompressed and loaded from inside the APK, so it never appears there by name — an earlier check that read zero would have read zero either way |
-| Loop unaffected | `Closed Loop · looping`, HovorkaMPC deciding, `ypso_shared_key` intact, `dexopt [status=speed]` |
+| Loop unaffected | `Closed Loop · looping`, the APS still deciding, pump pairing intact, AOT-compiled |
 
 The library ships inside the APK and is never mapped into the process. That is
 the claim `enableByDefault(false)` was making, and it is now measured rather

@@ -32,7 +32,7 @@ body:
     attributes:
       label: Phones and versions
       placeholder: |
-        Subject: Pixel 7, Android 15, AAPS 3.4.2.3-...
+        Subject: Pixel 7, Android 15, AAPS <version>
         Follower: ..., battery optimisation exempt? yes/no
   - type: markdown
     attributes:
