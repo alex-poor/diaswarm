@@ -29,6 +29,7 @@
 //!
 //! Run: cargo run --manifest-path spike/p2panda-spaces/Cargo.toml
 
+use futures::FutureExt;
 use p2panda_auth::Access;
 use p2panda_spaces::SpaceId;
 use p2panda_spaces::Event;
@@ -41,8 +42,7 @@ use p2panda_spaces::test_utils::{TestOperation, TestPeer};
 /// ciphertext it cannot read. A message that yields no `Application` event is
 /// not an error here, it is the access control working.
 async fn feed(who: &str, peer: &TestPeer, msgs: &[TestOperation]) -> Vec<String> {
-    use futures::FutureExt;
-
+    
     let mut read = Vec::new();
     for (i, m) in msgs.iter().enumerate() {
         peer.persist_operation(m).await.unwrap();
@@ -189,6 +189,56 @@ async fn main() {
         "5. a stranger processes everything, reads nothing",
         stranger_read.is_empty(),
         &format!("read {stranger_read:?}"),
+    );
+
+    // ================= a reader in TWO of one subject's spaces ============
+    //
+    // Nothing above tests this, and the whole "one space per grant window"
+    // design depends on it: a reader granted with history is a member of every
+    // window, not just one.
+    println!("\n  a reader in two of one subject's spaces\n");
+    let both = TestPeer::new(4).await;
+    both.manager.register_member(&subject.manager.me().await.unwrap()).await.unwrap();
+    subject.manager.register_member(&both.manager.me().await.unwrap()).await.unwrap();
+    let both_id = both.manager.id();
+
+    let mut two: Vec<TestOperation> = Vec::new();
+    let added_a = std::panic::AssertUnwindSafe(space_a.add_persisted(both_id, Access::read()))
+        .catch_unwind()
+        .await;
+    match added_a {
+        Ok(Ok((m1, m2))) => {
+            two.push(m1);
+            two.push(m2);
+        }
+        Ok(Err(e)) => println!("      adding to space A refused: {e}"),
+        Err(_) => println!("      adding to space A PANICKED (subject side)"),
+    }
+    let added_b = std::panic::AssertUnwindSafe(space_b.add_persisted(both_id, Access::read()))
+        .catch_unwind()
+        .await;
+    match added_b {
+        Ok(Ok((m1, m2))) => {
+            two.push(m1);
+            two.push(m2);
+        }
+        Ok(Err(e)) => println!("      adding to space B refused: {e}"),
+        Err(_) => println!("      adding to space B PANICKED (subject side)"),
+    }
+    if let Ok(m) = space_a.publish_persisted(b"A after both").await {
+        two.push(m);
+    }
+    if let Ok(m) = space_b.publish_persisted(b"B after both").await {
+        two.push(m);
+    }
+
+    let everything: Vec<TestOperation> =
+        a_msgs.iter().chain(b_msgs.iter()).chain(two.iter()).cloned().collect();
+    let both_read = feed("both", &both, &everything).await;
+    report(
+        "6. a reader can belong to two of one subject's spaces",
+        both_read.iter().any(|d| d == "A after both") && both_read.iter().any(|d| d == "B after both"),
+        &format!("opens {both_read:?}"),
     );
 
     println!("\n  what this means for the design");

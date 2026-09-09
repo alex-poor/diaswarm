@@ -110,7 +110,45 @@ and on a phone running a closed loop a panic in a background worker is not an
 acceptable failure mode. The spike processes every message inside
 `catch_unwind` for exactly this reason.
 
-## 5. Version note
+## 5. THE BLOCKER: a subject cannot have two spaces
+
+Everything above uses one space per subject. The window design needs more than
+one — "grant from now on" *is* a second space — and that does not work at 0.7.1.
+
+```
+  a reader in two of one subject's spaces
+
+      adding to space A PANICKED (subject side)
+  6. a reader can belong to two of one subject's spaces  FAIL
+     opens ["B day 6", "B day 7", "B after both"]
+```
+
+A reader added to space B is fine. Adding that same reader to space A — which
+already existed, and which the subject has been publishing to all along —
+panics `p2panda-auth` at `group/resolver.rs:250`, *"all operations present in
+map"*. **On the subject's side, not the reader's**, so it is not something a
+careful reader can defend against.
+
+**This is the library's own test API**, `add_persisted`, not
+`crates/diaswarm-spaces`' hand-written persistence — so it is not our glue.
+
+The likely shape of it: a subject's spaces share one **global** auth CRDT
+(`Hash::digest(b"global-groups-context")` — one key, not one per space). Once
+two spaces exist, their auth operations interleave in that single state and the
+resolver's assumption that every referenced operation is present stops holding.
+That is a guess about the cause; the failure itself is measured.
+
+**Consequence.** `Reach::Everything` — grant with history — works and is
+verified. `Reach::FromNow` is blocked, and with it the per-grant choice. Both
+ways of opening the second window were tried: created with its members, and
+created empty then added to. The first panics the reader once, the second three
+times. Neither works.
+
+**Not worked around, deliberately.** A workaround for a panic in a shared CRDT,
+in a background worker on a phone driving an insulin pump, would be guessing at
+someone else's invariants. This wants an upstream issue.
+
+## 6. Version note
 
 `p2panda-auth`, `p2panda-spaces` and `p2panda-store` are all published at 0.7.1
 and pinned exactly here. `test_utils` is enabled on purpose: it supplies

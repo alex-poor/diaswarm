@@ -1,0 +1,30 @@
+[package]
+name = "diaswarm-spaces"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# THE POINT OF THIS CRATE IS THE DEPENDENCY LIST.
+#
+# It replaces `diaswarm-core`'s sealing, per-reader wrapping and grant log with
+# p2panda-spaces, which composes p2panda-auth (capabilities), p2panda-encryption
+# (the key layer) and p2panda-store (SQLite persistence). Measured in
+# spike/p2panda-spaces: every grant this project offers is a method call.
+#
+# Pinned exactly, and matching the versions diaswarm-net already resolves, so
+# there is one p2panda in the tree and not two.
+[dependencies]
+p2panda-spaces = "=0.7.1"
+p2panda-store = { version = "=0.7.1", features = ["macros"] }
+p2panda-core = "=0.7.1"
+p2panda-auth = "=0.7.1"
+p2panda-encryption = "=0.7.1"
+diaswarm-core = { path = "../diaswarm-core" }
+anyhow = "1"
+serde_json = "1"
+thiserror = "2"
+futures = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

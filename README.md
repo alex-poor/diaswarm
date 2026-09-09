@@ -211,6 +211,7 @@ cargo run --bin diaswarm-net -- peer  /tmp/store2 /tmp/n2.key /tmp/friend.id
 spec/records.md          The wire contract. Versioned in-band
 docs/feasibility.md      The assessment: architecture, costs, what must not be claimed
 docs/decisions.md        What is settled (D1–D19), and what would reopen each
+docs/rights.md           The Diabetes Data Rights Charter, and where this fails it
 
 crates/diaswarm-core     Records, sealing, the vault, grants. The reference implementation
 crates/diaswarm-net      The pool: membership and buckets (pool.rs, swarm.rs) over

@@ -1186,6 +1186,48 @@ audited, peer-reviewed upstream is a far smaller and cheaper exercise than
 reviewing a bespoke protocol, and "we extended OpenMLS/p2panda-encryption" is a
 much easier sentence than "we wrote our own group key agreement".
 
+### 10.7 — Export at the reader: Nightscout JSON, and FHIR
+
+**Out of sequence, and blocked on nothing above.** Everything else in §10 is
+ordered by dependency; this is not. A granted reader already decrypts records —
+turning them back out in a shape other software understands is a function over
+an open vault, and needs neither the commons (§10.5) nor the review gate (§10.6).
+
+It is here because §11 has no answer to *interoperability*, and the Diabetes Data
+Rights Charter asks for one (see [rights.md](rights.md)). The design currently
+speaks exactly one dialect, invented here: a bespoke record vocabulary
+(spec/records.md), a bespoke wire (`diaswarm/5`), a bespoke invite. That is the
+correct call for the wire and the wrong call for the boundary where a person's
+data leaves the system toward their own clinician.
+
+Two shapes, for two different consumers:
+
+- **Nightscout JSON** — `entries` and `treatments` as the ecosystem already
+  emits and consumes them. This is the DIG_IT recommendation applied literally:
+  *build on what people already use*. It is also the cheapest possible bridge to
+  every follower app, watch face and clinic dashboard that §11's comparison
+  table currently scores as a straight loss.
+- **FHIR bundles** — `Observation` for glucose, `MedicationAdministration` for
+  insulin, `NutritionIntake` for carbs. This is what an institution can actually
+  receive. It is the difference between a clinician being handed *a file* and a
+  clinician being handed *a file their system ingests*.
+
+**At the reader, deliberately, and this is the whole design point.** The export
+is computed by whoever holds the key, on their own device, from a vault they
+were granted. Nothing new is published, no plaintext leaves anyone's phone on
+its way to a format, and the subject's revocation still governs — a reader whose
+grant stops gets no new segments to export. **An exporter that ran anywhere else
+would be a custodian**, which is the thing §9.2 removed.
+
+**What it does not fix.** A clinician still cannot be handed a URL; they are
+handed a file by a person who ran software. Export makes the *data* portable and
+leaves the *access* non-interoperable, which is the price named in
+[rights.md](rights.md) and not a defect this stage closes.
+
+*Reopens the interoperability verdict if:* both shapes land and round-trip
+against real consumers — a Nightscout instance ingesting `entries`, and one FHIR
+server validating a bundle.
+
 ## 11. Calling this decentralised, honestly
 
 Structure borrowed from `seeder-architecture.md` §10, which is the right way to
