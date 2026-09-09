@@ -49,6 +49,29 @@ public class Check {
               SwarmNative.emitterAmendments(e) == 1,
               "got " + SwarmNative.emitterAmendments(e));
 
+        // --- the vault ------------------------------------------------------
+        String base = System.getProperty("java.io.tmpdir") + "/diaswarm-jni-" + System.nanoTime();
+        String vault = base + "/vault";
+        String ident = base + "/subject.id";
+
+        String subject = SwarmNative.vaultSubject(ident);
+        check("an identity is created on first use", subject.length() == 64, subject);
+        check("and is stable across calls", subject.equals(SwarmNative.vaultSubject(ident)), "changed");
+
+        String day = "{\"k\":\"cgm\",\"mgdl\":163.0,\"t\":1782938503230}\n"
+                   + "{\"k\":\"cgm\",\"mgdl\":164.0,\"t\":1782938803230}\n";
+        long sealed = SwarmNative.vaultSeal(vault, ident, 20630L, day);
+        check("a day seals through JNI", sealed == 2, "returned " + sealed);
+
+        String status = SwarmNative.vaultStatus(vault);
+        check("the vault reports itself", status.startsWith("1 epochs"), status);
+
+        check("a bad vault path fails with a code, not an exception",
+              SwarmNative.vaultSeal("/proc/nonexistent/vault", ident, 1L, day) < 0, "did not fail");
+        check("an unopenable vault reports rather than throws",
+              SwarmNative.vaultStatus("/proc/nonexistent").equals("no vault"),
+              SwarmNative.vaultStatus("/proc/nonexistent"));
+
         SwarmNative.emitterFree(e);
         check("freeing twice does not crash", freeTwice(), "crashed");
 

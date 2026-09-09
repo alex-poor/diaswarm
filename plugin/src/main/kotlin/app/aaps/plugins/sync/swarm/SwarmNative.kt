@@ -57,6 +57,29 @@ object SwarmNative {
      */
     external fun emitterAmendments(handle: Long): Long
 
+    /**
+     * Seal one epoch of canonical NDJSON into the vault on disk.
+     *
+     * Creates the vault and the subject identity on first use. Returns the
+     * number of records sealed, or a negative code — `-1` bad arguments, `-2`
+     * identity unavailable, `-3` vault unavailable, `-4` seal failed. It does
+     * not throw: an exception crossing JNI on a background thread inside a
+     * process that has to keep dosing is a crash, not a diagnostic.
+     */
+    external fun vaultSeal(vaultPath: String, identityPath: String, epoch: Long, ndjson: String): Long
+
+    /**
+     * The subject's public key, to hand to someone you are granting.
+     *
+     * Creates the identity on first use. That file is the whole of what being
+     * this subject means: lose it and every future grant is lost with it,
+     * because the epoch keys it protects cannot be re-derived.
+     */
+    external fun vaultSubject(identityPath: String): String
+
+    /** A one-line summary of the vault, for a log line or a status row. */
+    external fun vaultStatus(vaultPath: String): String
+
     /** The spec version this Kotlin was written against. */
     const val EXPECTED_SPEC_VERSION = 2
 

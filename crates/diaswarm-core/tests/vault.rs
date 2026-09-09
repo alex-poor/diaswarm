@@ -129,3 +129,29 @@ fn a_vault_from_another_spec_version_is_refused_not_guessed_at() {
         "a vault written by an unknown spec version must be refused"
     );
 }
+
+#[test]
+fn resealing_a_day_does_not_invalidate_wraps_already_published() {
+    // A day is sealed again as more of it arrives. If that minted a new key,
+    // every wrap already published for the epoch would open nothing — and
+    // nothing would report an error.
+    let dir = tempdir::TempDir::new("reseal").unwrap();
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject).unwrap();
+    let epoch = 20_000;
+
+    vault.record_grant(&subject, &reader.enc_public(), "follow", "grant", epoch).unwrap();
+    vault.seal(epoch, &day(epoch, 100.0)).unwrap();
+    vault.publish_wraps(&reader.enc_public(), "follow").unwrap();
+    assert_eq!(vault.read_as(&reader).unwrap().len(), 1);
+
+    // More of the same day arrives.
+    let mut fuller = day(epoch, 100.0);
+    fuller.extend(day(epoch, 101.0));
+    vault.seal(epoch, &fuller).unwrap();
+
+    let opened = vault.read_as(&reader).unwrap();
+    assert_eq!(opened.len(), 1, "the reader's wrap stopped opening the epoch");
+    assert_eq!(opened[&epoch].len(), 2, "the reseal did not include the newer records");
+}

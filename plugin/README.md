@@ -60,10 +60,14 @@ the frozen spec that nobody can diff and everybody trusts.
   user set while glucose values and temporary targets are always mg/dL.
   Emitting one un-normalised would put the same quantity in one stream a factor
   of eighteen apart. It needs the block API read properly first.
-- **`publish()` is where the work stops.** Everything below is verified on a
-  real phone; what it verifies is that the plugin sits there harmlessly. Turning
-  it on would canonicalise records and log a byte count, because there is no
-  sealing on the device and nowhere to publish to.
+- **The vault stays on the phone.** Enabled, the plugin now canonicalises,
+  deduplicates and **seals each day into a vault** in app-private storage. What
+  it does not do is move those bytes anywhere: there is no transport yet, so
+  reading them elsewhere means pulling the directory off the device by hand.
+- **Granting happens on the desktop**, with `diaswarm grant` against a pulled
+  vault. The epoch keys live beside the sealed data, so a pulled vault is fully
+  grantable — and equally, a pulled vault is the subject's whole secret. Treat
+  it accordingly.
 
 ## Verified
 

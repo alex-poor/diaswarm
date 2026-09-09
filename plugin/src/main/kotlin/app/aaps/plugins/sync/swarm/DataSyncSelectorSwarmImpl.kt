@@ -1,11 +1,14 @@
 package app.aaps.plugins.sync.swarm
 
+import android.content.Context
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sync.DataSyncSelector
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.plugins.sync.swarm.keys.SwarmLongKey
+import org.json.JSONObject
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -41,6 +44,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private val aapsLogger: AAPSLogger,
     private val preferences: Preferences,
     private val persistenceLayer: PersistenceLayer,
+    private val context: Context,
 ) : DataSyncSelector {
 
     /** Native dedupe state, held across the whole upload. */
@@ -119,6 +123,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         emitter = SwarmNative.emitterNew()
         try {
             sources.forEach { drain(it) }
+            sealPending()
             val amendments = SwarmNative.emitterAmendments(emitter)
             if (amendments > 0) {
                 // Recorded, not acted on. See spec §7 and the class comment.
@@ -162,16 +167,64 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     }
 
     /**
-     * Where a canonical line goes.
+     * Canonical lines, grouped by the UTC day they belong to.
      *
-     * NOT IMPLEMENTED, AND NOT A STUB TO FILL IN CASUALLY. The next stage seals
-     * these into epochs and wraps the epoch key to each live grantee — see
-     * `tools/seal.py` for the reference and `spike/p2panda-seal` for what the
-     * shipping key layer actually does. Until that is wired, this plugin
-     * canonicalises and counts and publishes nothing, which is the correct
-     * behaviour for a thing that has no swarm to publish to.
+     * Held until the drain finishes rather than sealed per record, because
+     * sealing rewrites a whole epoch: doing it once per record would rewrite
+     * the day hundreds of times for one pass.
      */
+    private val pending = mutableMapOf<Long, StringBuilder>()
+
     private fun publish(line: String) {
-        aapsLogger.debug(LTag.CORE, "swarm: ${line.length} bytes canonicalised")
+        // PARSED, NOT SCANNED. Finding `"t":` by string search reads the first
+        // occurrence, and canonical keys are sorted — so `note`, which §2 calls
+        // free text a person typed, comes before `t`. A note containing `"t":`
+        // would silently file the record under the wrong day, or none.
+        val epoch = try {
+            SwarmNative.epochOf(JSONObject(line).getLong("t"))
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.CORE, "swarm: unparseable canonical line, dropped")
+            return
+        }
+        pending.getOrPut(epoch) { StringBuilder() }.append(line).append('\n')
+    }
+
+    /**
+     * Seal each day this pass collected.
+     *
+     * A day is sealed again every time more of it arrives, and that is safe:
+     * the epoch keeps its key across re-seals, so wraps already published for
+     * it keep opening. Minting a fresh key per seal would leave readers holding
+     * a key that opens nothing, with no error anywhere to say so.
+     *
+     * TODAY IS SEALED TOO, not held back until it closes. A follower wants the
+     * day as it happens, and there is no reason to withhold it once re-sealing
+     * is safe — but note nothing publishes these bytes anywhere yet.
+     */
+    private fun sealPending() {
+        val vault = File(storage, "vault").absolutePath
+        val identity = File(storage, "subject.id").absolutePath
+        for ((epoch, body) in pending) {
+            val n = SwarmNative.vaultSeal(vault, identity, epoch, body.toString())
+            if (n < 0) {
+                aapsLogger.error(LTag.CORE, "swarm: sealing epoch $epoch failed with $n")
+            } else {
+                aapsLogger.info(LTag.CORE, "swarm: sealed epoch $epoch, $n records")
+            }
+        }
+        pending.clear()
+        aapsLogger.info(LTag.CORE, "swarm: ${SwarmNative.vaultStatus(vault)}")
+    }
+
+    /**
+     * Where the vault lives.
+     *
+     * App-private storage. It holds ciphertext and the subject's own key
+     * material, and it must never be written anywhere another app can read —
+     * the epoch keys beside the sealed data are what make every later grant
+     * possible, and they are the one thing here that is not safe to leak.
+     */
+    private val storage: File by lazy {
+        File(context.filesDir, "diaswarm").also { it.mkdirs() }
     }
 }

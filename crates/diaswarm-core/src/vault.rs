@@ -180,7 +180,15 @@ impl Vault {
     /// file is the subject's own copy and must never leave the device: it is
     /// what makes every later grant possible without re-sealing anything.
     pub fn seal(&self, epoch: i64, records: &[Record]) -> Result<(), VaultError> {
-        let key = epoch_key();
+        // REUSE THE EPOCH'S KEY IF IT HAS ONE. A day is sealed repeatedly as
+        // its records arrive, and minting a fresh key each time would silently
+        // invalidate every wrap already published for that epoch — readers
+        // would hold a key that opens nothing, with no error anywhere to say
+        // so. The key belongs to the epoch, not to the act of sealing.
+        let key = match self.epoch_key_of(epoch) {
+            Ok(existing) => existing,
+            Err(_) => epoch_key(),
+        };
         let plaintext = encode(records);
         let sealed = seal_epoch(plaintext.as_bytes(), &key, epoch, &self.subject_pub);
         fs::write(self.root.join("epochs").join(format!("{epoch}.seal")), sealed)?;

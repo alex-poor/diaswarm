@@ -10,4 +10,7 @@ public class SwarmNative {
     public static native void emitterFree(long handle);
     public static native String emitterAccept(long handle, String json);
     public static native long emitterAmendments(long handle);
+    public static native long vaultSeal(String vaultPath, String identityPath, long epoch, String ndjson);
+    public static native String vaultSubject(String identityPath);
+    public static native String vaultStatus(String vaultPath);
 }
