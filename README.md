@@ -8,9 +8,17 @@ parent, your clinician — **revocably, and with nobody in the middle**.
 
 **Status: working proof of concept, running on a live closed loop.** An AAPS add-on
 seals its own history and serves it; other devices replicate it and serve it onward;
-a granted reader opens it from any of them. Verified on real data —
-33,800 records over 73 days of looping — including a reader fetching the complete history
-from a relay while the originating phone was switched off.
+a granted reader opens it from any of them.
+
+Two things have been done end to end on real hardware, with real data:
+
+* **Two phones.** A factory-reset Android phone, set up from nothing, scanned a QR
+  code and showed the subject's live glucose — 117 mg/dL, one minute old, matching
+  the number on the subject's own screen — over the open internet, with no server,
+  no account and nothing typed. Two scans: one to follow, one to grant.
+* **A relay.** A stranger peer, granted nothing, replicated 146 segments and all 219
+  wraps, could open none of it, and served the complete history to a granted reader
+  while the originating phone was switched off. 33,800 records over 73 days.
 
 Not reviewed cryptography. See [Limits](#limits) before trusting it with anything.
 
@@ -84,6 +92,23 @@ with them are opposites, and both are ordinary — so it names the key and asks.
 An invite is **not a secret and not a grant**. Anyone holding it can download your
 ciphertext and open none of it.
 
+### How live is it
+
+A follower polls every **two minutes** while awake, which is comfortably under the
+five-minute cadence a CGM produces. Measured, not intended: 105s and 123s between
+unattended refreshes.
+
+**Android decides the rest.** Doze batches background work, so two minutes means two
+minutes while the phone is awake and something longer while it is in a pocket. A
+follower phone should be excused from battery optimisation, or it will be quiet for
+much longer than that. This is why every reading is shown **with its age** rather
+than as a bare number that implies it is current: a follower's dangerous failure is
+not an error on screen, it is a value that looks fresh and is nine hours old.
+
+Nothing needs re-granting as time passes. Every segment sealed after a grant is
+wrapped for that reader as it is written, so a follower keeps receiving data
+indefinitely until it is withdrawn.
+
 ## The trade
 
 The whole design is one bargain, and it is worth reading before anything else.
@@ -144,7 +169,8 @@ docs/decisions.md        What is settled (D1–D15), and what would reopen each
 crates/diaswarm-core     Records, sealing, the vault, grants. The reference implementation
 crates/diaswarm-net      Peers: serving, fetching, following, over iroh (QUIC)
 crates/diaswarm-android  The JNI surface the phone calls
-plugin/                  The AAPS add-on: settings screen, scanner, sync worker
+plugin/                  The AAPS add-on: settings screen, QR scanner, sync worker,
+                         and the follower that keeps other people's history current
 
 tools/canon.py           AAPS SQLite → canonical records, with a dropped-and-why report
 tools/seal.py            The sealing construction in Python, byte-identical to Rust
@@ -177,6 +203,14 @@ because on a looping phone a mismatch costs you a pump re-pairing.
   ask the network who holds a given subject.
 - **Metadata leaks.** The number of grants and roughly when they happened are
   visible in the log, even though who they name is not.
+- **Background sync is at Android's mercy.** Two minutes while awake; Doze stretches
+  it, and a follower not excused from battery optimisation will be much slower. There
+  is no push — a subscribe-and-notify protocol would fix the foreground case and Doze
+  would still govern the rest.
+- **Storage only grows.** A follower keeps everything it fetches, about 25 MB per
+  year per person followed. There is no pruning and no way to hold only recent days.
+- **No pause.** The only controls are withdrawing the grant or turning the plugin
+  off. There is nothing between "sharing" and "not sharing".
 - **iOS is out of scope.**
 
 ## Licence

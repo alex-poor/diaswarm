@@ -242,6 +242,71 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D17 · A follower polls; it is not pushed to
+
+**Settled 2026-09-09.** A phone that follows someone refreshes on a timer —
+every two minutes while awake — rather than being notified when new data
+exists.
+
+The subject cannot push, and that is structural rather than lazy: a subject
+does not know who follows them. Following is unilateral and needs no
+permission, the grant log names nobody (D13), and a fetch says nothing about
+who is fetching (D15). There is no list of followers to notify, by design.
+
+So the connection has to be opened by the follower. It could be held open — a
+subscribe request that streams notifications — and that is the right answer for
+a foregrounded app. It is not an answer for a phone in a pocket: Doze closes
+sockets and batches wakeups, so background freshness is Android's decision
+whatever the protocol does. Polling and subscribing converge to the same place
+in the background, and polling is far simpler.
+
+**Two minutes because a CGM produces a reading every five.** Polling faster
+mostly discovers nothing has changed, which costs a manifest and a connection —
+an unchanged subject transfers no segments and no wraps. Measured on two
+phones: 105s and 123s between unattended refreshes.
+
+**Only on a phone that follows somebody.** The same code runs on a phone driving
+an insulin pump, and waking it every two minutes to ask a question it has no
+reason to ask is a battery cost for nothing.
+
+WorkManager's periodic floor is fifteen minutes, which is useless for glucose —
+a reading would be seen a quarter of an hour late. A one-time job can carry any
+delay and re-arm itself; the periodic job stays underneath as the thing that
+restarts the chain after the process is killed.
+
+*Reopens if:* two minutes proves too stale in use, which would mean adding
+subscribe for the foreground case rather than polling harder.
+
+---
+
+### D16 · An invite is one string, and it works in both directions
+
+**Settled 2026-09-09.** Sharing is bootstrapped by
+`diaswarm:1:<subject>:<endpoint>:<purpose>:<check>`, shown as a QR code.
+
+It replaced moving two 64-character hex strings between two devices by hand,
+where a single transposed character produces a key that is structurally perfect
+and belongs to nobody — and the resulting failure is silence: the fetch reaches
+no one, or reaches someone with nothing to say for you. Four bytes of checksum
+turn that into a sentence a person can act on.
+
+**The subject field is exactly the key a grant is made against**, so one code
+serves both directions: scan someone's invite to follow them, or to share with
+them. Those are opposites and both ordinary, so scanning asks which was meant
+rather than guessing — and never does both, which would hand out access nobody
+chose to give.
+
+**An invite is not a secret and not a grant.** Anyone holding one can fetch
+ciphertext and open none of it; access still requires the subject to grant that
+specific key, on their own device. Leaking one costs what publishing a public
+key costs.
+
+The endpoint in it is a first contact, not an address of record: any peer
+holding the subject serves identical bytes (D15), and a follower collects more
+endpoints as it goes.
+
+---
+
 ### D15 · A fetch says nothing about who is fetching
 
 **Settled 2026-09-09.** A peer asks for a subject's whole vault — every
@@ -486,7 +551,7 @@ seven and renumbered them**, which is how an open question stops being tracked.
 | **0** | ~~**Do grant records need to be private too?**~~ **Addressed 2026-09-09** — see D13. Grants are filed under a tag derived from the shared secret, so the log names no reader and no purpose, and the same reader is a different tag to every subject. What still leaks is *how many* grant events there are and roughly when | Largely closed; the residue is volume, not identity |
 | 1 | **Does MLS tolerate a Delivery Service that is offline half the day?** The commit chain has to survive Doze, a flat battery and a week in a drawer | Decides whether D2's fallback is real |
 | 2 | **Replicate or fetch**, per grant type rather than per architecture. A design that quietly picks one has picked the use case too | The D3 trade, applied case by case |
-| 3 | **What does a follower see when the phone has been dark six hours?** A swarm must distinguish *"nothing happened"* from *"nothing arrived"* | Nightscout answers this badly |
+| 3 | ~~**What does a follower see when the phone has been dark six hours?**~~ **Partly answered 2026-09-09** — every reading is shown with its age, an unreachable peer is reported per endpoint with the reason, and a subject held-but-unreadable is distinguished from one that has sent nothing. What is still open is the six-hour case itself: Doze decides how dark a follower goes, and nothing yet warns that silence has lasted too long | The display distinguishes them; nothing yet *alerts* |
 | 4 | **Cohort re-identification.** A 5-minute CGM trace is close to a fingerprint | The question an ethics committee asks first |
 | 5 | **Multi-device.** A phone and a spare is the problem `p2panda-spaces` exists to solve, and it is not optional — loop phones get replaced | Blocked on the same gap as D2 |
 | 6 | **Delegation.** Diabetes has minors and has emergencies. The delegate for a child is permanent; the delegate in an emergency is unplanned | |
