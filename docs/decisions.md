@@ -272,12 +272,23 @@ warning survives in that reduced form.
 **Two things came out of the deletion that were bugs, not cleanup:**
 
   * **A pooled peer never answered on `diaswarm/5`.** p2panda hashes the
-    protocol id with its network id before iroh sees it, so the follow path had
-    been dialling an ALPN nothing listens on — and the refusal, "peer doesn't
-    support any known protocol", reads exactly like the subject's phone being
-    switched off. `swarm::wire_alpn` derives what actually goes on the wire and
-    serve, fetch and refresh all use it, so a CLI peer and a pooled phone speak
-    the same protocol. The derivation is p2panda's and private, so
+    protocol id with its network id before iroh sees it, so the follow path was
+    dialling an ALPN nothing listens on — and the refusal, "peer doesn't support
+    any known protocol", reads exactly like the subject's phone being switched
+    off.
+
+    **Caught one install before it mattered, and worth recording as a near
+    miss.** The mismatch arrived with the commit that moved serving into the
+    pool and deleted the old router; until then both ends used the plain string
+    and following worked. The phones were still two commits behind that, so
+    their followers kept working and nothing looked wrong — the code on `main`
+    was broken and the hardware said it was fine. Measured with a probe that
+    reproduced the shipped configuration exactly: plain ALPN refused, mixed ALPN
+    reached.
+
+    `swarm::wire_alpn` derives what actually goes on the wire and serve, fetch
+    and refresh all use it, so a CLI peer and a pooled phone speak the same
+    protocol. The derivation is p2panda's and private, so
     `an_address_dial_reaches_a_pooled_peer` fails loudly if it ever changes.
   * **diaswarm has its own network id.** p2panda's default is shared with every
     application using the library, and pool size decides bucket depth, which
