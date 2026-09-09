@@ -161,6 +161,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             sealPending()
             applyPendingGrants()
             refreshFollowed()
+            poolPass()
             val amendments = SwarmNative.emitterAmendments(emitter)
             if (amendments > 0) {
                 // Recorded, not acted on. See spec §7 and the class comment.
@@ -251,6 +252,36 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         }
         pending.clear()
         aapsLogger.info(LTag.CORE, "swarm: ${SwarmNative.vaultStatus(vault)}")
+    }
+
+    /**
+     * Take part in the pool: say what we hold, hear what we should, take some.
+     *
+     * Joining is not participating, and the difference is easy to miss. A phone
+     * that joins and never ticks appears in the pool, is counted on by every
+     * peer computing its share, and holds nothing for anybody — which is worse
+     * than not being there, because the peers that would otherwise have covered
+     * that slice believe it is covered.
+     *
+     * Two subjects a pass. This runs inside the sync worker on a phone driving
+     * an insulin pump, and fetching somebody's year of history is not something
+     * to do all at once on mobile data.
+     */
+    private fun poolPass() {
+        val handle = SwarmEndpoint.handle
+        if (handle == 0L) return
+        val report = SwarmNative.swarmTick(handle, 2)
+        if (report.isEmpty()) {
+            aapsLogger.debug(LTag.CORE, "swarm: pool pass failed")
+            return
+        }
+        val f = report.split('\t')
+        aapsLogger.info(
+            LTag.CORE,
+            "swarm: pool ${f.getOrElse(0) { "?" }} peers, ${f.getOrElse(1) { "?" }} buckets, " +
+                "holding ${f.getOrElse(2) { "?" }}, want ${f.getOrElse(3) { "?" }}, " +
+                "took ${f.getOrElse(4) { "?" }}"
+        )
     }
 
     /**
