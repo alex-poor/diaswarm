@@ -173,30 +173,52 @@ fn run() -> Result<(), String> {
             }
 
             let tag = hex(&grant_tag(&subject.encryption, &reader, purpose));
-            let prior = vault
+            let standing = vault
                 .grants()
                 .map_err(|e| format!("{e:?}"))?
                 .into_iter()
                 .filter(|g| g.tag == tag)
-                .map(|g| g.segment)
-                .max();
+                .next_back()
+                .map(|g| (g.act, g.segment));
 
-            // A FIRST grant covers all history, because handing over the whole
-            // record is what "share my data with my partner" means. A RE-grant
-            // resumes from the next segment: dating it before an existing
-            // withdrawal would put it earlier in a log read as "the latest
-            // statement at or before this segment", so it would be silently
-            // swallowed by the stop that follows — it would look like it worked
-            // and do nothing.
+            // Three cases, and the middle one used to be missing.
+            //
+            //   * NOTHING YET — cover all history, because handing over the
+            //     whole record is what "share my data with my partner" means.
+            //   * A GRANT ALREADY STANDS — re-state it exactly, changing
+            //     nothing. This is the repair path: the wrapping below runs
+            //     either way, so re-granting fills in wraps that went missing
+            //     without the log gaining a line that says nothing new.
+            //     Treating this as a fresh grant dated at `next_seq` is what
+            //     an earlier version did, and it appended to a hash-chained
+            //     log every time someone re-issued a grant.
+            //   * A WITHDRAWAL STANDS — resume from the next segment. Dating
+            //     it earlier would put it before the stop in a log read as
+            //     "the latest statement at or before this segment", so the
+            //     stop would swallow it: it would look like it worked and do
+            //     nothing.
             let at = match args.get(5).and_then(|s| s.parse::<u64>().ok()) {
                 Some(explicit) => explicit,
-                None if prior.is_some() => vault.next_seq().map_err(|e| format!("{e:?}"))?,
-                None => 0,
+                None => match &standing {
+                    None => 0,
+                    Some((act, seg)) if act == "grant" => *seg,
+                    Some(_) => vault.next_seq().map_err(|e| format!("{e:?}"))?,
+                },
             };
-            if prior.is_some() && args.get(5).is_none() {
-                out!("  note     re-granting from segment {at}, not from the start;");
-                out!("           pass a segment to override, but a grant dated");
-                out!("           before an existing withdrawal has no effect");
+            if args.get(5).is_none() {
+                match &standing {
+                    Some((act, _)) if act == "grant" => {
+                        out!("  note     this grant already stands from segment {at};");
+                        out!("           re-issuing any wraps that are missing, and");
+                        out!("           leaving the log as it is");
+                    }
+                    Some(_) => {
+                        out!("  note     re-granting from segment {at}, not from the start;");
+                        out!("           pass a segment to override, but a grant dated");
+                        out!("           before an existing withdrawal has no effect");
+                    }
+                    None => {}
+                }
             }
             vault
                 .record_grant(&subject, &reader, purpose, "grant", at)
