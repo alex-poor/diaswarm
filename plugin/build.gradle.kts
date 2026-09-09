@@ -35,6 +35,12 @@ dependencies {
     // (it came in for the removed SmsCommunicator), and jitpack is enabled for
     // every module, so this resolves offline.
     implementation(libs.com.github.kenglxn.qrgen.android)
+    // Scanning. Declared with a literal coordinate ON PURPOSE: adding it to
+    // AAPS's gradle/libs.versions.toml would be a change to the loop app's own
+    // build for the sake of an add-on, and the standing constraint on this work
+    // is that the rest of that app stays untouched. It brings its own
+    // CaptureActivity, so nothing needs registering in the app's manifest.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     // LoggingWorker, which the sync worker extends.
     implementation(project(":core:objects"))
     // WorkManager: the drain runs as a worker, off the loop's thread.

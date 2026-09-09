@@ -144,6 +144,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             sources.forEach { drain(it) }
             sealPending()
             applyPendingGrants()
+            refreshFollowed()
             val amendments = SwarmNative.emitterAmendments(emitter)
             if (amendments > 0) {
                 // Recorded, not acted on. See spec §7 and the class comment.
@@ -234,6 +235,27 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         }
         pending.clear()
         aapsLogger.info(LTag.CORE, "swarm: ${SwarmNative.vaultStatus(vault)}")
+    }
+
+    /**
+     * Pull anything new from the people this phone follows.
+     *
+     * On the same pass as the outbound drain, because it is the same question
+     * — "has anything changed?" — and a follower that only refreshed when the
+     * user opened a screen would show whatever was true last time they looked.
+     * §12.3 is about exactly this: a reading that is stale and does not say so.
+     *
+     * Costs nothing when nothing has changed: the manifest carries sizes and a
+     * wrap count, so an unchanged subject transfers no bytes at all. Failures
+     * are logged and dropped — an unreachable peer is the ordinary condition of
+     * a swarm, not an error, and the freshness display is what tells the user
+     * it has been going on too long.
+     */
+    private fun refreshFollowed() {
+        val store = SwarmPaths.store(context).absolutePath
+        val reached = SwarmNative.netRefresh(store)
+        if (reached < 0) aapsLogger.debug(LTag.CORE, "swarm: refresh failed ($reached)")
+        else if (reached > 0) aapsLogger.debug(LTag.CORE, "swarm: refreshed $reached followed subject(s)")
     }
 
     /**

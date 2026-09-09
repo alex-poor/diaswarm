@@ -19,4 +19,25 @@
     <string name="swarm_reader_row">%1$s\n%2$s</string>
     <string name="swarm_readers_explain">To stop sharing with someone, copy their key above and paste it into “Stop sharing with”.</string>
     <string name="swarm_no_readers">Nobody. Use “Share with someone” to add a key.</string>
+
+    <string name="swarm_scan">Scan a code</string>
+    <string name="swarm_scan_summary">Point the camera at someone else\'s invite</string>
+    <string name="swarm_scan_prompt">Point at their invite code</string>
+    <string name="swarm_scan_not_an_invite">That is a QR code, but not a Swarm invite. Ask them to open Swarm sharing → Your invite and show you that code.</string>
+    <string name="swarm_scanned">Scanned</string>
+    <string name="swarm_scanned_body">%1$s\n\nWhat should this do?\n\nFOLLOW THEM keeps a copy of their history. You will not be able to read any of it until they share with you.\n\nSHARE WITH THEM lets that key read yours, as “%2$s”.</string>
+    <string name="swarm_scan_follow">Follow them</string>
+    <string name="swarm_scan_share">Share with them</string>
+    <string name="swarm_now_following">Now following them. You cannot read anything until they share with you.</string>
+    <string name="swarm_already_following">Already following them.</string>
+    <string name="swarm_follow_failed">Could not follow that invite (%1$d).</string>
+    <string name="swarm_will_share">They will be able to read your history from the next sync.</string>
+
+    <string name="swarm_following">People you follow</string>
+    <string name="swarm_following_summary">Whose history this phone keeps a copy of</string>
+    <string name="swarm_following_none">Nobody yet. Use “Scan a code” to follow someone.</string>
+    <string name="swarm_following_row">%1$s\n%2$s</string>
+    <string name="swarm_following_reading">%1$.1f mg/dL, %2$d min ago</string>
+    <string name="swarm_following_unreadable">Held, but not readable — they have not shared with you yet.</string>
+    <string name="swarm_following_nothing">Nothing has arrived from them yet.</string>
 </resources>

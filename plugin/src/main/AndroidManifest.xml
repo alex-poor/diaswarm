@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      CAMERA, for reading an invite.
+
+      A REAL ADDITION TO THE PERMISSIONS OF AN APP THAT DRIVES AN INSULIN PUMP,
+      and worth being explicit about. It is declared here, in the add-on module,
+      so it is visible in this repo rather than buried in the loop app's own
+      manifest, and it exists for exactly one screen: pointing the phone at
+      someone else's invite code.
+
+      `required="false"`: a phone with no camera must still install and loop.
+      The scan button is the only thing that stops working.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
+    <application>
+        <activity
+            android:name=".SwarmScanActivity"
+            android:exported="false"
+            android:label="@string/swarm_scan"
+            android:screenOrientation="portrait" />
+    </application>
+</manifest>

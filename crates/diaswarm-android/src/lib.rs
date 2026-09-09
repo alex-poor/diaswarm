@@ -281,6 +281,130 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultStatus<
     to_jstring(env, summary)
 }
 
+// ---------------------------------------------------------------------------
+// Following, from the phone
+// ---------------------------------------------------------------------------
+//
+// The phone was a publisher: it sealed its own history and served it, and had
+// no way to hold anyone else's. That is only half a peer, and it is the half
+// that cannot be trialled — two phones where neither can follow the other have
+// nothing to show each other.
+
+/// Start keeping a copy of whoever sent this invite. Returns 1 if anything
+/// changed, 0 if it was already known, negative on failure.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netFollow<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    store_path: JString<'a>,
+    invite_text: JString<'a>,
+) -> jlong {
+    let (Ok(store), Ok(text)) = (env.get_string(&store_path), env.get_string(&invite_text)) else {
+        return -1;
+    };
+    let Ok(inv) = diaswarm_core::invite::Invite::parse(&String::from(text)) else { return -2 };
+    match diaswarm_net::peer::add_follow(
+        Path::new(&String::from(store)),
+        &inv.subject,
+        &inv.endpoint,
+        Some(&inv.purpose),
+    ) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(_) => -3,
+    }
+}
+
+/// Bring every followed subject up to date. Returns how many were reached, or
+/// a negative code. Blocking: the caller is already a worker thread.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netRefresh<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    store_path: JString<'a>,
+) -> jlong {
+    let Ok(store) = env.get_string(&store_path) else { return -1 };
+    let store = PathBuf::from(String::from(store));
+    let Ok(runtime) = tokio::runtime::Runtime::new() else { return -2 };
+    match runtime.block_on(diaswarm_net::peer::refresh_all(&store, false)) {
+        Ok(results) => results.iter().filter(|r| r.reached()).count() as jlong,
+        Err(_) => -3,
+    }
+}
+
+/// What this phone follows, one per line: `subject<TAB>purpose<TAB>reached`.
+///
+/// `reached` is not stored — it is whether anything has ever arrived, judged by
+/// the replica existing on disk. A follower that has never reached anyone and
+/// one that is merely quiet must not look alike (§12.3).
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netFollowing<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    store_path: JString<'a>,
+) -> JString<'a> {
+    let Ok(store) = env.get_string(&store_path) else { return to_jstring(env, String::new()) };
+    let store = PathBuf::from(String::from(store));
+    let listing = diaswarm_net::peer::load_follows(&store)
+        .unwrap_or_default()
+        .iter()
+        .map(|f| {
+            let held = store.join(&f.subject).join("meta.json").exists();
+            format!(
+                "{}\t{}\t{}",
+                f.subject,
+                f.purpose.clone().unwrap_or_else(|| "relay".into()),
+                if held { "1" } else { "0" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    to_jstring(env, listing)
+}
+
+/// The most recent glucose reading this phone can open for a subject it
+/// follows, as `mgdl<TAB>millis`, or empty if it can open nothing.
+///
+/// THE AGE IS RETURNED, NOT A FRESHNESS VERDICT. A follower's dangerous failure
+/// is a number that looks current and is nine hours old, so the caller is
+/// handed the timestamp and made to say how old it is.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netLatest<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    store_path: JString<'a>,
+    subject: JString<'a>,
+    identity_path: JString<'a>,
+    purpose: JString<'a>,
+) -> JString<'a> {
+    let (Ok(store), Ok(subj), Ok(id), Ok(p)) = (
+        env.get_string(&store_path),
+        env.get_string(&subject),
+        env.get_string(&identity_path),
+        env.get_string(&purpose),
+    ) else {
+        return to_jstring(env, String::new());
+    };
+    let dir = PathBuf::from(String::from(store)).join(String::from(subj));
+    let Some(reader) = load_or_create_identity(Path::new(&String::from(id))) else {
+        return to_jstring(env, String::new());
+    };
+    let Ok(vault) = Vault::open(&dir) else { return to_jstring(env, String::new()) };
+    let Ok(opened) = vault.read_as(&reader, &String::from(p)) else {
+        return to_jstring(env, String::new());
+    };
+    let latest = opened
+        .values()
+        .flatten()
+        .filter(|r| r.kind() == "cgm")
+        .filter_map(|r| Some((r.t(), r.get("mgdl")?.as_f64()?)))
+        .max_by_key(|(t, _)| *t);
+    match latest {
+        Some((t, mgdl)) => to_jstring(env, format!("{mgdl}\t{t}")),
+        None => to_jstring(env, String::new()),
+    }
+}
+
 /// Who this subject has granted, one per line: `reader<TAB>purpose`.
 ///
 /// Read from the vault's private book, which is the only thing that can put a

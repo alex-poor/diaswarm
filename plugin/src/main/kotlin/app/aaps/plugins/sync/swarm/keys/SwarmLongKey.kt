@@ -78,4 +78,10 @@ enum class SwarmStringKey(
 
     /** Same, for the list of who can currently read. */
     ShowReaders("swarm_show_readers", "", exportable = false),
+
+    /** Same, for the camera. */
+    ScanCode("swarm_scan_code", "", exportable = false),
+
+    /** Same, for the list of people this phone follows. */
+    ShowFollowing("swarm_show_following", "", exportable = false),
 }

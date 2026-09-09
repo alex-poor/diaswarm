@@ -184,6 +184,34 @@ class SwarmPlugin @Inject constructor(
                     }
                 )
             )
+
+            // --- the other direction: following someone else ---------------
+            addPreference(
+                AdaptiveClickPreference(
+                    ctx = context,
+                    stringKey = SwarmStringKey.ScanCode,
+                    title = R.string.swarm_scan,
+                    summary = R.string.swarm_scan_summary,
+                    onPreferenceClickListener = {
+                        context.startActivity(
+                            android.content.Intent(context, SwarmScanActivity::class.java)
+                        )
+                        true
+                    }
+                )
+            )
+            addPreference(
+                AdaptiveClickPreference(
+                    ctx = context,
+                    stringKey = SwarmStringKey.ShowFollowing,
+                    title = R.string.swarm_following,
+                    summary = R.string.swarm_following_summary,
+                    onPreferenceClickListener = {
+                        SwarmSharing.showFollowing(context, following())
+                        true
+                    }
+                )
+            )
         }
     }
 
@@ -195,6 +223,8 @@ class SwarmPlugin @Inject constructor(
      */
     private fun currentInvite(): String {
         if (serving == 0L) return ""
+        // Deliberately does NOT require this phone to have sealed anything.
+        // A follower's invite is how it hands over the key you must grant.
         SwarmNative.check()
         val subject = SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)
         val endpoint = SwarmNative.netEndpointId(serving)
@@ -205,6 +235,29 @@ class SwarmPlugin @Inject constructor(
     /** Why there is no invite, in words a person can act on. */
     private fun inviteBlockedBecause(): String? =
         if (serving == 0L) rh.gs(R.string.swarm_invite_not_ready) else null
+
+    /**
+     * What this phone follows, each with the freshest thing it can open.
+     *
+     * Rows of `subject<TAB>purpose<TAB>reached<TAB>mgdl<TAB>millis`, with the
+     * reading fields empty when nothing opens. Assembled here because it needs
+     * both the store and this phone's identity, and the dialog should be handed
+     * something it can render rather than the means to go looking.
+     */
+    private fun following(): String {
+        SwarmNative.check()
+        val store = SwarmPaths.store(context).absolutePath
+        val identity = SwarmPaths.identity(context).absolutePath
+        return SwarmNative.netFollowing(store).lines().filter { it.isNotBlank() }.joinToString("\n") { row ->
+            val f = row.split('\t')
+            val subject = f.getOrElse(0) { "" }
+            val purpose = f.getOrElse(1) { "" }
+            val latest = if (f.getOrElse(2) { "0" } == "1") {
+                SwarmNative.netLatest(store, subject, identity, purpose)
+            } else ""
+            "$row\t$latest"
+        }
+    }
 
     private fun grantedReaders(): String {
         SwarmNative.check()
@@ -258,14 +311,20 @@ class SwarmPlugin @Inject constructor(
     private fun startServing() {
         if (serving != 0L) return
         SwarmNative.check()
-        val vault = SwarmPaths.vault(context, this::class.java)
-        if (!java.io.File(vault, "meta.json").exists()) {
-            aapsLogger.info(LTag.CORE, "swarm: nothing sealed yet, not serving")
-            return
-        }
-        // The STORE is served, not this vault: whatever this node has
-        // replicated from other subjects is served onward too, which is what
-        // makes it a peer rather than a personal server.
+
+        // SERVE EVEN WITH NOTHING OF OUR OWN TO SERVE.
+        //
+        // This used to return early unless this phone had sealed something,
+        // which quietly made a follower impossible. A second phone that only
+        // follows never seals, so it never served, so it had no endpoint id,
+        // so it could not produce an invite — and an invite is how it hands
+        // over the key you have to grant. The person who most needs to be
+        // reachable was the one guaranteed not to be.
+        //
+        // It is also wrong on its own terms: the STORE is what gets served,
+        // not this phone's vault, and a store can be full of other people's
+        // history while this phone has published nothing. Serving an empty one
+        // costs an idle endpoint.
         serving = SwarmNative.netStart(
             SwarmPaths.store(context).absolutePath,
             SwarmPaths.nodeKey(context).absolutePath
@@ -279,6 +338,10 @@ class SwarmPlugin @Inject constructor(
             LTag.CORE,
             "swarm: subject ${SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)}"
         )
+        val vault = SwarmPaths.vault(context, this::class.java)
+        if (!java.io.File(vault, "meta.json").exists()) {
+            aapsLogger.info(LTag.CORE, "swarm: nothing sealed here yet — following only")
+        }
     }
 
     private fun stopServing() {

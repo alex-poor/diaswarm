@@ -22,4 +22,17 @@ abstract class SwarmModule {
      */
     @ContributesAndroidInjector
     abstract fun contributesSwarmDataSyncWorker(): SwarmDataSyncWorker
+
+    /**
+     * The scan screen needs this for the same reason, and the cost of leaving
+     * it out is worse than a compile error.
+     *
+     * A `DaggerAppCompatActivity` with no contribution here throws
+     * "No injector factory bound" the moment it is launched — which, because
+     * it happens in `onCreate`, takes the whole app down. Observed exactly
+     * once, on a phone that was running a closed loop: tapping a settings row
+     * killed AAPS and it restarted. Nothing about it fails at build time.
+     */
+    @ContributesAndroidInjector
+    abstract fun contributesSwarmScanActivity(): SwarmScanActivity
 }

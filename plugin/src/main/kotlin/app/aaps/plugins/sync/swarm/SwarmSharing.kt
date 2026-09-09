@@ -139,6 +139,56 @@ object SwarmSharing {
     }
 
     /**
+     * Whose history this phone keeps a copy of, and how fresh each one is.
+     *
+     * THE AGE IS THE POINT, not the number. A follower's dangerous failure is
+     * not an error on screen — it is a reading that looks current and is nine
+     * hours old, which §12.3 names as the thing a swarm must not do. So every
+     * row says when, and a row with nothing readable says which of the two
+     * reasons applies: nothing has arrived, or it has arrived and cannot be
+     * opened because they have not shared with you.
+     */
+    fun showFollowing(context: Context, listing: String) {
+        val builder = dialog(context)
+        val ctx = builder.context
+        val view = column(ctx)
+        val rows = listing.lines().filter { it.isNotBlank() }
+        if (rows.isEmpty()) {
+            view.addView(TextView(ctx).apply { setText(R.string.swarm_following_none) })
+        } else {
+            val now = System.currentTimeMillis()
+            rows.forEach { row ->
+                val f = row.split('\t')
+                val subject = f.getOrElse(0) { "" }
+                val purpose = f.getOrElse(1) { "" }
+                val reached = f.getOrElse(2) { "0" } == "1"
+                val mgdl = f.getOrElse(3) { "" }.toDoubleOrNull()
+                val at = f.getOrElse(4) { "" }.toLongOrNull()
+
+                view.addView(TextView(ctx).apply {
+                    text = ctx.getString(R.string.swarm_following_row, purpose, subject)
+                    textSize = 11f
+                    setTextIsSelectable(true)
+                    setPadding(0, dp(ctx, 8f), 0, 0)
+                })
+                view.addView(TextView(ctx).apply {
+                    text = when {
+                        mgdl != null && at != null ->
+                            ctx.getString(R.string.swarm_following_reading, mgdl, (now - at) / 60_000)
+                        reached -> ctx.getString(R.string.swarm_following_unreadable)
+                        else -> ctx.getString(R.string.swarm_following_nothing)
+                    }
+                    setPadding(0, 0, 0, dp(ctx, 8f))
+                })
+            }
+        }
+        builder.setTitle(R.string.swarm_following)
+            .setView(scrolling(ctx, view))
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    /**
      * Who can currently read, from the subject's own private book.
      *
      * The grant log cannot answer this — it is filed under tags that name
