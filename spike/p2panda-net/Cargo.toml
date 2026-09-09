@@ -1,0 +1,16 @@
+[package]
+name = "p2panda-net-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pinned exactly, like the encryption spike. This exists to find out what THIS
+# release does; a version range would let the answer move underneath it.
+[dependencies]
+p2panda-net = "=0.7.1"
+p2panda-core = "=0.7.1"
+p2panda-discovery = "=0.7.1"
+iroh = "1.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+anyhow = "1"
+futures-util = "0.3"
