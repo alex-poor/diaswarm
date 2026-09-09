@@ -290,9 +290,28 @@ fn run() -> Result<(), String> {
             }
         }
 
+        // ANYONE HOLDING THE VAULT CAN RUN THIS, which is the point.
+        //
+        // It used to require the subject's identity FILE — their secret key —
+        // so the only person who could check the log for tampering was the
+        // person the log exists to hold to account. Everyone else got
+        // "CHAIN BROKEN", because they were verifying against the wrong key.
+        // The vault now publishes the signing key it is signed with.
         "log" => {
             let vault = Vault::open(Path::new(arg(1)?)).map_err(|e| format!("{e:?}"))?;
-            let subject = load(Path::new(arg(2)?))?;
+            let signer = match vault.signer().map_err(|e| format!("{e:?}"))? {
+                Some(k) => k,
+                None => {
+                    // Fall back to a supplied identity for vaults written
+                    // before the key was published — and say so, rather than
+                    // reporting a break that is really a missing key.
+                    let id = args.get(2).ok_or_else(|| {
+                        "this vault does not publish its signing key, so the chain \n                         cannot be checked from the vault alone. Pass the subject's \n                         identity file, or re-seal on the subject's device to publish it."
+                            .to_string()
+                    })?;
+                    load(Path::new(id))?.verifying()
+                }
+            };
             // The log itself names nobody. The subject's book does, and it
             // lives inside the vault but is never served — the same file
             // sealing uses to keep wraps current, so there is one record of
@@ -302,7 +321,7 @@ fn run() -> Result<(), String> {
             // enough to wrap anything.
             let book = vault.readers().map_err(|e| format!("{e:?}"))?;
             for g in vault.grants().map_err(|e| format!("{e:?}"))? {
-                let ok = Vault::verify(&g, &subject.verifying());
+                let ok = Vault::verify(&g, &signer);
                 let known = book.iter().find(|k| k.tag == g.tag);
                 let label = known.map(|k| format!("{}… for {}", &k.reader[..16], k.purpose));
                 let who = label.as_deref().unwrap_or("(unknown — not in this vault's book)");
@@ -315,7 +334,7 @@ fn run() -> Result<(), String> {
                     who
                 );
             }
-            match vault.verify_chain(&subject.verifying()).map_err(|e| format!("{e:?}"))? {
+            match vault.verify_chain(&signer).map_err(|e| format!("{e:?}"))? {
                 None => out!("  chain intact — no entry has been removed or reordered"),
                 Some(at) => out!("  CHAIN BROKEN at entry {at} — an entry was removed or altered"),
             }

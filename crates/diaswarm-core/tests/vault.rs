@@ -519,3 +519,81 @@ fn the_reader_book_is_not_served() {
         assert_eq!(mode & 0o077, 0, "the book must not be group- or world-readable");
     }
 }
+
+/// A REPLICATED LOG MUST BE VERIFIABLE BY WHOEVER HOLDS IT.
+///
+/// D13 replicates the grant log so that truncating it is detectable. That was
+/// not achievable: `meta.json` published the subject's X25519 key, used for
+/// sealing and wrapping, and the Ed25519 key the log is actually signed with
+/// appeared nowhere. So the only party who could check the signatures was the
+/// subject — the one party a tamper-evident log exists to hold to account.
+/// Everyone else got "CHAIN BROKEN", because they had no way to verify at all.
+#[test]
+fn a_holder_can_verify_the_chain_without_the_subjects_secret() {
+    let dir = tempdir::TempDir::new("signer").unwrap();
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject, OFFSET).unwrap();
+    vault.seal(20_400, &day(20_400, 5.0)).unwrap();
+    vault.record_grant(&subject, &reader.enc_public(), "follow", "grant", 0).unwrap();
+
+    // Copy it the way a peer would: everything the wire carries, and nothing
+    // that never leaves the subject's device.
+    let copy = tempdir::TempDir::new("signer-copy").unwrap();
+    std::fs::create_dir_all(copy.path().join("segments")).unwrap();
+    for f in ["meta.json", "grants.ndjson"] {
+        std::fs::copy(dir.path().join(f), copy.path().join(f)).unwrap();
+    }
+    assert!(
+        !copy.path().join("readers.json").exists(),
+        "the subject's private book must not be part of a replica"
+    );
+
+    let held = Vault::open(copy.path()).unwrap();
+    assert!(held.signer().unwrap().is_some(), "a replica must know who signs the log");
+    assert_eq!(
+        held.verify_own_chain().unwrap(),
+        None,
+        "a holder must be able to verify a chain it replicated"
+    );
+
+    // And it must actually detect tampering, not just always say yes.
+    let grants = std::fs::read_to_string(copy.path().join("grants.ndjson")).unwrap();
+    std::fs::write(copy.path().join("grants.ndjson"), grants.replace("\"segment\":0", "\"segment\":9")).unwrap();
+    assert_eq!(
+        Vault::open(copy.path()).unwrap().verify_own_chain().unwrap(),
+        Some(0),
+        "an altered grant must fail verification"
+    );
+}
+
+/// A vault from before the key was published heals rather than staying broken.
+///
+/// Sealing runs constantly and holds the identity, so the repair happens
+/// without anyone being told to run a migration — the only kind that runs.
+#[test]
+fn an_older_vault_publishes_its_signing_key_on_the_next_seal() {
+    let dir = tempdir::TempDir::new("heal").unwrap();
+    let subject = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject, OFFSET).unwrap();
+
+    // Strip the key, the way a vault written by the earlier build looks.
+    let meta = std::fs::read_to_string(dir.path().join("meta.json")).unwrap();
+    let stripped: serde_json::Value = {
+        let mut v: serde_json::Value = serde_json::from_str(&meta).unwrap();
+        v.as_object_mut().unwrap().remove("signer");
+        v
+    };
+    std::fs::write(dir.path().join("meta.json"), stripped.to_string()).unwrap();
+    assert!(Vault::open(dir.path()).unwrap().signer().unwrap().is_none());
+    assert!(
+        Vault::open(dir.path()).unwrap().verify_own_chain().is_err(),
+        "cannot-check must be an error, never a quiet pass"
+    );
+
+    Vault::open(dir.path()).unwrap().ensure_signer(&subject).unwrap();
+    assert_eq!(
+        Vault::open(dir.path()).unwrap().signer().unwrap().map(|k| k.to_bytes()),
+        Some(subject.verifying().to_bytes())
+    );
+}

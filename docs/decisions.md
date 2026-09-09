@@ -318,6 +318,23 @@ transport-layer decision and not a key-layer one — the seam D2a preserved.
 **Settled 2026-09-09**, addressing what feasibility.md §12.0 called the sharpest
 unsolved problem in the design.
 
+> **Amended 2026-09-09.** The log replicates so that truncating it is
+> detectable — and for most of a day it was not detectable by anybody who
+> mattered. `meta.json` published the subject's X25519 key, used for sealing and
+> wrapping; the Ed25519 key the log is actually *signed* with appeared nowhere
+> in the vault. So the only party who could check the signatures was the
+> subject, holding their own secret — the one party a tamper-evident log exists
+> to hold to account. Every replica that tried reported `CHAIN BROKEN`, because
+> it was verifying against a key that had never signed anything.
+>
+> The vault now publishes the signing key, `verify_own_chain` needs nothing
+> from anywhere else, and a vault written before this heals on its next seal or
+> grant — the two operations that hold the identity, so nobody has to be told
+> to run a migration. Not being able to check now reports as an error rather
+> than a pass, for the same reason §12.3 gives about a follower's readings.
+>
+> Found by replicating a log through a relay and asking a reader to verify it.
+
 The log used to carry `{"purpose":"clinician","reader":"<public key>"}`. Two
 leaks, and the second is worse than it first looks:
 

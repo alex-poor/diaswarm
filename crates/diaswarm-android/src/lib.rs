@@ -224,6 +224,11 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultSeal<'a
     let Some(subject) = load_or_create_identity(&id_p) else { return -2 };
     let Some(vault) = open_or_create_vault(&vault_p, &subject, offset_ms) else { return -3 };
 
+    // Publish the key the grant log is signed with, if an older build did not.
+    // Sealing is the operation that runs constantly and has the identity, so a
+    // vault heals here without anyone having to be told to migrate it.
+    let _ = vault.ensure_signer(&subject);
+
     let records: Vec<Record> = body
         .lines()
         .filter(|l| !l.trim().is_empty())

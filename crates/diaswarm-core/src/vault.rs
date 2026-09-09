@@ -127,6 +127,20 @@ struct Meta {
     /// figure computed from it.
     offset: i64,
     subject: String,
+    /// The subject's Ed25519 public key: what the grant log is signed with.
+    ///
+    /// **WITHOUT THIS, D13 DOES NOT HOLD.** The log replicates so that
+    /// truncating it is detectable — but only the subject could check the
+    /// signatures, because `subject` above is the X25519 key used for sealing
+    /// and wrapping, and the signing key appeared nowhere in the vault at all.
+    /// The one party a tamper-evident log exists to catch was the only party
+    /// able to test it. Found when a reader verified a log it had replicated
+    /// through a relay and had to be handed a secret key to do it.
+    ///
+    /// Optional only for vaults written before this existed; they self-heal on
+    /// the next seal or grant, both of which have the identity to hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    signer: Option<String>,
 }
 
 /// A segment: a run of records sealed under one key.
@@ -270,6 +284,7 @@ impl Vault {
             epoch: crate::EPOCH_BASIS.to_string(),
             offset,
             subject: hex(&subject.enc_public()),
+            signer: Some(hex(subject.verifying().as_bytes())),
         };
         fs::write(root.join("meta.json"), serde_json::to_vec_pretty(&meta).unwrap())?;
         Ok(Vault { root: root.to_path_buf(), subject_pub: subject.enc_public(), offset })
@@ -285,6 +300,56 @@ impl Vault {
         let mut subject_pub = [0u8; 32];
         subject_pub.copy_from_slice(&bytes);
         Ok(Vault { root: root.to_path_buf(), subject_pub, offset: meta.offset })
+    }
+
+    fn meta(&self) -> Result<Meta, VaultError> {
+        serde_json::from_slice(&fs::read(self.root.join("meta.json"))?)
+            .map_err(|e| VaultError::Malformed(e.to_string()))
+    }
+
+    /// The key the grant log is signed with, if this vault publishes it.
+    ///
+    /// Any holder can therefore check the chain. That is the whole point of
+    /// replicating the log (D13): tamper-evidence that only the subject can
+    /// evaluate is not evidence about the subject.
+    pub fn signer(&self) -> Result<Option<VerifyingKey>, VaultError> {
+        let Some(hexed) = self.meta()?.signer else { return Ok(None) };
+        let bytes: [u8; 32] = unhex(&hexed)?
+            .try_into()
+            .map_err(|_| VaultError::Malformed("signer key is not 32 bytes".into()))?;
+        VerifyingKey::from_bytes(&bytes)
+            .map(Some)
+            .map_err(|e| VaultError::Malformed(e.to_string()))
+    }
+
+    /// Record the subject's signing key in `meta.json` if it is not there.
+    ///
+    /// Self-heals a vault written before the key was published. Called from
+    /// sealing and from granting, which are the two operations that hold the
+    /// subject's identity — so it happens without anyone being told to run a
+    /// migration, which is the only kind of migration that actually runs.
+    pub fn ensure_signer(&self, subject: &Identity) -> Result<(), VaultError> {
+        let mut meta = self.meta()?;
+        let want = hex(subject.verifying().as_bytes());
+        if meta.signer.as_deref() == Some(want.as_str()) {
+            return Ok(());
+        }
+        meta.signer = Some(want);
+        fs::write(self.root.join("meta.json"), serde_json::to_vec_pretty(&meta).unwrap())?;
+        Ok(())
+    }
+
+    /// Check the chain against the key the vault itself publishes.
+    ///
+    /// The variant a holder can actually call: it needs no key from anywhere
+    /// else. Returns `Err` rather than a false pass when the vault does not
+    /// say who signs it — "cannot check" and "checked and fine" must not look
+    /// alike, which is the same rule §12.3 states for a follower's readings.
+    pub fn verify_own_chain(&self) -> Result<Option<u64>, VaultError> {
+        let signer = self
+            .signer()?
+            .ok_or_else(|| VaultError::Malformed("this vault does not publish its signing key".into()))?;
+        self.verify_chain(&signer)
     }
 
     pub fn subject_pub(&self) -> [u8; 32] {
@@ -458,6 +523,9 @@ impl Vault {
         segment: u64,
     ) -> Result<String, VaultError> {
         let tag = hex(&grant_tag(&subject.encryption, reader_pub, purpose));
+
+        // A log nobody else can verify is not tamper-evident (D13).
+        self.ensure_signer(subject)?;
 
         // The subject's private note of who this tag is, so segments cut after
         // today can still be wrapped for them. Written for a withdrawal too:
