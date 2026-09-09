@@ -10,7 +10,7 @@ use std::path::Path;
 use diaswarm_core::vault::{hex, Identity, Vault};
 use diaswarm_core::seal::grant_tag;
 use diaswarm_core::{Record, EPOCH_MS};
-use diaswarm_net::wire::{fetch_with, serve_with};
+use diaswarm_net::wire::{fetch_with, serve_with, Who};
 use iroh::SecretKey;
 
 const OFFSET: i64 = 12 * 3_600_000;
@@ -59,7 +59,7 @@ async fn a_reader_fetches_over_the_network_and_opens_what_it_was_granted() {
     // --- the partner ------------------------------------------------------
     let got = tmp("partner");
     let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
-    let (segments, wraps) = fetch_with(addr.clone(), &tag, &got, true).await.expect("fetch");
+    let (segments, wraps) = fetch_with(addr.clone(), Who::Tag(tag), &got, true).await.expect("fetch");
 
     assert_eq!(segments, 3, "every segment should transfer, readable or not");
     assert_eq!(wraps, 2, "the partner was granted from segment 1, so two wraps");
@@ -74,7 +74,7 @@ async fn a_reader_fetches_over_the_network_and_opens_what_it_was_granted() {
     let theirs = tmp("stranger");
     let their_tag = hex(&grant_tag(&stranger.encryption, &subject.enc_public(), "follow"));
     let (segments, wraps) =
-        fetch_with(addr, &their_tag, &theirs, true).await.expect("stranger fetch");
+        fetch_with(addr, Who::Tag(their_tag), &theirs, true).await.expect("stranger fetch");
     assert_eq!(segments, 3, "a stranger gets the ciphertext, by design");
     assert_eq!(wraps, 0, "and no wraps");
     assert!(
@@ -95,7 +95,7 @@ async fn the_grant_log_travels_too() {
     let router = serve_with(served, SecretKey::generate(), true).await.unwrap();
     let got = tmp("got-log");
     let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
-    fetch_with(router.endpoint().addr(), &tag, &got, true).await.unwrap();
+    fetch_with(router.endpoint().addr(), Who::Tag(tag), &got, true).await.unwrap();
 
     let fetched = Vault::open(&got).unwrap();
     let grants = fetched.grants().unwrap();

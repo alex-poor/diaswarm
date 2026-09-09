@@ -5,9 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use diaswarm_core::seal::grant_tag;
-use diaswarm_core::vault::{hex, Identity, Vault};
-use diaswarm_net::wire::{fetch, serve};
+use diaswarm_core::vault::{Identity, Vault};
+use diaswarm_net::wire::{fetch_as, serve, Who};
 use iroh::{EndpointAddr, EndpointId, SecretKey};
 
 fn usage() -> ExitCode {
@@ -111,27 +110,26 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             };
 
-            // The tag needs the subject's key, which is in the vault we have not
-            // fetched yet. So fetch once with a placeholder to learn who the
-            // subject is, then again for the wraps. Two round trips rather than
-            // asking the peer who they are — a peer's answer to that is not
-            // evidence of anything.
             let dir = PathBuf::from(into);
-            if let Err(e) = fetch(EndpointAddr::from(eid), &"0".repeat(64), &dir).await {
-                eprintln!("  {e:?}");
-                return ExitCode::FAILURE;
-            }
-            let Ok(vault) = Vault::open(&dir) else {
-                eprintln!("  fetched, but the vault does not open");
-                return ExitCode::FAILURE;
-            };
-            let tag = hex(&grant_tag(&reader.encryption, &vault.subject_pub(), purpose));
-            match fetch(EndpointAddr::from(eid), &tag, &dir).await {
+            match fetch_as(
+                EndpointAddr::from(eid),
+                Who::Reader { identity: reader, purpose: purpose.to_string() },
+                &dir,
+                false,
+            )
+            .await
+            {
                 Ok((segments, wraps)) => {
                     println!("  fetched      {segments} segments, {wraps} wraps for {purpose}");
-                    let opened = vault.read_as(&reader, purpose).unwrap_or_default();
-                    let records: usize = opened.values().map(Vec::len).sum();
-                    println!("  opens        {} epochs, {records} records", opened.len());
+                    match Vault::open(&dir) {
+                        Ok(vault) => {
+                            let me = load_identity(Path::new(ident)).unwrap();
+                            let opened = vault.read_as(&me, purpose).unwrap_or_default();
+                            let records: usize = opened.values().map(Vec::len).sum();
+                            println!("  opens        {} epochs, {records} records", opened.len());
+                        }
+                        Err(e) => println!("  fetched, but the vault does not open: {e:?}"),
+                    }
                 }
                 Err(e) => {
                     eprintln!("  {e:?}");

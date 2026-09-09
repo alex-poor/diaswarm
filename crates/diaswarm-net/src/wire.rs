@@ -12,6 +12,9 @@ use iroh::endpoint::{presets, Connection};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, SecretKey};
 
+use diaswarm_core::seal::grant_tag;
+use diaswarm_core::vault::{hex, Identity};
+
 use crate::{answer, install, install_segment, install_wrap, Manifest, Request, WrapBlob, ALPN};
 
 /// Serves one vault to whoever asks.
@@ -89,12 +92,38 @@ async fn ask(conn: &Connection, req: &Request) -> Result<Vec<u8>> {
 /// anyone watching exactly what you were granted — which is the leak D13 just
 /// closed in the grant log, reintroduced through traffic.
 pub async fn fetch(addr: EndpointAddr, tag: &str, into: &Path) -> Result<(usize, usize)> {
-    fetch_with(addr, tag, into, false).await
+    fetch_with(addr, Who::Tag(tag.to_string()), into, false).await
+}
+
+/// Who is fetching.
+///
+/// A reader knows their own secret but not, before the manifest arrives, the
+/// subject's public key — and the tag needs both. Passing the identity lets the
+/// tag be derived mid-flight, which is why this is not just a string.
+///
+/// The alternative, and what this replaced, was fetching the whole vault once
+/// with a placeholder tag purely to learn the subject, then fetching it all
+/// again. That downloaded six megabytes twice over a relay to answer a question
+/// the manifest had already answered.
+pub enum Who {
+    /// Derive the tag once the subject is known.
+    Reader { identity: Identity, purpose: String },
+    /// A tag already computed.
+    Tag(String),
+}
+
+pub async fn fetch_as(
+    addr: EndpointAddr,
+    who: Who,
+    into: &Path,
+    local_only: bool,
+) -> Result<(usize, usize)> {
+    fetch_with(addr, who, into, local_only).await
 }
 
 pub async fn fetch_with(
     addr: EndpointAddr,
-    tag: &str,
+    who: Who,
     into: &Path,
     local_only: bool,
 ) -> Result<(usize, usize)> {
@@ -110,17 +139,35 @@ pub async fn fetch_with(
     let grants = ask(&conn, &Request::Grants).await?;
     install(into, &manifest, &grants)?;
 
-    for (seq, epoch) in &manifest.segments {
+    // The subject is in the manifest, so the tag can be derived now — one pass.
+    let tag = match &who {
+        Who::Tag(t) => t.clone(),
+        Who::Reader { identity, purpose } => {
+            let meta: serde_json::Value = serde_json::from_str(&manifest.meta)?;
+            let subject_hex = meta["subject"].as_str().context("meta has no subject")?;
+            let bytes = diaswarm_core::vault::unhex(subject_hex)
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            let subject: [u8; 32] =
+                bytes.try_into().map_err(|_| anyhow::anyhow!("subject key is not 32 bytes"))?;
+            hex(&grant_tag(&identity.encryption, &subject, purpose))
+        }
+    };
+
+    eprintln!("  manifest     {} segments", manifest.segments.len());
+    for (n, (seq, epoch)) in manifest.segments.iter().enumerate() {
         let bytes = ask(&conn, &Request::Segment { seq: *seq, epoch: *epoch }).await?;
         install_segment(into, *seq, *epoch, &bytes)?;
+        if n % 10 == 0 || n + 1 == manifest.segments.len() {
+            eprintln!("  segment      {}/{} ({} bytes)", n + 1, manifest.segments.len(), bytes.len());
+        }
     }
 
     let wraps: Vec<WrapBlob> =
-        serde_json::from_slice(&ask(&conn, &Request::Wraps { tag: tag.into() }).await?)
+        serde_json::from_slice(&ask(&conn, &Request::Wraps { tag: tag.clone() }).await?)
             .unwrap_or_default();
     let opened = wraps.len();
     for w in wraps {
-        install_wrap(into, w.seq, tag, &w.bytes)?;
+        install_wrap(into, w.seq, &tag, &w.bytes)?;
     }
 
     conn.close(0u32.into(), b"done");
