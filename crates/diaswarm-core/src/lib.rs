@@ -15,6 +15,7 @@
 //! epoch a record falls in.
 
 pub mod seal;
+pub mod vault;
 
 use std::collections::BTreeMap;
 

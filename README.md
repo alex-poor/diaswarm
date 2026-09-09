@@ -47,7 +47,8 @@ make a 3 a.m. decision on what this says.
 docs/feasibility.md    The assessment. Architecture, frameworks, costs, plan
 docs/decisions.md      What is settled, and what would reopen it
 spec/records.md        The canonical record stream — the wire contract
-crates/diaswarm-core   spec/records.md v1 in Rust — the one implementation, NDK-bound
+crates/diaswarm-core   spec/records.md in Rust + sealing + the vault. One implementation
+crates/diaswarm-core/src/bin/diaswarm.rs   the desktop side: seal, grant, revoke, read
 spike/p2panda-seal     What p2panda-encryption 0.7.1 actually does, measured
 tools/canon.py         AAPS SQLite → canonical records. Works today
 tools/seal.py          Canonical records → epochs, sealed and wrapped per grantee
