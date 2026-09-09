@@ -35,7 +35,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-pub const ALPN: &[u8] = b"diaswarm/0";
+/// The protocol version, negotiated by QUIC before a byte is exchanged.
+///
+/// **Bumped whenever the wire shape changes.** Adding a size to the manifest
+/// was a silent break: peers still connected, and the mismatch surfaced as a
+/// failed request that a follower reported as "unreachable" — the subject
+/// looked offline when it was merely older. An ALPN mismatch refuses the
+/// connection instead, which is a thing a person can act on.
+pub const ALPN: &[u8] = b"diaswarm/1";
 
 /// One request. One per stream, answered with raw bytes then a clean close.
 #[derive(Debug, Serialize, Deserialize)]
@@ -55,8 +62,18 @@ pub enum Request {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Manifest {
     pub meta: String,
-    /// `(seq, epoch)` for each segment held.
-    pub segments: Vec<(u64, i64)>,
+    /// `(seq, epoch, bytes)` for each segment held.
+    ///
+    /// THE SIZE IS WHAT MAKES SYNC INCREMENTAL, and getting this wrong cost a
+    /// follower its freshness. The first attempt assumed only the newest
+    /// segment could grow, so it re-fetched that one and skipped the rest. But
+    /// there is an open segment PER EPOCH — `open.json` maps each one — and the
+    /// segment still being written for today is usually not the highest seq. A
+    /// follower sat there reporting a reading that aged and never changed,
+    /// which is precisely the failure the age display exists to catch.
+    ///
+    /// Comparing sizes needs no such assumption: re-fetch what differs.
+    pub segments: Vec<(u64, i64, u64)>,
 }
 
 /// One wrap, as it travels.
@@ -75,12 +92,14 @@ pub fn manifest(vault: &Path) -> Result<Manifest> {
     let meta = std::fs::read_to_string(vault.join("meta.json")).context("meta.json")?;
     let mut segments = Vec::new();
     for entry in std::fs::read_dir(segments_dir(vault))? {
-        let name = entry?.file_name().to_string_lossy().to_string();
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
         let Some(stem) = name.strip_suffix(".seal") else { continue };
         let mut parts = stem.splitn(2, '.');
         if let (Some(a), Some(b)) = (parts.next(), parts.next()) {
             if let (Ok(seq), Ok(epoch)) = (a.parse::<u64>(), b.parse::<i64>()) {
-                segments.push((seq, epoch));
+                let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                segments.push((seq, epoch, len));
             }
         }
     }

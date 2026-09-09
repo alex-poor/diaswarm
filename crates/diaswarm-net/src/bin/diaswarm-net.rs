@@ -212,10 +212,15 @@ async fn main() -> ExitCode {
                         // An unreachable subject is §9.7's availability problem.
                         // Counting it is the only way to know how bad it is on
                         // real hardware, which nothing in the docs measures.
-                        println!(
-                            "  unreachable   {missed} missed of {}   {e}",
-                            reachable + missed
-                        );
+                        // "unreachable" and "incompatible" are different
+                        // problems for whoever is reading this: one is a phone
+                        // in a tunnel, the other is a peer that needs updating.
+                        let why = if e.to_string().contains("connect") {
+                            "unreachable  "
+                        } else {
+                            "peer refused "
+                        };
+                        println!("  {why} {missed} missed of {}   {e}", reachable + missed);
                     }
                 }
                 // Flush explicitly: Rust block-buffers stdout when it is not a

@@ -126,13 +126,13 @@ async fn a_second_sync_fetches_only_what_changed() {
     assert_eq!(first, 3, "the first sync should fetch everything");
 
     let (second, _) = fetch_with(addr.clone(), Who::Tag(tag.clone()), &got, true).await.unwrap();
-    assert_eq!(second, 1, "only the open segment should be re-fetched, got {second}");
+    assert_eq!(second, 0, "nothing changed, so nothing should be re-fetched, got {second}");
 
     // A new day, and the follower picks it up without re-fetching the rest.
     vault.seal(20_003, &day(20_003, 103.0)).unwrap();
     vault.publish_wraps(&subject, &partner.enc_public(), "follow").unwrap();
     let (third, _) = fetch_with(addr, Who::Tag(tag), &got, true).await.unwrap();
-    assert!(third <= 2, "a new day should cost one or two segments, got {third}");
+    assert_eq!(third, 1, "a new day should cost exactly one segment, got {third}");
 
     let opened = Vault::open(&got).unwrap().read_as(&partner, "follow").unwrap();
     assert!(opened.contains_key(&20_003), "the new day did not arrive");

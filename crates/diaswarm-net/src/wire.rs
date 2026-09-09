@@ -153,15 +153,18 @@ pub async fn fetch_with(
         }
     };
 
-    // INCREMENTAL. A follower syncs every few minutes and almost nothing has
-    // changed; re-fetching the whole history each time would move megabytes to
-    // learn that. Only the open segment can grow, so a segment already held is
-    // re-fetched only if it is the one currently being written.
-    let open_seq = manifest.segments.last().map(|(seq, _)| *seq);
+    // INCREMENTAL, BY SIZE. A follower syncs every few minutes and almost
+    // nothing has changed; re-fetching the whole history to learn that would
+    // move megabytes over a phone's connection.
+    //
+    // By size rather than by "the newest one": there is an open segment per
+    // epoch, so the segment still being written today is usually not the
+    // highest seq. Assuming otherwise left a follower re-fetching a segment
+    // nothing was writing to, reporting a reading that aged and never changed.
     let mut fetched = 0usize;
-    for (seq, epoch) in &manifest.segments {
+    for (seq, epoch, len) in &manifest.segments {
         let path = into.join("segments").join(format!("{seq}.{epoch}.seal"));
-        if path.exists() && Some(*seq) != open_seq {
+        if path.metadata().map(|m| m.len()) .ok() == Some(*len) {
             continue;
         }
         let bytes = ask(&conn, &Request::Segment { seq: *seq, epoch: *epoch }).await?;
