@@ -1,0 +1,25 @@
+name: Bug
+description: Something behaves differently from what the docs claim
+labels: ["bug"]
+body:
+  - type: textarea
+    attributes:
+      label: What the docs claim, and what it actually does
+      description: |
+        Every decision in docs/decisions.md states what would reopen it. If you
+        are contradicting one, say which.
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: How to reproduce
+      description: No real data, keys or invites, please.
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: Logs
+      description: "`adb logcat -d | grep swarm:` — check it for anything identifying before pasting."
+  - type: checkboxes
+    attributes:
+      label: Safety
+      options:
+        - label: This involved AAPS crashing or failing to start on a phone that was looping

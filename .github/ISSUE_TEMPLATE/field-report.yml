@@ -1,0 +1,41 @@
+name: Field report — I tried it
+description: What happened when you actually used it. The most useful thing you can file.
+labels: ["field-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reports of it *working* are as useful as reports of it breaking — there
+        are very few of either. Please do not paste real glucose data, keys or
+        invites; they identify you.
+  - type: textarea
+    attributes:
+      label: What did you do, and what happened?
+      placeholder: |
+        Two phones, scanned the invite, granted from the other side...
+    validations: { required: true }
+  - type: dropdown
+    attributes:
+      label: Did a follower ever go quiet?
+      description: The failure this project most needs to hear about.
+      options:
+        - "No — it kept up"
+        - "Yes, and the screen told me (the age looked wrong)"
+        - "Yes, and I only found out because someone asked me"
+        - "Not sure"
+    validations: { required: true }
+  - type: input
+    attributes:
+      label: How stale did it get, at worst?
+      placeholder: "e.g. 20 minutes overnight"
+  - type: textarea
+    attributes:
+      label: Phones and versions
+      placeholder: |
+        Subject: Pixel 7, Android 15, AAPS 3.4.2.3-...
+        Follower: ..., battery optimisation exempt? yes/no
+  - type: markdown
+    attributes:
+      value: |
+        **Found something that lets the wrong person read data?** Do not file it
+        here — see [SECURITY.md](../blob/main/SECURITY.md).
