@@ -1,5 +1,10 @@
 package app.aaps.plugins.sync.swarm
 
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequest
+import androidx.work.WorkManager
+import app.aaps.plugins.sync.swarm.workers.SwarmDataSyncWorker
+import java.util.concurrent.TimeUnit
 import android.content.Context
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -62,6 +67,17 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
          * preference nobody can see would be worse than not offering them.
          */
         const val PURPOSE = "follow"
+
+        /**
+         * How often a following phone asks again.
+         *
+         * A CGM produces a reading every five minutes, so polling faster than
+         * that mostly discovers nothing has changed — which costs one QUIC
+         * connection and a manifest, because an unchanged subject transfers no
+         * segments and no wraps. Two minutes keeps the worst case comfortably
+         * under the data's own cadence without polling into the gaps.
+         */
+        const val FOLLOW_POLL_SECONDS = 120L
     }
 
     /** One queue to walk, expressed once instead of fourteen times. */
@@ -253,9 +269,46 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      */
     private fun refreshFollowed() {
         val store = SwarmPaths.store(context).absolutePath
+        val follows = SwarmNative.netFollowing(store).lines().count { it.isNotBlank() }
+        if (follows == 0) return
+
         val reached = SwarmNative.netRefresh(store)
         if (reached < 0) aapsLogger.debug(LTag.CORE, "swarm: refresh failed ($reached)")
         else if (reached > 0) aapsLogger.debug(LTag.CORE, "swarm: refreshed $reached followed subject(s)")
+
+        scheduleNextPoll()
+    }
+
+    /**
+     * Come back in two minutes, but only on a phone that follows somebody.
+     *
+     * WHY NOT JUST THE PERIODIC JOB. Fifteen minutes is WorkManager's floor for
+     * periodic work, and for someone watching glucose it is useless: a reading
+     * arrives every five minutes and they would see it a quarter of an hour
+     * later, which is worse than the thing this is meant to replace. A one-time
+     * job can carry any delay it likes and re-arm itself, so this does that; the
+     * periodic job stays underneath as the thing that restarts the chain after
+     * the process is killed.
+     *
+     * WHY IT IS CONDITIONAL. The same code runs on a phone driving an insulin
+     * pump, and waking that phone every two minutes to ask a question it has no
+     * reason to ask is a battery cost for nothing. A publisher follows nobody,
+     * so it never gets here.
+     *
+     * IT IS NOT A GUARANTEE. Doze batches this like everything else, so "two
+     * minutes" means two minutes while the phone is awake and something longer
+     * while it is in a pocket overnight. That is the platform, not the design —
+     * and it is why every reading is shown with its age rather than as a number
+     * that implies it is current.
+     */
+    private fun scheduleNextPoll() {
+        WorkManager.getInstance(context).beginUniqueWork(
+            SwarmPlugin.FOLLOW_JOB_NAME,
+            ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequest.Builder(SwarmDataSyncWorker::class.java)
+                .setInitialDelay(FOLLOW_POLL_SECONDS, TimeUnit.SECONDS)
+                .build()
+        ).enqueue()
     }
 
     /**

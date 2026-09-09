@@ -1,9 +1,12 @@
 package app.aaps.plugins.sync.swarm
 
 import android.content.Context
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequest
+import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.rx.AapsSchedulers
@@ -103,6 +106,7 @@ class SwarmPlugin @Inject constructor(
         if (isEnabled()) {
             repairWraps()
             startServing()
+            schedulePeriodicSync()
         }
         disposable += rxBus.toObservable(EventNewBG::class.java)
             .observeOn(aapsSchedulers.io)
@@ -207,6 +211,12 @@ class SwarmPlugin @Inject constructor(
                     title = R.string.swarm_following,
                     summary = R.string.swarm_following_summary,
                     onPreferenceClickListener = {
+                        // Kick a refresh as well as showing what is held. Opening
+                        // this is the one moment someone is definitely waiting for
+                        // an answer, and the periodic job could be 15 minutes away.
+                        // The dialog still shows what is on disk NOW, with its age,
+                        // rather than pretending to have waited for the fetch.
+                        enqueue()
                         SwarmSharing.showFollowing(context, following())
                         true
                     }
@@ -268,6 +278,7 @@ class SwarmPlugin @Inject constructor(
 
     override fun onStop() {
         disposable.clear()
+        WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_JOB_NAME)
         stopServing()
         super.onStop()
     }
@@ -351,6 +362,28 @@ class SwarmPlugin @Inject constructor(
         aapsLogger.info(LTag.CORE, "swarm: stopped serving")
     }
 
+    /**
+     * A heartbeat, because a follower has nothing of its own to react to.
+     *
+     * THE EVENT TRIGGERS ONLY FIRE ON A PHONE THAT IS LOOPING. `EventNewBG` and
+     * `EventNewHistoryData` come from a CGM and a pump, so a device that only
+     * follows someone else — no sensor, no pump, nothing writing to its
+     * database — never enqueued a sync at all. It would accept an invite, sit
+     * there, and fetch nothing, for ever. That is the exact shape of failure
+     * §12.3 is about: it looks like the other person has no data.
+     *
+     * Fifteen minutes is WorkManager's floor for periodic work, not a chosen
+     * number. The event triggers stay, because a looping phone should publish
+     * promptly rather than up to a quarter of an hour late.
+     */
+    private fun schedulePeriodicSync() {
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            PERIODIC_JOB_NAME,
+            ExistingPeriodicWorkPolicy.UPDATE,
+            PeriodicWorkRequest.Builder(SwarmDataSyncWorker::class.java, 15, TimeUnit.MINUTES).build()
+        )
+    }
+
     private fun enqueue() {
         WorkManager.getInstance(context).beginUniqueWork(
             JOB_NAME,
@@ -362,5 +395,13 @@ class SwarmPlugin @Inject constructor(
     companion object {
 
         const val JOB_NAME = "SwarmDataSync"
+        const val PERIODIC_JOB_NAME = "SwarmDataSyncPeriodic"
+
+        /**
+         * The fast poll a following phone re-arms after every pass. Separate
+         * from [JOB_NAME] so that a publish triggered by new CGM data and a
+         * follower's next poll cannot cancel one another.
+         */
+        const val FOLLOW_JOB_NAME = "SwarmFollowPoll"
     }
 }
