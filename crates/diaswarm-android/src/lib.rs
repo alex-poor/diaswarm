@@ -443,32 +443,22 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netRefresh<'
     let Ok(store) = env.get_string(&store_path) else { return -1 };
     let store = PathBuf::from(String::from(store));
 
-    // FETCH THROUGH THE ENDPOINT WE SERVE ON, when there is one.
+    // REFRESH THROUGH THE POOL, when this phone is in one.
     //
-    // A peer has one identity or discovery is worthless: the far side records
-    // whoever fetched from it and passes that on to later followers, so
-    // fetching from a throwaway endpoint hands out an address that stops
-    // existing when the sync ends. Serving and fetching from the same endpoint
-    // means the id this phone is known by is the id it answers on.
-    // The POOL handle, not the old serving one. One peer, one endpoint: a
-    // follower fetching from a second endpoint would be an identity the pool
-    // knows nothing about, and the far side would record it as somewhere to
-    // look that stops existing.
+    // Not merely "use the endpoint we serve on", though it does that too. A
+    // follower scanned one address, so on its own it is exactly as available as
+    // the subject's phone. Going through the swarm means that when that phone
+    // is asleep, a peer that announced holding the subject is asked instead —
+    // and it is asked by node id, so no address is written down anywhere.
     if handle != 0 {
         let pooled = unsafe { &*(handle as *const Pooled) };
-        let Ok(endpoint) = pooled.runtime.block_on(pooled.swarm.iroh_endpoint()) else {
-            return -2;
-        };
-        return match pooled
-            .runtime
-            .block_on(diaswarm_net::peer::refresh_all_on(&endpoint, &store))
-        {
+        return match pooled.runtime.block_on(pooled.swarm.refresh_follows()) {
             Ok(results) => results.iter().filter(|r| r.reached()).count() as jlong,
             Err(_) => -3,
         };
     }
 
-    // Not serving — still worth fetching, just not worth being remembered for.
+    // Not in the pool — the subject's own address is the only one there is.
     let Ok(runtime) = tokio::runtime::Runtime::new() else { return -2 };
     match runtime.block_on(diaswarm_net::peer::refresh_all(&store, false)) {
         Ok(results) => results.iter().filter(|r| r.reached()).count() as jlong,

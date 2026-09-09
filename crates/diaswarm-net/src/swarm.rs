@@ -31,7 +31,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
@@ -43,10 +42,6 @@ use serde::{Deserialize, Serialize};
 use crate::pool;
 use crate::wire::VaultServer;
 use crate::ALPN;
-
-fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
-}
 
 /// What a peer says on a bucket topic.
 ///
@@ -82,8 +77,16 @@ pub struct Swarm {
     /// each other if their windows happen to overlap — which, tested, they do
     /// not. The subscription has to outlive the pass.
     joined: Arc<Mutex<HashMap<u64, p2panda_net::gossip::GossipHandle>>>,
-    /// Subjects heard about on bucket topics, and who said they had them.
-    heard: Arc<Mutex<HashMap<String, String>>>,
+    /// Subjects heard about on bucket topics, and everyone who said they had
+    /// them.
+    ///
+    /// **A LIST, NOT THE LATEST.** One holder per subject was enough to decide
+    /// what to adopt, and useless for the case that matters: a follower falls
+    /// back to the pool precisely when a peer has gone quiet, and the peer that
+    /// has gone quiet is exactly the one a single-entry table is likely to be
+    /// remembering. Keeping every announcer means the fallback has somewhere
+    /// else to try.
+    heard: Arc<Mutex<HashMap<String, Vec<String>>>>,
 }
 
 impl Swarm {
@@ -93,12 +96,22 @@ impl Swarm {
     /// identity it already had — everything that ranks peers ranks them by it,
     /// and a new key would look like a departure and an arrival.
     pub async fn join(store: impl Into<PathBuf>, signing_key: p2panda_core::SigningKey) -> Result<Self> {
+        Self::join_network(store, signing_key, default_network()).await
+    }
+
+    /// Join a named pool. Used by tests, so a test run is alone in its own.
+    pub async fn join_network(
+        store: impl Into<PathBuf>,
+        signing_key: p2panda_core::SigningKey,
+        network: p2panda_net::NetworkId,
+    ) -> Result<Self> {
         let store = store.into();
         std::fs::create_dir_all(&store)?;
 
         let book = AddressBook::builder().spawn().await.context("address book")?;
         let endpoint = Endpoint::builder(book.clone())
             .signing_key(signing_key)
+            .network_id(network)
             .spawn()
             .await
             .context("endpoint")?;
@@ -145,6 +158,11 @@ impl Swarm {
         Ok(self.endpoint.endpoint().await?)
     }
 
+    /// The pool this peer is in. Two pools with different ids never meet.
+    pub fn network_id(&self) -> p2panda_net::NetworkId {
+        self.endpoint.network_id()
+    }
+
     pub async fn node_id(&self) -> Result<String> {
         Ok(self.endpoint.endpoint().await?.id().to_string())
     }
@@ -187,40 +205,7 @@ impl Swarm {
         let mut announced = 0usize;
 
         for bucket in &mine {
-            // Join once and stay joined; a listener runs for as long as the
-            // subscription does and collects whatever arrives whenever it does.
-            let handle = {
-                let existing = self.joined.lock().unwrap().get(bucket).cloned();
-                match existing {
-                    Some(h) => h,
-                    None => {
-                        let h =
-                            self.gossip.stream(topic(pool::bucket_topic(depth, *bucket))).await?;
-                        self.joined.lock().unwrap().insert(*bucket, h.clone());
-                        let heard = Arc::clone(&self.heard);
-                        let mut rx = h.subscribe();
-                        let b = *bucket;
-                        tokio::spawn(async move {
-                            while let Some(Ok(bytes)) = rx.next().await {
-                                if let Ok(BucketMessage::Holding { from, subjects }) =
-                                    serde_json::from_slice::<BucketMessage>(&bytes)
-                                {
-                                    if from.parse::<p2panda_net::NodeId>().is_err() {
-                                        continue;
-                                    }
-                                    let mut set = heard.lock().unwrap();
-                                    for s in subjects {
-                                        if is_subject(&s) && pool::bucket_of(&s, depth) == b {
-                                            set.insert(s, from.clone());
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                        h
-                    }
-                }
-            };
+            let handle = self.ensure_joined(depth, *bucket).await?;
 
             // Say what we have here, every pass — a peer that joined since the
             // last one has not heard it, and gossip does not repeat itself.
@@ -236,7 +221,7 @@ impl Swarm {
             }
         }
 
-        let wanted: Vec<(String, String)> = self
+        let wanted: Vec<(String, Vec<String>)> = self
             .heard
             .lock()
             .unwrap()
@@ -265,12 +250,137 @@ impl Swarm {
     pub async fn tick_and_adopt(&self, max: usize) -> Result<(TickReport, usize)> {
         let report = self.tick().await?;
         let mut taken = 0;
-        for (subject, from) in report.wanted.iter().take(max) {
-            if self.adopt(subject, from).await.is_ok() {
-                taken += 1;
+        for (subject, holders) in report.wanted.iter().take(max) {
+            // Any holder serves identical bytes (D15), so the first that
+            // answers is the right one and a refusal is not a failure.
+            for from in holders {
+                if self.adopt(subject, from).await.is_ok() {
+                    taken += 1;
+                    break;
+                }
             }
         }
         Ok((report, taken))
+    }
+
+    /// Join a bucket topic once, and keep listening for as long as we are up.
+    ///
+    /// **Joined once and stayed joined**, not re-subscribed per pass. Gossip is
+    /// ephemeral: a message reaches whoever is listening at the time and is
+    /// gone. Subscribing, publishing and then listening for a moment each pass
+    /// means two peers only hear each other if their windows overlap — which,
+    /// tested, they do not.
+    async fn ensure_joined(
+        &self,
+        depth: u8,
+        bucket: u64,
+    ) -> Result<p2panda_net::gossip::GossipHandle> {
+        if let Some(h) = self.joined.lock().unwrap().get(&bucket).cloned() {
+            return Ok(h);
+        }
+        let h = self.gossip.stream(topic(pool::bucket_topic(depth, bucket))).await?;
+        self.joined.lock().unwrap().insert(bucket, h.clone());
+
+        let heard = Arc::clone(&self.heard);
+        let mut rx = h.subscribe();
+        tokio::spawn(async move {
+            while let Some(Ok(bytes)) = rx.next().await {
+                if let Ok(BucketMessage::Holding { from, subjects }) =
+                    serde_json::from_slice::<BucketMessage>(&bytes)
+                {
+                    // A node id that does not parse cannot be dialled, so it is
+                    // not a hint — it is junk that would sit in the table
+                    // looking like an answer.
+                    if from.parse::<p2panda_net::NodeId>().is_err() {
+                        continue;
+                    }
+                    let mut set = heard.lock().unwrap();
+                    for s in subjects {
+                        if !is_subject(&s) || pool::bucket_of(&s, depth) != bucket {
+                            continue;
+                        }
+                        let who = set.entry(s).or_default();
+                        if !who.contains(&from) {
+                            who.push(from.clone());
+                            // Bounded: a subject announced by thousands of
+                            // peers must not become a list of thousands on a
+                            // phone. Any of them serves identical bytes.
+                            who.truncate(MAX_HEARD);
+                        }
+                    }
+                }
+            }
+        });
+        Ok(h)
+    }
+
+    /// Refresh everyone we follow, falling back to the pool when they are away.
+    ///
+    /// **THIS IS WHAT MAKES A GRANT SURVIVE THE SUBJECT'S PHONE.** A follower
+    /// scanned exactly one address — the subject's — so on its own it is as
+    /// available as that one device. There used to be a holder list for this:
+    /// peers recorded who had replicated them and handed the addresses on. It
+    /// worked, and it was a second, weaker discovery mechanism sitting beside
+    /// p2panda's, which is how a home IP address ended up in a file on a phone.
+    ///
+    /// The pool already says who holds what. Joining the bucket a followed
+    /// subject falls into means hearing its holders announce themselves, and
+    /// dialling one is a node id and p2panda's problem — no address is written
+    /// down here, and none is passed to anybody.
+    pub async fn refresh_follows(&self) -> Result<Vec<crate::peer::Refreshed>> {
+        let me = self.node_id().await?;
+        let members = self.pool_members().await?;
+        let depth = pool::depth_for(members.len());
+        let follows = crate::peer::load_follows(&self.store).unwrap_or_default();
+
+        // Listen where these subjects are talked about. Not our share — we are
+        // not holding for the pool here, we are asking after someone specific.
+        for f in &follows {
+            let _ = self.ensure_joined(depth, pool::bucket_of(&f.subject, depth)).await;
+        }
+
+        let endpoint = self.iroh_endpoint().await?;
+        let alpn = wire_alpn(self.endpoint.network_id());
+        let mut out = Vec::new();
+        for follow in follows {
+            let mut r =
+                crate::peer::refresh_one_on_alpn(&endpoint, &alpn, &self.store, &follow).await;
+            if !r.reached() {
+                // The scanned address is quiet. Somebody in the pool announced
+                // holding this, and any holder serves identical bytes (D15).
+                let holders: Vec<String> = self
+                    .heard
+                    .lock()
+                    .unwrap()
+                    .get(&follow.subject)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|h| *h != me)
+                    .collect();
+                for from in holders {
+                    match self.adopt(&follow.subject, &from).await {
+                        Ok((segments, wraps)) => {
+                            r.via = Some(from);
+                            r.segments = segments;
+                            r.wraps = wraps;
+                            break;
+                        }
+                        Err(e) => r.failures.push((from, format!("{e}"))),
+                    }
+                }
+            }
+            out.push(r);
+        }
+        Ok(out)
+    }
+
+    /// Everyone the pool has said holds this subject.
+    ///
+    /// Hints, not credentials: a peer that claims to hold something it does not
+    /// is found out by the fetch coming back empty.
+    pub fn holders_heard(&self, subject: &str) -> Vec<String> {
+        self.heard.lock().unwrap().get(subject).cloned().unwrap_or_default()
     }
 
     /// Fetch a subject we ought to be holding, from any peer that has it.
@@ -281,13 +391,6 @@ impl Swarm {
         crate::wire::fetch_over(&conn, subject, &into).await
     }
 
-    /// Note that a peer is alive, for the record kept on disk.
-    pub async fn remember_seen(&self) -> Result<()> {
-        for id in self.pool_members().await? {
-            let _ = pool::remember_peer(&self.store, &id, now_ms());
-        }
-        Ok(())
-    }
 }
 
 /// What one pass found.
@@ -298,8 +401,59 @@ pub struct TickReport {
     pub buckets: usize,
     pub held: usize,
     pub announced: usize,
-    /// Subjects in our buckets we do not have yet, and where to ask.
-    pub wanted: Vec<(String, String)>,
+    /// Subjects in our buckets we do not have yet, and everyone who has one.
+    pub wanted: Vec<(String, Vec<String>)>,
+}
+
+/// How many announcers to remember per subject.
+const MAX_HEARD: usize = 8;
+
+/// What [`crate::ALPN`] actually looks like on the wire inside a pool.
+///
+/// p2panda hashes the protocol id together with its network id before handing
+/// it to iroh, so two pools with different network ids cannot accidentally
+/// speak to each other. A dial that carries the plain string is refused with
+/// "peer doesn't support any known protocol" — which is indistinguishable, from
+/// the outside, from the peer having gone away, and cost an afternoon once
+/// already in this crate with a mismatched ALPN.
+///
+/// Derived rather than asked for, because p2panda keeps the mixing private.
+/// `an_address_dial_reaches_a_pooled_peer` in `tests/swarm.rs` is what keeps
+/// this honest: if p2panda ever changes the derivation, that test fails rather
+/// than followers quietly losing the ability to make first contact.
+pub fn wire_alpn(network_id: p2panda_net::NetworkId) -> Vec<u8> {
+    Hash::digest([&ALPN[..], &network_id[..]].concat()).as_bytes().to_vec()
+}
+
+/// The pool everyone joins by turning swarm on.
+///
+/// **NOT p2panda's default.** The default is shared with every other p2panda
+/// application, and on a network id everything else rests: it decides who is
+/// counted in the pool, which decides bucket depth, which decides what each
+/// peer holds. Sharing it with strangers running unrelated software means a
+/// pool size that has nothing to do with how many people are storing diabetes
+/// data, and peers announcing into topics nobody in this application is
+/// listening to.
+///
+/// It is also what keeps a test run off the wifi's real pool. Every test builds
+/// its own id and is alone in it; without that, `cargo test` on the same
+/// network as a phone that has swarm on joins that pool and starts adopting a
+/// real person's ciphertext.
+pub fn network_id(name: &str) -> p2panda_net::NetworkId {
+    *Hash::digest(format!("diaswarm/pool/1/{name}").as_bytes()).as_bytes()
+}
+
+/// The one real pool.
+pub fn default_network() -> p2panda_net::NetworkId {
+    network_id("")
+}
+
+/// What the vault protocol looks like on the wire in the real pool.
+///
+/// Every dial and every `accept` outside p2panda uses this, so a peer started
+/// by the CLI and a peer that joined the pool speak the same protocol.
+pub fn default_wire_alpn() -> Vec<u8> {
+    wire_alpn(default_network())
 }
 
 fn topic(bytes: [u8; 32]) -> Topic {

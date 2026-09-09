@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize};
 /// failed request that a follower reported as "unreachable" — the subject
 /// looked offline when it was merely older. An ALPN mismatch refuses the
 /// connection instead, which is a thing a person can act on.
-pub const ALPN: &[u8] = b"diaswarm/4";
+pub const ALPN: &[u8] = b"diaswarm/5";
 
 /// One request. One per stream, answered with raw bytes then a clean close.
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,33 +63,6 @@ pub enum Request {
     Grants { subject: String },
     /// One sealed segment.
     Segment { subject: String, seq: u64, epoch: i64 },
-    /// "I am a peer, I hold this subject, and here is where to reach me."
-    ///
-    /// The ADDRESSES are claimed; the identity is not. A peer's id comes from
-    /// the authenticated QUIC connection, so this can only ever describe the
-    /// sender — it cannot announce somebody else, which is what would make
-    /// discovery a way to aim followers at an address of an attacker's
-    /// choosing. A bogus address costs one failed dial, because reaching it
-    /// still requires a handshake matching the announced id.
-    ///
-    /// Needed because a bare endpoint id can only be resolved through a
-    /// discovery service. Carrying addresses is what lets two phones on the
-    /// same wifi find each other with the uplink down.
-    Announce { subject: String, addrs: Vec<String> },
-    /// Which other peers this one knows hold a subject.
-    ///
-    /// THE ANSWER TO "AVAILABLE WHEN YOUR PHONE IS OFF". Without it a follower
-    /// knows exactly one address — the one it scanned — so the moment that
-    /// device sleeps there is nowhere else to ask, and the whole point of
-    /// replicating to a swarm goes unrealised. The relay case was demonstrable
-    /// only because somebody typed a second address in by hand.
-    ///
-    /// **This publishes the follower set**, and that is a real cost, not a
-    /// footnote: anyone holding a subject's public key can ask any peer who
-    /// else carries that subject, and get back a list of stable, dialable
-    /// endpoint ids. It is the social-graph leak feasibility.md §9 already
-    /// names, arriving through the door that makes availability work. See D18.
-    Holders { subject: String },
     /// EVERY wrap this peer holds for a subject, whoever they are for.
     ///
     /// Asking for one tag was the obvious design and it was wrong twice over.
@@ -148,93 +121,6 @@ fn segments_dir(vault: &Path) -> PathBuf {
     vault.join("segments")
 }
 
-/// How many peers are remembered per subject.
-///
-/// A bound rather than a policy: an unbounded list is a place for anyone to
-/// write as much as they like into somebody else's storage, and a follower only
-/// needs a handful of addresses to survive one device sleeping.
-const MAX_HOLDERS: usize = 32;
-
-/// Is this an address that only means anything on a local network?
-///
-/// **PUBLIC ADDRESSES ARE NOT ADVERTISED, and this is not a detail.** The point
-/// of carrying addresses at all is the case where discovery is unavailable —
-/// two phones on the same wifi with the uplink down. A public address does not
-/// help there, and it is resolvable through discovery anyway, so announcing it
-/// buys nothing.
-///
-/// What it costs is precise: a home IP address, geolocatable, handed to anyone
-/// who knows the subject's public key and asks who holds it. On real hardware
-/// the first holder entry ever recorded contained one. An endpoint id is a
-/// pseudonym; an IP address is a place.
-pub fn is_local_address(a: &std::net::SocketAddr) -> bool {
-    use std::net::IpAddr;
-    match a.ip() {
-        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local() || v4.is_loopback(),
-        // Unique-local (fc00::/7) and link-local (fe80::/10). Written out
-        // because the std helpers for these are still unstable.
-        IpAddr::V6(v6) => {
-            let o = v6.octets();
-            v6.is_loopback() || (o[0] & 0xfe) == 0xfc || (o[0] == 0xfe && (o[1] & 0xc0) == 0x80)
-        }
-    }
-}
-
-fn holders_path(vault: &Path) -> PathBuf {
-    vault.join("holders.json")
-}
-
-/// Peers known to hold this subject.
-pub fn holders(vault: &Path) -> Vec<String> {
-    std::fs::read(holders_path(vault))
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Vec<String>>(&b).ok())
-        .unwrap_or_default()
-}
-
-/// Remember that a peer holds, or is about to hold, this subject.
-///
-/// Called when somebody asks for the manifest, because asking for it is what
-/// you do immediately before replicating — so the set of people who have asked
-/// is a good approximation of the set of people who have a copy.
-///
-/// Nothing here is taken on trust: the id comes from the authenticated QUIC
-/// connection, so a peer can only ever add ITSELF to somebody's list. It cannot
-/// name a third party, which is what would make this a way to point followers
-/// at an address of an attacker's choosing.
-pub fn remember_holder(vault: &Path, endpoint: &str) -> Result<()> {
-    // Either a bare endpoint id, or `id@addr` — the id is what authenticates,
-    // the address is only a hint for reaching it without discovery.
-    let id = endpoint.split('@').next().unwrap_or("");
-    if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Ok(());
-    }
-    let mut known = holders(vault);
-    match known.iter().position(|h| h.split('@').next() == Some(id)) {
-        // Already known. Keep whichever form says more: an entry that carries
-        // an address can be dialled on a network with no discovery at all,
-        // which is exactly when a local swarm matters most.
-        Some(at) => {
-            if endpoint.len() > known[at].len() {
-                known[at] = endpoint.to_string();
-                std::fs::create_dir_all(vault)?;
-                std::fs::write(holders_path(vault), serde_json::to_vec(&known)?)?;
-            }
-            return Ok(());
-        }
-        None => {}
-    }
-    known.push(endpoint.to_string());
-    // Oldest out first. A peer that has gone for good should not keep a slot
-    // forever just because it was early.
-    while known.len() > MAX_HOLDERS {
-        known.remove(0);
-    }
-    std::fs::create_dir_all(vault)?;
-    std::fs::write(holders_path(vault), serde_json::to_vec(&known)?)?;
-    Ok(())
-}
-
 /// Turn a requested subject into a path inside the store.
 ///
 /// **Checked, not trusted.** A subject is 64 hex characters and nothing else,
@@ -287,17 +173,12 @@ fn count_wraps(vault: &Path) -> usize {
 /// and `tag` is checked to be hex, so nothing a caller sends can become a path
 /// component — a request is not a filename, and letting it be one would turn
 /// every peer into a file server for the whole device.
+/// **The same bytes to everyone.** A peer does not know, and does not record,
+/// who asked. There was once a second argument here carrying the authenticated
+/// caller id so that a peer could remember who else held a subject; membership
+/// is p2panda's now, and a request that leaves no trace is a stronger property
+/// than the one that argument bought.
 pub fn answer(store: &Path, req: &Request) -> Result<Vec<u8>> {
-    answer_from(store, req, None)
-}
-
-/// Answer, knowing who is asking.
-///
-/// The caller's id is the authenticated endpoint on the other end of the QUIC
-/// connection, not anything it claimed. It is used for one thing: noticing that
-/// this peer is about to hold a copy of the subject, so that a later follower
-/// can be told where else to look.
-pub fn answer_from(store: &Path, req: &Request, caller: Option<&str>) -> Result<Vec<u8>> {
     match req {
         Request::Have => {
             let mut subjects: Vec<String> = Vec::new();
@@ -314,41 +195,7 @@ pub fn answer_from(store: &Path, req: &Request, caller: Option<&str>) -> Result<
         }
         Request::Manifest { subject } => {
             let vault = vault_of(store, subject)?;
-            // Asking for the manifest is the step before replicating, so this
-            // is where a peer learns that somebody else is about to have a copy.
-            if let Some(id) = caller {
-                let _ = remember_holder(&vault, id);
-            }
             Ok(serde_json::to_vec(&manifest(&vault)?)?)
-        }
-        Request::Announce { subject, addrs } => {
-            let vault = vault_of(store, subject)?;
-            if let Some(id) = caller {
-                // Filtered HERE as well as at the sender, because a peer
-                // that announces a public address should not be able to get it
-                // stored and handed on to everybody else.
-                let clean: Vec<&str> = addrs
-                    .iter()
-                    .map(String::as_str)
-                    .filter(|a| {
-                        a.parse::<std::net::SocketAddr>().map(|s| is_local_address(&s)).unwrap_or(false)
-                    })
-                    .take(8)
-                    .collect();
-                let entry =
-                    if clean.is_empty() { id.to_string() } else { format!("{id}@{}", clean.join(",")) };
-                let _ = remember_holder(&vault, &entry);
-            }
-            Ok(Vec::new())
-        }
-        Request::Holders { subject } => {
-            let mut known = holders(&vault_of(store, subject)?);
-            // Telling someone about themselves is noise, and would make a
-            // follower dial itself.
-            if let Some(id) = caller {
-                known.retain(|h| h != id);
-            }
-            Ok(serde_json::to_vec(&known)?)
         }
         Request::Grants { subject } => Ok(std::fs::read(
             vault_of(store, subject)?.join("grants.ndjson"),
@@ -401,18 +248,6 @@ pub fn install(into: &Path, manifest: &Manifest, grants: &[u8]) -> Result<()> {
 
 pub fn install_segment(into: &Path, seq: u64, epoch: i64, bytes: &[u8]) -> Result<()> {
     std::fs::write(segments_dir(into).join(format!("{seq}.{epoch}.seal")), bytes)?;
-    Ok(())
-}
-
-/// Merge addresses learned from a peer into this replica's own list.
-///
-/// Merged rather than replaced: two peers each know a different corner of the
-/// swarm, and taking only the last answer would make a follower forget the
-/// address it had been using.
-pub fn install_holders(into: &Path, learned: &[String]) -> Result<()> {
-    for h in learned {
-        remember_holder(into, h)?;
-    }
     Ok(())
 }
 

@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use diaswarm_core::vault::{hex, Identity};
 use iroh::{EndpointAddr, EndpointId};
 
-use crate::wire::{fetch_on, fetch_with};
+use crate::wire::{fetch_on_alpn, fetch_with};
 use iroh::Endpoint;
 
 /// Turn an upstream string into something dialable.
@@ -197,11 +197,24 @@ impl Refreshed {
 /// reason to prefer the subject over anyone else holding them.
 /// Refresh one subject using this peer's own endpoint.
 ///
-/// Preferred over [`refresh_one`] wherever a peer is already serving: the id
-/// the far side records is then the id this peer can actually be reached at,
-/// which is the whole basis of discovery.
+/// Preferred over [`refresh_one`] wherever a peer has one: a throwaway endpoint
+/// per fetch means the pool sees an identity it knows nothing about, and one
+/// that stops existing the moment the sync ends.
 pub async fn refresh_one_on(endpoint: &Endpoint, store: &Path, follow: &Follow) -> Refreshed {
-    refresh_inner(store, follow, Some(endpoint), false).await
+    refresh_inner(store, follow, Some((endpoint, &crate::swarm::default_wire_alpn())), false).await
+}
+
+/// Refresh one subject over an endpoint that answers on a non-default ALPN.
+///
+/// A peer in the pool does: p2panda mixes the protocol id with its network id.
+/// See [`crate::wire::fetch_on_alpn`].
+pub async fn refresh_one_on_alpn(
+    endpoint: &Endpoint,
+    alpn: &[u8],
+    store: &Path,
+    follow: &Follow,
+) -> Refreshed {
+    refresh_inner(store, follow, Some((endpoint, alpn)), false).await
 }
 
 /// Refresh everything, using this peer's own endpoint.
@@ -209,7 +222,7 @@ pub async fn refresh_all_on(endpoint: &Endpoint, store: &Path) -> Result<Vec<Ref
     let follows = load_follows(store)?;
     let mut out = Vec::new();
     for f in &follows {
-        out.push(refresh_inner(store, f, Some(endpoint), false).await);
+        out.push(refresh_inner(store, f, Some((endpoint, crate::ALPN)), false).await);
     }
     Ok(out)
 }
@@ -221,7 +234,7 @@ pub async fn refresh_one(store: &Path, follow: &Follow, local_only: bool) -> Ref
 async fn refresh_inner(
     store: &Path,
     follow: &Follow,
-    endpoint: Option<&Endpoint>,
+    endpoint: Option<(&Endpoint, &[u8])>,
     local_only: bool,
 ) -> Refreshed {
     let into = store.join(&follow.subject);
@@ -242,17 +255,11 @@ async fn refresh_inner(
         // indistinguishable on the wire is what lets a peer hold a friend's
         // history without that being visible to anyone it talks to.
         let attempt = match endpoint {
-            Some(ep) => fetch_on(ep, addr, &follow.subject, &into).await,
+            Some((ep, alpn)) => fetch_on_alpn(ep, addr, alpn, &follow.subject, &into).await,
             None => fetch_with(addr, &follow.subject, &into, local_only).await,
         };
         match attempt {
             Ok((segments, wraps)) => {
-                // ADOPT WHAT THE FETCH LEARNED. A peer that answered also told
-                // us who else holds this subject; without folding those into
-                // the list we try, a follower keeps exactly the one address it
-                // scanned and goes dark the moment that device sleeps — which
-                // makes replicating to a swarm pointless.
-                let _ = adopt_learned(store, &follow.subject);
                 return Refreshed {
                     subject: follow.subject.clone(),
                     via: Some(from.clone()),
@@ -272,39 +279,6 @@ async fn refresh_inner(
         wraps: 0,
         failures,
     }
-}
-
-/// Fold addresses learned during a fetch into the endpoints we will try.
-///
-/// Kept separate from the holder file itself because the two answer different
-/// questions: `holders.json` is what this peer will TELL others, and `from` is
-/// where this peer will LOOK. A learned address belongs in both, but only the
-/// second one changes behaviour.
-fn adopt_learned(store: &Path, subject: &str) -> Result<()> {
-    let learned = crate::holders(&store.join(subject));
-    if learned.is_empty() {
-        return Ok(());
-    }
-    let mut follows = load_follows(store)?;
-    let Some(entry) = follows.iter_mut().find(|f| f.subject == subject) else { return Ok(()) };
-    let mut changed = false;
-    for learned_entry in learned {
-        // `id@addr,addr` or a bare id. Validate the ID — that is the part that
-        // authenticates on dial — and keep whatever addresses came with it.
-        let id = learned_entry.split('@').next().unwrap_or("");
-        if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
-            continue;
-        }
-        if entry.from.iter().any(|f| f.split('@').next() == Some(id)) {
-            continue;
-        }
-        entry.from.push(learned_entry);
-        changed = true;
-    }
-    if changed {
-        save_follows(store, &follows)?;
-    }
-    Ok(())
 }
 
 /// Refresh everything this peer follows, one pass.

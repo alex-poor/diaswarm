@@ -33,85 +33,12 @@
 //! is not reading. A peer holds ciphertext for people it has never met and
 //! cannot open a byte of it.
 
-use std::path::{Path, PathBuf};
 
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// A peer this one has met.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Peer {
-    /// Endpoint id, optionally `id@addr,addr` for a local network.
-    pub at: String,
-    /// When it was last known to be there, in epoch milliseconds.
-    pub seen: i64,
-}
-
-impl Peer {
-    /// The endpoint id alone — what every ranking is computed over.
-    ///
-    /// Addresses must not enter the hash: the same phone on wifi and on mobile
-    /// data would otherwise be two different peers, and everything it carried
-    /// would reshuffle when it walked out of the house.
-    pub fn id(&self) -> &str {
-        self.at.split('@').next().unwrap_or(&self.at)
-    }
-}
-
-fn peers_path(store: &Path) -> PathBuf {
-    store.join("peers.json")
-}
-
-pub fn peers(store: &Path) -> Vec<Peer> {
-    std::fs::read(peers_path(store))
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Vec<Peer>>(&b).ok())
-        .unwrap_or_default()
-}
-
-pub fn save_peers(store: &Path, list: &[Peer]) -> Result<()> {
-    std::fs::create_dir_all(store)?;
-    std::fs::write(peers_path(store), serde_json::to_vec_pretty(list)?)?;
-    Ok(())
-}
-
-/// How long a peer counts towards the pool after it was last seen.
-///
-/// Long enough that a phone in a pocket overnight is not evicted and its share
-/// redistributed for no reason; short enough that a device which is actually
-/// gone stops being counted on. Redistribution is not free — it is somebody
-/// else's mobile data.
-pub const FORGET_AFTER_MS: i64 = 7 * 24 * 60 * 60 * 1000;
-
-/// Note that a peer exists, or that it still does.
-pub fn remember_peer(store: &Path, at: &str, now: i64) -> Result<bool> {
-    let id = at.split('@').next().unwrap_or("");
-    if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Ok(false);
-    }
-    let mut list = peers(store);
-    match list.iter_mut().find(|p| p.id() == id) {
-        Some(existing) => {
-            existing.seen = now;
-            if at.len() > existing.at.len() {
-                existing.at = at.to_string();
-            }
-            save_peers(store, &list)?;
-            Ok(false)
-        }
-        None => {
-            list.push(Peer { at: at.to_string(), seen: now });
-            save_peers(store, &list)?;
-            Ok(true)
-        }
-    }
-}
-
-/// Peers still counted as part of the pool.
-pub fn live_peers(store: &Path, now: i64) -> Vec<Peer> {
-    peers(store).into_iter().filter(|p| now - p.seen <= FORGET_AFTER_MS).collect()
-}
+// The peer table that used to live here is gone. p2panda's AddressBook is the
+// only authority on who is in the pool; a second copy on disk was never read
+// and could only ever disagree with it.
 
 /// How many peers should hold each bucket.
 ///
@@ -254,7 +181,6 @@ mod tests {
     fn nothing_falls_through_the_gaps() {
         for n in [1usize, 2, 3, 5, 10, 40, 100] {
             let peers = pool_ids(n);
-            let depth = depth_for(n);
             for s in subjects(200) {
                 let holders = peers.iter().filter(|p| holds_subject(p, &peers, &s, REPLICAS)).count();
                 assert_eq!(holders, REPLICAS.min(n), "pool of {n}: wrong number of holders");
@@ -354,12 +280,5 @@ mod tests {
         assert_ne!(bucket_topic(6, 3), bucket_topic(7, 3));
         assert_ne!(bucket_topic(6, 3), bucket_topic(6, 4));
         assert_ne!(bucket_topic(6, 3), presence_topic());
-    }
-
-    #[test]
-    fn addresses_do_not_change_who_holds_what() {
-        let bare = Peer { at: "aa".repeat(32), seen: 0 };
-        let with_addr = Peer { at: format!("{}@192.168.1.5:1234", "aa".repeat(32)), seen: 0 };
-        assert_eq!(bare.id(), with_addr.id());
     }
 }
