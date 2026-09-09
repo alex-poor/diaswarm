@@ -281,6 +281,47 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultStatus<
     to_jstring(env, summary)
 }
 
+/// The one string a subject hands to someone they want to share with.
+///
+/// Empty on failure — the caller has a subject key and an endpoint id to hand
+/// and can say what is missing more usefully than a code could.
+///
+/// Composed here rather than in Kotlin so that the phone and the CLI cannot
+/// drift into two formats that look alike and are not.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_inviteFor<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    subject: JString<'a>,
+    endpoint: JString<'a>,
+    purpose: JString<'a>,
+) -> JString<'a> {
+    let (Ok(s), Ok(e), Ok(p)) =
+        (env.get_string(&subject), env.get_string(&endpoint), env.get_string(&purpose))
+    else {
+        return to_jstring(env, String::new());
+    };
+    match diaswarm_core::invite::Invite::new(&String::from(s), &String::from(e), &String::from(p)) {
+        Ok(inv) => to_jstring(env, inv.encode()),
+        Err(_) => to_jstring(env, String::new()),
+    }
+}
+
+/// Read an invite, returning `subject\tendpoint\tpurpose`, or empty if it is
+/// not one. Lets the phone accept an invite from another subject later.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_inviteParse<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    text: JString<'a>,
+) -> JString<'a> {
+    let Ok(t) = env.get_string(&text) else { return to_jstring(env, String::new()) };
+    match diaswarm_core::invite::Invite::parse(&String::from(t)) {
+        Ok(i) => to_jstring(env, format!("{}\t{}\t{}", i.subject, i.endpoint, i.purpose)),
+        Err(_) => to_jstring(env, String::new()),
+    }
+}
+
 /// Bring every granted reader's wraps up to date. Returns the number written,
 /// or a negative code.
 ///

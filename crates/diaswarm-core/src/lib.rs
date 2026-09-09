@@ -14,6 +14,7 @@
 //! of them: the record shape, the canonical encoding, deduplication, and the
 //! epoch a record falls in.
 
+pub mod invite;
 pub mod seal;
 pub mod vault;
 

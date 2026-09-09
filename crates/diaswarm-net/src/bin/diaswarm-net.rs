@@ -39,6 +39,12 @@ fn usage() -> ExitCode {
       current. §12.3: "nothing happened" and "nothing arrived" must not
       look alike.
 
+  diaswarm-net keep <store> <invite>
+      Start keeping a copy of whoever sent you that invite. One string,
+      checksummed, rather than two 64-character keys moved by hand — a
+      transposed character in those produces a perfectly valid key belonging
+      to nobody, and the failure is silence.
+
   diaswarm-net keep <store> <subject-hex> <from-endpoint-id> [purpose]
       Add a subject to what this peer keeps a copy of, or add another
       endpoint to try for one it already keeps. Give a purpose to read it;
@@ -115,6 +121,47 @@ async fn main() -> ExitCode {
         }
 
         Some("keep") => {
+            // ONE ARGUMENT IS AN INVITE, three are the pieces by hand.
+            // Nobody should have to move two 64-character hex strings between
+            // two devices correctly; the invite carries both with a checksum,
+            // so a mistyped character is an error rather than a fetch that
+            // reaches nobody.
+            if let (Some(store), Some(text), None) = (arg(1), arg(2), arg(3)) {
+                match diaswarm_core::invite::Invite::parse(text) {
+                    Ok(inv) => {
+                        match add_follow(
+                            Path::new(store),
+                            &inv.subject,
+                            &inv.endpoint,
+                            Some(&inv.purpose),
+                        ) {
+                            Ok(changed) => {
+                                println!(
+                                    "  {}    {}…  to read, as {}",
+                                    if changed { "keeping " } else { "unchanged" },
+                                    &inv.subject[..16],
+                                    inv.purpose
+                                );
+                                println!("  from         {}", inv.endpoint);
+                                println!();
+                                println!("  They still have to grant your key before you can read");
+                                println!("  any of it. Yours is:");
+                                println!("      (run `diaswarm pub <your identity>` and send it over)");
+                            }
+                            Err(e) => {
+                                eprintln!("  {e:#}");
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                        return ExitCode::SUCCESS;
+                    }
+                    Err(e) => {
+                        eprintln!("  {e:?}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+
             let (Some(store), Some(subject), Some(from)) = (arg(1), arg(2), arg(3)) else {
                 return usage();
             };
