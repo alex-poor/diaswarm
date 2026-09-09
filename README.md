@@ -210,7 +210,7 @@ cargo run --bin diaswarm-net -- peer  /tmp/store2 /tmp/n2.key /tmp/friend.id
 ```
 spec/records.md          The wire contract. Versioned in-band
 docs/feasibility.md      The assessment: architecture, costs, what must not be claimed
-docs/decisions.md        What is settled (D1–D18), and what would reopen each
+docs/decisions.md        What is settled (D1–D19), and what would reopen each
 
 crates/diaswarm-core     Records, sealing, the vault, grants. The reference implementation
 crates/diaswarm-net      The pool: membership and buckets (pool.rs, swarm.rs) over
@@ -253,9 +253,10 @@ because on a looping phone a mismatch costs you a pump re-pairing.
 - **Peers find each other; people do not.** Joining the pool needs nothing, but to
   *read* someone you still exchange a code and they still have to grant you. There
   is no directory and no way to search for a person — deliberately.
-- **Being in the pool is visible.** Membership is a gossip topic anyone can join, so
-  who participates is not secret, even though everything they carry is unreadable
-  ciphertext ([D18](docs/decisions.md)).
+- **Being in the pool is visible.** Membership is a gossip topic anyone can join,
+  and so are the bucket topics where peers announce what they hold — so who
+  participates, and roughly what they carry, is not secret, even though every byte
+  of it is unreadable ciphertext ([D19](docs/decisions.md)).
 - **The pool has only ever been two phones.** Peers carrying genuinely disjoint
   shares, and one adopting a stranger's subject unasked, are tested on a laptop and
   unproven on hardware — that needs four or more devices.

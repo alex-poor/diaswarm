@@ -242,11 +242,67 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
-### D18 · Peers tell each other who holds what, and that publishes the follower set
+### D19 · The pool is the only way peers find each other
 
-**Settled 2026-09-10.** A peer records whoever fetches a subject from it, and
-will tell anyone who asks. A follower folds those addresses into the list it
-tries. Wire version `diaswarm/4`.
+**Settled 2026-09-10, superseding D18.** There is one discovery mechanism:
+p2panda's. The vault protocol carries no `Announce` and no `Holders`, no peer
+writes another peer's address to disk, and `holders.json`, `peers.json` and the
+public-address filter are gone. Wire version `diaswarm/5`.
+
+**A follower falls back to the pool instead of to a list.** It joins the bucket
+its followed subject falls into, hears holders announce themselves on that
+topic, and dials one *by node id* — reaching it is p2panda's problem, and no
+address is recorded or passed on. That preserves the property D18 was built for,
+which is the only reason D18 could be deleted:
+`a_follower_survives_the_subject_leaving_without_a_second_address` scans one
+code, kills the subject, and still reads.
+
+Every announcer is remembered, not the latest. The fallback matters precisely
+when a peer has gone quiet, and the peer that has gone quiet is exactly the one
+a single-entry table is most likely to be holding.
+
+**THE COST D18 NAMED IS SMALLER BUT NOT GONE.** Nobody can ask a peer who else
+holds a subject any more, and no IP address is written down anywhere. What
+remains is that bucket topics are public: joining one and listening tells you
+which subjects are announced there and by whom. That is a coarser social graph
+than a per-subject holder list — it names holders, who are mostly strangers
+holding ciphertext, rather than followers — but it is not nothing, and D18's
+warning survives in that reduced form.
+
+**Two things came out of the deletion that were bugs, not cleanup:**
+
+  * **A pooled peer never answered on `diaswarm/5`.** p2panda hashes the
+    protocol id with its network id before iroh sees it, so the follow path had
+    been dialling an ALPN nothing listens on — and the refusal, "peer doesn't
+    support any known protocol", reads exactly like the subject's phone being
+    switched off. `swarm::wire_alpn` derives what actually goes on the wire and
+    serve, fetch and refresh all use it, so a CLI peer and a pooled phone speak
+    the same protocol. The derivation is p2panda's and private, so
+    `an_address_dial_reaches_a_pooled_peer` fails loudly if it ever changes.
+  * **diaswarm has its own network id.** p2panda's default is shared with every
+    application using the library, and pool size decides bucket depth, which
+    decides what every peer holds — so counting strangers running unrelated
+    software is not cosmetic. It also keeps a test run out of the real pool: on
+    this wifi, `cargo test` was joining the phones' pool and could have adopted
+    a real person's ciphertext.
+
+**A peer has one identity.** Serving and fetching share an endpoint, so the id a
+peer is known by is the id it answers on. Kept from D18; a throwaway endpoint
+per fetch is an identity the pool knows nothing about.
+
+*Reopens if:* bucket-topic membership turns out to leak more than the holder
+list did, or a follower needs to reach a subject the pool has never heard of and
+discovery cannot resolve.
+
+### ~~D18 · Peers tell each other who holds what, and that publishes the follower set~~
+
+**Superseded 2026-09-10 by D19**, and deleted from the code. Kept here because
+the leak it documents was real, was found on hardware, and the reasoning is what
+a reader needs in order to judge whether D19's smaller version is acceptable.
+
+**Was:** a peer records whoever fetches a subject from it, and will tell anyone
+who asks. A follower folds those addresses into the list it tries. Wire version
+`diaswarm/4`.
 
 **Without it the swarm does not exist.** A follower knew exactly one address —
 the one it scanned — so the moment that device slept there was nowhere else to
@@ -292,9 +348,10 @@ faithfully recorded the address of a peer that had already ceased to exist.
 Serving and fetching now share an endpoint, so the id a peer is known by is the
 id it answers on.
 
-*Reopens if:* the follower set turns out to matter more than availability. The
-obvious control is making advertisement opt-in per subject, or having the
-subject sign the list so it chooses who is discoverable — neither is built.
+*Reopened, and closed the other way.* The follower set did matter more than
+availability — because availability turned out not to need it. The pool already
+knows who holds what, so the holder list was buying a leak for a capability
+p2panda supplies. See D19.
 
 ---
 
