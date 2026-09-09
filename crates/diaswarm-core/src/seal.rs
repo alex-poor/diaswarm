@@ -38,6 +38,9 @@ use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
 /// told apart from this one rather than silently producing garbage.
 pub const WRAP_INFO: &[u8] = b"diaswarm-wrap-v1";
 
+/// Domain separator for grant tags. See [`grant_tag`].
+pub const TAG_INFO: &[u8] = b"diaswarm-grant-tag-v1";
+
 pub const KEY_BYTES: usize = 32;
 pub const NONCE_BYTES: usize = 12;
 
@@ -48,6 +51,37 @@ pub enum SealError {
     /// which guess was closer.
     Undecryptable,
     Malformed,
+}
+
+/// A per-relationship, per-purpose identifier for one grant.
+///
+/// WHAT THIS EXISTS TO STOP. A grant log naming readers by public key is a
+/// published social graph: it says who your clinician is, when you enrolled in
+/// a study and when you left. Worse, a reader's key is the SAME key in every
+/// subject's log — one clinician granted by fifty people appears identically
+/// fifty times, which identifies them and clusters their patients. The data is
+/// encrypted; the graph was not. feasibility.md §12.0 calls that the sharpest
+/// unsolved problem in the design.
+///
+/// The tag is derived from the Diffie-Hellman secret the two parties already
+/// share, so:
+///
+///   * **it is unlinkable across subjects** — the same reader gets a different
+///     tag in every subject's log, because the shared secret differs;
+///   * **the reader can compute their own**, from their side, and find their
+///     entries without trial-decrypting the log;
+///   * **nobody else can compute either**, without one of the two secret keys.
+///
+/// The purpose goes into the derivation rather than into the record, so
+/// `clinician` and `cohort` are different tags and neither word is published.
+///
+/// WHAT STILL LEAKS, because this is not a fix for everything: how many grant
+/// events a subject has made, and roughly when. A log with one entry and a log
+/// with forty are distinguishable, and a burst of withdrawals is visible as a
+/// burst. Hiding that needs cover traffic, which is a different design.
+pub fn grant_tag(mine: &StaticSecret, theirs: &[u8; 32], purpose: &str) -> [u8; 32] {
+    let shared = mine.diffie_hellman(&PublicKey::from(*theirs));
+    derive(shared.as_bytes(), TAG_INFO, purpose.as_bytes())
 }
 
 /// One epoch's content key. Independent of every other epoch's.

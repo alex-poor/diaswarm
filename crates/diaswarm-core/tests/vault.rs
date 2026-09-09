@@ -59,12 +59,12 @@ fn live_run(days: i64, revoke_after: i64) -> (Run, Vault, std::collections::BTre
     for i in 0..days {
         let epoch = base + i;
         if i == revoke_after {
-            held_at_stop = vault.read_as(&a).unwrap().keys().copied().collect();
+            held_at_stop = vault.read_as(&a, "follow").unwrap().keys().copied().collect();
             vault.revoke(&subject, &a.enc_public(), "follow").unwrap();
         }
         vault.seal(epoch, &day(epoch, 100.0 + i as f64)).unwrap();
-        vault.publish_wraps(&a.enc_public(), "follow").unwrap();
-        vault.publish_wraps(&b.enc_public(), "follow").unwrap();
+        vault.publish_wraps(&subject, &a.enc_public(), "follow").unwrap();
+        vault.publish_wraps(&subject, &b.enc_public(), "follow").unwrap();
     }
     (Run { dir, subject, a, b }, vault, held_at_stop)
 }
@@ -73,12 +73,12 @@ fn live_run(days: i64, revoke_after: i64) -> (Run, Vault, std::collections::BTre
 fn a_revoked_reader_gains_nothing_and_keeps_everything() {
     let (run, vault, held_at_stop) = live_run(10, 6);
     let after: std::collections::BTreeSet<i64> =
-        vault.read_as(&run.a).unwrap().keys().copied().collect();
+        vault.read_as(&run.a, "follow").unwrap().keys().copied().collect();
 
     assert!(after.difference(&held_at_stop).next().is_none(), "gained an epoch after the stop");
     assert!(held_at_stop.is_subset(&after), "lost an epoch it already held");
     assert_eq!(after.len(), 6, "revocation did not bite: holds {} of 10", after.len());
-    assert_eq!(vault.read_as(&run.b).unwrap().len(), 10, "the other reader was affected");
+    assert_eq!(vault.read_as(&run.b, "follow").unwrap().len(), 10, "the other reader was affected");
     let _ = run.dir.path();
 }
 
@@ -96,17 +96,17 @@ fn revocation_cuts_mid_day_not_at_the_next_boundary() {
 
     // The morning of one day.
     vault.seal(epoch, &day(epoch, 100.0)).unwrap();
-    vault.publish_wraps(&reader.enc_public(), "follow").unwrap();
-    assert_eq!(vault.read_as(&reader).unwrap()[&epoch].len(), 1);
+    vault.publish_wraps(&subject, &reader.enc_public(), "follow").unwrap();
+    assert_eq!(vault.read_as(&reader, "follow").unwrap()[&epoch].len(), 1);
 
     // Revoked at lunchtime — same epoch, hours before the boundary.
     vault.revoke(&subject, &reader.enc_public(), "follow").unwrap();
 
     // The afternoon of the SAME day.
     vault.seal(epoch, &day(epoch, 200.0)).unwrap();
-    vault.publish_wraps(&reader.enc_public(), "follow").unwrap();
+    vault.publish_wraps(&subject, &reader.enc_public(), "follow").unwrap();
 
-    let opened = vault.read_as(&reader).unwrap();
+    let opened = vault.read_as(&reader, "follow").unwrap();
     let values: Vec<f64> = opened[&epoch]
         .iter()
         .filter_map(|r| r.get("mgdl").and_then(|v| v.as_f64()))
@@ -122,7 +122,7 @@ fn revocation_cuts_mid_day_not_at_the_next_boundary() {
 #[test]
 fn what_a_revoked_reader_keeps_still_decrypts_correctly() {
     let (run, vault, _) = live_run(10, 6);
-    let opened = vault.read_as(&run.a).unwrap();
+    let opened = vault.read_as(&run.a, "follow").unwrap();
     for (i, (_, records)) in opened.iter().enumerate() {
         assert_eq!(
             records[0].get("mgdl").and_then(|v| v.as_f64()),
@@ -137,7 +137,7 @@ fn what_a_revoked_reader_keeps_still_decrypts_correctly() {
 fn a_stranger_holding_the_whole_vault_reads_nothing() {
     let (_run, vault, _) = live_run(4, 3);
     let stranger = Identity::generate();
-    assert!(vault.read_as(&stranger).unwrap().is_empty(), "a stranger opened something");
+    assert!(vault.read_as(&stranger, "follow").unwrap().is_empty(), "a stranger opened something");
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn grants_are_signed_and_tamper_evident() {
         assert!(Vault::verify(g, &run.subject.verifying()), "a grant did not verify");
     }
     let mut edited = grants[0].clone();
-    edited.purpose = "cohort".into();
+    edited.segment += 1;
     assert!(!Vault::verify(&edited, &run.subject.verifying()), "an edited grant verified");
 
     let impostor = Identity::generate();
@@ -190,14 +190,113 @@ fn resealing_a_segment_does_not_invalidate_wraps_already_published() {
 
     vault.record_grant(&subject, &reader.enc_public(), "follow", "grant", 0).unwrap();
     vault.seal(epoch, &day(epoch, 100.0)).unwrap();
-    vault.publish_wraps(&reader.enc_public(), "follow").unwrap();
-    assert_eq!(vault.read_as(&reader).unwrap().len(), 1);
+    vault.publish_wraps(&subject, &reader.enc_public(), "follow").unwrap();
+    assert_eq!(vault.read_as(&reader, "follow").unwrap().len(), 1);
 
     let mut fuller = day(epoch, 100.0);
     fuller.extend(day(epoch, 101.0));
     vault.seal(epoch, &fuller).unwrap();
 
-    let opened = vault.read_as(&reader).unwrap();
+    let opened = vault.read_as(&reader, "follow").unwrap();
     assert_eq!(opened.len(), 1, "the reader's wrap stopped opening the segment");
     assert_eq!(opened[&epoch].len(), 2, "the reseal did not include the newer records");
+}
+
+#[test]
+fn the_grant_log_names_nobody() {
+    // §12.0: the data was encrypted and the social graph was not.
+    let (run, vault, _) = live_run(3, 2);
+    let raw = std::fs::read_to_string(run.dir.path().join("grants.ndjson")).unwrap();
+    let reader_hex = diaswarm_core::vault::hex(&run.a.enc_public());
+
+    assert!(!raw.contains(&reader_hex), "the log still contains a reader's public key");
+    assert!(!raw.contains("follow"), "the log still names the purpose");
+
+    // And the wrap filenames, which leaked exactly as much.
+    let wraps = std::fs::read_dir(run.dir.path().join("wraps")).unwrap();
+    for seg in wraps.flatten() {
+        for f in std::fs::read_dir(seg.path()).unwrap().flatten() {
+            let name = f.file_name().to_string_lossy().to_string();
+            assert!(!name.contains(&reader_hex), "a wrap filename is a reader's key");
+        }
+    }
+}
+
+#[test]
+fn the_same_reader_is_a_different_tag_to_a_different_subject() {
+    // The leak that mattered most: one clinician granted by many people used to
+    // appear as the SAME key in every log, identifying them and clustering
+    // their patients.
+    use diaswarm_core::seal::grant_tag;
+    let alice = Identity::generate();
+    let bob = Identity::generate();
+    let clinician = Identity::generate();
+
+    let from_alice = grant_tag(&alice.encryption, &clinician.enc_public(), "clinician");
+    let from_bob = grant_tag(&bob.encryption, &clinician.enc_public(), "clinician");
+    assert_ne!(from_alice, from_bob, "the same reader is linkable across subjects");
+
+    // The reader still finds their own, from their side of the shared secret.
+    assert_eq!(
+        from_alice,
+        grant_tag(&clinician.encryption, &alice.enc_public(), "clinician"),
+        "the reader cannot compute the tag they were filed under"
+    );
+    // And a different purpose is a different tag, so the word is never needed.
+    assert_ne!(
+        from_alice,
+        grant_tag(&alice.encryption, &clinician.enc_public(), "cohort"),
+        "purposes share a tag"
+    );
+}
+
+#[test]
+fn altering_or_reordering_the_log_is_detectable() {
+    let (run, vault, _) = live_run(3, 2);
+    assert_eq!(vault.verify_chain(&run.subject.verifying()).unwrap(), None);
+
+    // Remove an entry from the MIDDLE: the links no longer join up.
+    let path = run.dir.path().join("grants.ndjson");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.len() >= 3, "need three entries to drop a middle one");
+    let without_middle: Vec<&str> = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != 1)
+        .map(|(_, l)| *l)
+        .collect();
+    std::fs::write(&path, without_middle.join("\n") + "\n").unwrap();
+
+    assert!(
+        vault.verify_chain(&run.subject.verifying()).unwrap().is_some(),
+        "an entry was removed from the middle of the log and nothing noticed"
+    );
+}
+
+#[test]
+fn truncating_the_tail_is_not_detectable_here_and_that_is_the_honest_limit() {
+    // A hash chain catches modification and reordering. It does NOT catch the
+    // owner deleting the END of their own log, because what remains is a valid
+    // prefix — and the subject holds every key needed to re-sign it anyway.
+    //
+    // This is feasibility.md §6 arriving in code: every mechanism reviewed
+    // produces "an account the reader cannot quietly rewrite", and none
+    // produces "an account they cannot simply omit". Detecting a dropped tail
+    // needs someone else to have seen it — a reader who remembers, or a
+    // transparency log that gossips. Neither exists yet.
+    //
+    // Asserted rather than left implicit, so nobody later reads "tamper-evident"
+    // as more than it is.
+    let (run, vault, _) = live_run(3, 2);
+    let path = run.dir.path().join("grants.ndjson");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let kept: Vec<&str> = text.lines().take(text.lines().count() - 1).collect();
+    std::fs::write(&path, kept.join("\n") + "\n").unwrap();
+
+    assert_eq!(
+        vault.verify_chain(&run.subject.verifying()).unwrap(),
+        None,
+        "if this now fails, tail truncation became detectable and §6 needs revisiting"
+    );
 }

@@ -23,6 +23,7 @@ macro_rules! out {
     }};
 }
 
+use diaswarm_core::seal::grant_tag;
 use diaswarm_core::vault::{by_epoch, hex, unhex, Identity, Vault};
 use diaswarm_core::Record;
 
@@ -52,7 +53,7 @@ fn usage() -> ExitCode {
       holds, and nothing here pretends to.
 
   diaswarm pub  <identity-file>          the public key to hand someone
-  diaswarm read <vault> <identity-file>  what this reader can actually open
+  diaswarm read <vault> <identity-file> [purpose]   what this reader can open
   diaswarm log  <vault> <subject-identity>   every grant and withdrawal, verified
 "#
     );
@@ -65,6 +66,47 @@ fn load(path: &Path) -> Result<Identity, String> {
         .try_into()
         .map_err(|_| format!("{}: not a 64-byte identity", path.display()))?;
     Ok(Identity::from_bytes(&bytes))
+}
+
+/// A private note of which tag is whom.
+///
+/// THIS FILE MUST NOT BE PUBLISHED. It is the mapping the tags exist to keep
+/// out of the vault, so it lives beside the subject's identity rather than
+/// inside the directory that gets copied. Without it the subject can still see
+/// their own grant log; they just cannot put names to it, which is the correct
+/// trade — the vault should not be able to.
+fn book_path(identity: &Path) -> PathBuf {
+    identity.with_extension("readers.json")
+}
+
+fn read_book(identity: &Path) -> Vec<(String, String)> {
+    let Ok(text) = fs::read_to_string(book_path(identity)) else { return Vec::new() };
+    text.lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(t, w)| (t.to_string(), w.to_string()))
+        .collect()
+}
+
+fn note_reader(
+    identity: &Path,
+    _vault: &Vault,
+    subject: &Identity,
+    reader_pub: &[u8; 32],
+    purpose: &str,
+    _act: &str,
+) -> Result<(), String> {
+    let tag = hex(&grant_tag(&subject.encryption, reader_pub, purpose));
+    if read_book(identity).iter().any(|(t, _)| *t == tag) {
+        return Ok(());
+    }
+    use std::io::Write;
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(book_path(identity))
+        .map_err(|e| e.to_string())?;
+    writeln!(f, "{tag}\t{}… for {purpose}", &hex(reader_pub)[..16]).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn reader_pub(arg: &str) -> Result<[u8; 32], String> {
@@ -142,16 +184,18 @@ fn run() -> Result<(), String> {
                 let from = vault
                     .revoke(&subject, &reader, purpose)
                     .map_err(|e| format!("{e:?}"))?;
+                note_reader(Path::new(arg(2)?), &vault, &subject, &reader, purpose, "stop")?;
                 out!("  stop     {} for {purpose}, from segment {from}", &arg(3)?[..16]);
                 out!("           immediate — the current segment was closed first");
                 return Ok(());
             }
 
+            let tag = hex(&grant_tag(&subject.encryption, &reader, purpose));
             let prior = vault
                 .grants()
                 .map_err(|e| format!("{e:?}"))?
                 .into_iter()
-                .filter(|g| g.reader == hex(&reader) && g.purpose == purpose)
+                .filter(|g| g.tag == tag)
                 .map(|g| g.segment)
                 .max();
 
@@ -175,7 +219,10 @@ fn run() -> Result<(), String> {
             vault
                 .record_grant(&subject, &reader, purpose, "grant", at)
                 .map_err(|e| format!("{e:?}"))?;
-            let n = vault.publish_wraps(&reader, purpose).map_err(|e| format!("{e:?}"))?;
+            note_reader(Path::new(arg(2)?), &vault, &subject, &reader, purpose, "grant")?;
+            let n = vault
+                .publish_wraps(&subject, &reader, purpose)
+                .map_err(|e| format!("{e:?}"))?;
             out!("  grant    {} for {purpose} from segment {at}", &arg(3)?[..16]);
             out!("  wraps    {n} written");
         }
@@ -183,7 +230,8 @@ fn run() -> Result<(), String> {
         "read" => {
             let vault = Vault::open(Path::new(arg(1)?)).map_err(|e| format!("{e:?}"))?;
             let reader = load(Path::new(arg(2)?))?;
-            let opened = vault.read_as(&reader).map_err(|e| format!("{e:?}"))?;
+            let purpose = args.get(3).map(String::as_str).unwrap_or("follow");
+            let opened = vault.read_as(&reader, purpose).map_err(|e| format!("{e:?}"))?;
             let total: usize = opened.values().map(Vec::len).sum();
             let all = vault.epochs().map_err(|e| format!("{e:?}"))?;
             let segs = vault.segments().map_err(|e| format!("{e:?}"))?.len();
@@ -205,16 +253,28 @@ fn run() -> Result<(), String> {
         "log" => {
             let vault = Vault::open(Path::new(arg(1)?)).map_err(|e| format!("{e:?}"))?;
             let subject = load(Path::new(arg(2)?))?;
+            // The log itself names nobody. The book is private and local, and
+            // is the only thing that can put a name to a tag.
+            let book = read_book(Path::new(arg(2)?));
             for g in vault.grants().map_err(|e| format!("{e:?}"))? {
                 let ok = Vault::verify(&g, &subject.verifying());
+                let who = book
+                    .iter()
+                    .find(|(t, _)| *t == g.tag)
+                    .map(|(_, w)| w.as_str())
+                    .unwrap_or("(unknown — not in this machine's book)");
                 out!(
-                    "  {}  {:<6} {:<10} from segment {:>4}  {}",
+                    "  {}  {:<6} from segment {:>4}  tag {}  {}",
                     if ok { "signed " } else { "BAD SIG" },
                     g.act,
-                    g.purpose,
                     g.segment,
-                    &g.reader[..16]
+                    &g.tag[..12],
+                    who
                 );
+            }
+            match vault.verify_chain(&subject.verifying()).map_err(|e| format!("{e:?}"))? {
+                None => out!("  chain intact — no entry has been removed or reordered"),
+                Some(at) => out!("  CHAIN BROKEN at entry {at} — an entry was removed or altered"),
             }
         }
 

@@ -40,7 +40,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use crate::seal::{epoch_key, open_epoch, seal_epoch, unwrap, wrap, KEY_BYTES};
+use crate::seal::{epoch_key, grant_tag, open_epoch, seal_epoch, unwrap, wrap, KEY_BYTES};
 use crate::{encode, epoch_of, Record, SPEC_VERSION};
 
 #[derive(Debug)]
@@ -142,6 +142,17 @@ impl SegmentId {
 /// problem in the design, and this struct is where it becomes concrete.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Grant {
+    /// Position in the chain. Signed, so entries cannot be reordered.
+    pub seq: u64,
+    /// Who, and for what — as a tag only. See [`crate::seal::grant_tag`].
+    ///
+    /// **Not the reader's key and not the purpose.** Those made the log a
+    /// published social graph: a reader's key is the same key in every
+    /// subject's log, so one clinician granted by fifty people appeared
+    /// identically fifty times. The tag is derived from the shared secret, so
+    /// it differs per subject, the reader can still compute their own, and
+    /// nobody else can compute either.
+    pub tag: String,
     pub act: String,
     /// The segment this statement takes effect from, inclusive.
     ///
@@ -149,19 +160,29 @@ pub struct Grant {
     /// globally monotonic, so "the latest statement at or before this segment"
     /// is a total order with no ties to break.
     pub segment: u64,
-    pub purpose: String,
-    pub reader: String,
-    pub subject: String,
+    /// Hash of the previous entry, so removing one is detectable.
+    ///
+    /// §11 promises the grant record is tamper-evident, and the obvious attack
+    /// is not editing an entry but deleting one — a subject denying a grant
+    /// they made. A signature per entry does not catch that; a chain does.
+    pub prev: String,
     pub sig: String,
 }
 
-fn grant_payload(act: &str, segment: u64, purpose: &str, reader: &str, subject: &str) -> Vec<u8> {
+fn grant_payload(seq: u64, tag: &str, act: &str, segment: u64, prev: &str) -> Vec<u8> {
     // Sorted keys, no spaces — the same canonical shape as a record, so what is
     // signed is exactly what is on disk.
     format!(
-        r#"{{"act":"{act}","purpose":"{purpose}","reader":"{reader}","segment":{segment},"subject":"{subject}"}}"#
+        r#"{{"act":"{act}","prev":"{prev}","segment":{segment},"seq":{seq},"tag":"{tag}"}}"#
     )
     .into_bytes()
+}
+
+const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+fn chain_hash(payload: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex(&Sha256::digest(payload))
 }
 
 pub fn hex(b: &[u8]) -> String {
@@ -313,6 +334,8 @@ impl Vault {
         Ok(k)
     }
 
+    /// Record a grant or withdrawal. Returns the tag it was filed under, which
+    /// the caller may want for a private note of who that is.
     pub fn record_grant(
         &self,
         subject: &Identity,
@@ -320,17 +343,24 @@ impl Vault {
         purpose: &str,
         act: &str,
         segment: u64,
-    ) -> Result<(), VaultError> {
-        let reader = hex(reader_pub);
-        let subj = hex(&self.subject_pub);
-        let payload = grant_payload(act, segment, purpose, &reader, &subj);
+    ) -> Result<String, VaultError> {
+        let tag = hex(&grant_tag(&subject.encryption, reader_pub, purpose));
+        let existing = self.grants()?;
+        let seq = existing.len() as u64;
+        let prev = match existing.last() {
+            Some(last) => chain_hash(&grant_payload(
+                last.seq, &last.tag, &last.act, last.segment, &last.prev,
+            )),
+            None => GENESIS.to_string(),
+        };
+        let payload = grant_payload(seq, &tag, act, segment, &prev);
         let sig: Signature = subject.signing.sign(&payload);
         let grant = Grant {
+            seq,
+            tag: tag.clone(),
             act: act.into(),
             segment,
-            purpose: purpose.into(),
-            reader,
-            subject: subj,
+            prev,
             sig: hex(&sig.to_bytes()),
         };
         let mut line = serde_json::to_string(&grant).unwrap();
@@ -341,7 +371,7 @@ impl Vault {
             .append(true)
             .open(self.root.join("grants.ndjson"))?;
         f.write_all(line.as_bytes())?;
-        Ok(())
+        Ok(tag)
     }
 
     /// Withdraw, immediately.
@@ -376,16 +406,37 @@ impl Vault {
     }
 
     pub fn verify(grant: &Grant, subject: &VerifyingKey) -> bool {
-        let payload = grant_payload(
-            &grant.act,
-            grant.segment,
-            &grant.purpose,
-            &grant.reader,
-            &grant.subject,
-        );
+        let payload = grant_payload(grant.seq, &grant.tag, &grant.act, grant.segment, &grant.prev);
         let Ok(bytes) = unhex(&grant.sig) else { return false };
         let Ok(sig) = Signature::from_slice(&bytes) else { return false };
         subject.verify(&payload, &sig).is_ok()
+    }
+
+    /// Check the whole log: every signature, and every link.
+    ///
+    /// Catches an entry that was **altered or removed from the middle**, which
+    /// a per-entry signature alone does not.
+    ///
+    /// **It does not catch a truncated tail**, and cannot. What remains after
+    /// dropping the last entries is a valid prefix, and the subject holds every
+    /// key needed to re-sign a shorter log anyway. That is feasibility.md §6 in
+    /// concrete form: every mechanism reviewed there produces *an account the
+    /// reader cannot quietly rewrite*, and none produces *an account they cannot
+    /// simply omit*. Detecting a dropped tail needs someone else to have seen
+    /// it — a reader who remembers their own entries, or a transparency log that
+    /// gossips. Neither exists yet, and "tamper-evident" must not be read as
+    /// more than this.
+    ///
+    /// Returns the position of the first break.
+    pub fn verify_chain(&self, subject: &VerifyingKey) -> Result<Option<u64>, VaultError> {
+        let mut prev = GENESIS.to_string();
+        for (i, g) in self.grants()?.iter().enumerate() {
+            if g.seq != i as u64 || g.prev != prev || !Self::verify(g, subject) {
+                return Ok(Some(i as u64));
+            }
+            prev = chain_hash(&grant_payload(g.seq, &g.tag, &g.act, g.segment, &g.prev));
+        }
+        Ok(None)
     }
 
     /// Which segments a reader is currently entitled to.
@@ -393,16 +444,11 @@ impl Vault {
     /// A segment is live if the latest statement at or before it was a grant.
     /// Entitlement is a property of the signed log, not of anything a server
     /// decides.
-    pub fn entitled(
-        &self,
-        reader_pub: &[u8; 32],
-        purpose: &str,
-    ) -> Result<BTreeSet<u64>, VaultError> {
-        let reader = hex(reader_pub);
+    pub fn entitled(&self, tag: &str) -> Result<BTreeSet<u64>, VaultError> {
         let mut mine: Vec<Grant> = self
             .grants()?
             .into_iter()
-            .filter(|g| g.reader == reader && g.purpose == purpose)
+            .filter(|g| g.tag == tag)
             .collect();
         mine.sort_by_key(|g| g.segment);
 
@@ -422,9 +468,16 @@ impl Vault {
     }
 
     /// Wrap every segment this reader is entitled to and has not been sent.
-    pub fn publish_wraps(&self, reader_pub: &[u8; 32], purpose: &str) -> Result<usize, VaultError> {
-        let reader = hex(reader_pub);
-        let entitled = self.entitled(reader_pub, purpose)?;
+    pub fn publish_wraps(
+        &self,
+        subject: &Identity,
+        reader_pub: &[u8; 32],
+        purpose: &str,
+    ) -> Result<usize, VaultError> {
+        // The wrap FILENAME used to be the reader's public key, which leaked
+        // exactly what the grant log stopped leaking. Same tag, same reasoning.
+        let tag = hex(&grant_tag(&subject.encryption, reader_pub, purpose));
+        let entitled = self.entitled(&tag)?;
         let mut written = 0;
         for seg in self.segments()? {
             if !entitled.contains(&seg.seq) {
@@ -432,7 +485,7 @@ impl Vault {
             }
             let dir = self.root.join("wraps").join(seg.seq.to_string());
             fs::create_dir_all(&dir)?;
-            let path = dir.join(format!("{reader}.wrap"));
+            let path = dir.join(format!("{tag}.wrap"));
             if path.exists() {
                 continue; // a wrap is not re-issued
             }
@@ -448,8 +501,17 @@ impl Vault {
     /// Deliberately does not consult the grant log. A grant is a public
     /// statement of intent; what a reader can read is decided by which keys they
     /// hold, and the two are only equal if the mechanism is honest.
-    pub fn read_as(&self, reader: &Identity) -> Result<BTreeMap<i64, Vec<Record>>, VaultError> {
-        let name = format!("{}.wrap", hex(&reader.enc_public()));
+    /// What this reader can open, for one purpose.
+    ///
+    /// The reader derives the same tag from their own side of the shared
+    /// secret, so they find their wraps without the log naming them.
+    pub fn read_as(
+        &self,
+        reader: &Identity,
+        purpose: &str,
+    ) -> Result<BTreeMap<i64, Vec<Record>>, VaultError> {
+        let tag = hex(&grant_tag(&reader.encryption, &self.subject_pub, purpose));
+        let name = format!("{tag}.wrap");
         let mut out: BTreeMap<i64, Vec<Record>> = BTreeMap::new();
         for seg in self.segments()? {
             let path = self.root.join("wraps").join(seg.seq.to_string()).join(&name);

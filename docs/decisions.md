@@ -242,6 +242,45 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D13 · The grant log names nobody
+
+**Settled 2026-09-09**, addressing what feasibility.md §12.0 called the sharpest
+unsolved problem in the design.
+
+The log used to carry `{"purpose":"clinician","reader":"<public key>"}`. Two
+leaks, and the second is worse than it first looks:
+
+- the **purpose** is the most revealing word in the record — *clinician*,
+  *cohort* — and it was in cleartext;
+- a reader's public key is **the same key in every subject's log**. One clinician
+  granted by fifty people appeared identically fifty times, which identifies them
+  and clusters their patients.
+
+**The fix is a tag derived from the Diffie-Hellman secret the two parties already
+share**, with the purpose folded into the derivation:
+`tag = HKDF(ECDH(subject, reader), "diaswarm-grant-tag-v1" || purpose)`. So it is
+unlinkable across subjects, the reader can still compute their own and find their
+entries, nobody else can compute either, and the purpose is never published. The
+**wrap filenames** use the same tag — they leaked exactly as much and were easy
+to miss.
+
+Who is who lives in a **private book beside the subject's identity**, never
+inside the directory that gets copied.
+
+**What still leaks, and it is not nothing:** how many grant events a subject has
+made and roughly when. A log with one entry and a log with forty are
+distinguishable, and a burst of withdrawals looks like a burst. Hiding that needs
+cover traffic, which is a different design.
+
+**And the tamper-evidence is narrower than "tamper-evident" sounds.** The entries
+are hash-chained, so altering one or removing one from the middle is detectable.
+**Truncating the tail is not, and cannot be** — what remains is a valid prefix and
+the subject holds every key needed to re-sign a shorter log. That is D3's trade
+again: an account the reader cannot quietly rewrite, never one the subject cannot
+simply omit. Catching a dropped tail needs a reader who remembers or a log that
+gossips, and neither exists. A test asserts the limit so nobody later reads more
+into the word.
+
 ### D12 · Followers are Android. iOS is out of scope
 
 **Settled by the project's owner, 2026-09-08.** iOS cannot hold a background
@@ -338,7 +377,7 @@ seven and renumbered them**, which is how an open question stops being tracked.
 
 | §12 | Question | |
 |---|---|---|
-| **0** | **Do grant records need to be private too?** A signed public record saying *"S granted R"* discloses that R is your endocrinologist, and when you joined and left a study. **The data is encrypted and the social graph is not.** It pulls directly against the tamper-evidence D3 offers as the substitute for a read log | *The sharpest unsolved problem in the design* |
+| **0** | ~~**Do grant records need to be private too?**~~ **Addressed 2026-09-09** — see D13. Grants are filed under a tag derived from the shared secret, so the log names no reader and no purpose, and the same reader is a different tag to every subject. What still leaks is *how many* grant events there are and roughly when | Largely closed; the residue is volume, not identity |
 | 1 | **Does MLS tolerate a Delivery Service that is offline half the day?** The commit chain has to survive Doze, a flat battery and a week in a drawer | Decides whether D2's fallback is real |
 | 2 | **Replicate or fetch**, per grant type rather than per architecture. A design that quietly picks one has picked the use case too | The D3 trade, applied case by case |
 | 3 | **What does a follower see when the phone has been dark six hours?** A swarm must distinguish *"nothing happened"* from *"nothing arrived"* | Nightscout answers this badly |
