@@ -352,3 +352,30 @@ fn resealing_the_same_records_does_not_duplicate_them() {
         "the same record was sealed three times and appeared more than once"
     );
 }
+
+#[test]
+fn a_reader_does_not_see_a_record_twice_when_segments_overlap() {
+    // A rotation starts a new segment for the same epoch, and a resync writes
+    // records into it that an earlier segment already held. Neither is a fault.
+    // A reader that trusted segments to be disjoint would double-count insulin.
+    let dir = tempdir::TempDir::new("overlap").unwrap();
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject, OFFSET).unwrap();
+    let epoch = 20_000;
+
+    vault.record_grant(&subject, &reader.enc_public(), "follow", "grant", 0).unwrap();
+    vault.seal(epoch, &day(epoch, 100.0)).unwrap();
+    vault.rotate().unwrap();                       // as a revocation would
+    vault.seal(epoch, &day(epoch, 100.0)).unwrap(); // the same record again
+    vault.seal(epoch, &day(epoch, 101.0)).unwrap();
+    vault.publish_wraps(&subject, &reader.enc_public(), "follow").unwrap();
+
+    assert!(vault.segments().unwrap().len() >= 2, "the rotation did not split");
+    let opened = vault.read_as(&reader, "follow").unwrap();
+    let values: Vec<f64> = opened[&epoch]
+        .iter()
+        .filter_map(|r| r.get("mgdl").and_then(|v| v.as_f64()))
+        .collect();
+    assert_eq!(values, vec![100.0, 101.0], "overlapping segments were double-counted");
+}

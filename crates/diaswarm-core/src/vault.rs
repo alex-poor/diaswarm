@@ -567,6 +567,16 @@ impl Vault {
         let tag = hex(&grant_tag(&reader.encryption, &self.subject_pub, purpose));
         let name = format!("{tag}.wrap");
         let mut out: BTreeMap<i64, Vec<Record>> = BTreeMap::new();
+
+        // SEGMENTS CAN LEGITIMATELY OVERLAP, so a reader assembling a history
+        // has to deduplicate. A rotation starts a new segment for the same
+        // epoch, and a resync writes records into it that an earlier segment
+        // already held — neither is a fault, and a reader that trusted the
+        // segments to be disjoint would double-count insulin. Which is exactly
+        // what §3 exists to prevent, arriving from a direction the snapshot
+        // filters cannot see. Observed as 61,339 records where 33,000 were
+        // expected.
+        let mut seen: BTreeSet<String> = BTreeSet::new();
         for seg in self.segments()? {
             let path = self.root.join("wraps").join(seg.seq.to_string()).join(&name);
             if !path.exists() {
@@ -577,12 +587,19 @@ impl Vault {
             let sealed = fs::read(self.root.join("segments").join(seg.seal_name()))?;
             let Ok(plain) = open_epoch(&sealed, &key, seg.epoch, &self.subject_pub) else { continue };
             let text = String::from_utf8_lossy(&plain);
-            let records = text
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .filter_map(|l| Record::from_json(l).ok())
-                .filter(|r| r.kind() != crate::kind::META);
-            out.entry(seg.epoch).or_default().extend(records);
+            for line in text.lines().filter(|l| !l.trim().is_empty()) {
+                let Ok(record) = Record::from_json(line) else { continue };
+                if record.kind() == crate::kind::META {
+                    continue;
+                }
+                if !seen.insert(record.to_canonical_json()) {
+                    continue;
+                }
+                out.entry(seg.epoch).or_default().push(record);
+            }
+        }
+        for records in out.values_mut() {
+            crate::sort(records);
         }
         Ok(out)
     }

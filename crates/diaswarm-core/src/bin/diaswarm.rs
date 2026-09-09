@@ -241,6 +241,17 @@ fn run() -> Result<(), String> {
                 opened.len(),
                 all.len()
             );
+            // A histogram, because "33,465 records" does not say whether the
+            // profile blocks that make the insulin interpretable are among them.
+            let mut kinds: std::collections::BTreeMap<&str, usize> =
+                std::collections::BTreeMap::new();
+            for r in opened.values().flatten() {
+                *kinds.entry(r.kind()).or_default() += 1;
+            }
+            let line: Vec<String> =
+                kinds.iter().map(|(k, n)| format!("{k} {n}")).collect();
+            out!("  kinds    {}", line.join("   "));
+
             for (epoch, records) in opened.iter().take(3) {
                 let first = records.first().map(|r| r.to_canonical_json()).unwrap_or_default();
                 out!("  {epoch}   {:>5} records   {}", records.len(), &first[..first.len().min(72)]);
