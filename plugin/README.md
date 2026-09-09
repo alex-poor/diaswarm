@@ -60,19 +60,27 @@ the frozen spec that nobody can diff and everybody trusts.
   user set while glucose values and temporary targets are always mg/dL.
   Emitting one un-normalised would put the same quantity in one stream a factor
   of eighteen apart. It needs the block API read properly first.
-- **Nothing has run on a phone.** The module builds against a real AAPS
-  checkout — `BUILD SUCCESSFUL`, all four flavours, with both `.so` files inside
-  the AAR — and the JNI contract is exercised on the host by
-  `crates/diaswarm-android/jni-test/run.sh`. That is further than it sounds and
-  still not the same as working: nothing has loaded the library on Android,
-  under Dalvik, in a process that is also running a loop.
+- **`publish()` is where the work stops.** Everything below is verified on a
+  real phone; what it verifies is that the plugin sits there harmlessly. Turning
+  it on would canonicalise records and log a byte count, because there is no
+  sealing on the device and nowhere to publish to.
 
-## Verified so far
+## Verified
+
+Installed on a live closed loop (Pixel 7, YpsoPump, HovorkaMPC), 2026-09-09.
 
 | | |
 |---|---|
-| Module compiles against AAPS | `:plugins:sync:swarm:assembleDebug`, 223 tasks, all four flavours |
-| Native half packaged | `jni/arm64-v8a` and `jni/armeabi-v7a` inside the AAR |
-| JNI symbols resolve | all eight, checked with `llvm-nm` and exercised from a JVM |
 | Record logic matches `canon.py` | byte-identical over 19,129 real records |
 | Rounding matches Python | ties-to-even; normalising a canonical stream moves nothing |
+| JNI symbols resolve | all eight, `llvm-nm` and exercised from a JVM |
+| Builds into the loop APK | `3.4.2.3-hovorka-diaswarm`, git `ff4c807de9` |
+| Signer unchanged | `0a199dca…` — `install -r` stayed an update, pump key survived |
+| **AAPS registered it** | `ConfigBuilder_Enabled_SYNC_SwarmPlugin:false` at startup |
+| **…and hid it** | `ConfigBuilder_Visible_SYNC_SwarmPlugin:false` |
+| **Native library never loaded** | 0 `diaswarm` mappings in `/proc/<pid>/maps`, against 1251 `.so` mappings visible — so the check works and the answer is real |
+| Loop unaffected | `Closed Loop · looping`, HovorkaMPC deciding, `ypso_shared_key` intact, `dexopt [status=speed]` |
+
+The library ships inside the APK and is never mapped into the process. That is
+the claim `enableByDefault(false)` was making, and it is now measured rather
+than reasoned.
