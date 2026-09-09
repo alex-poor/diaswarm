@@ -5,6 +5,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkManager
 import app.aaps.core.interfaces.logging.AAPSLogger
+import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventNewBG
@@ -75,8 +76,12 @@ class SwarmPlugin @Inject constructor(
      * enqueue — which is the opposite of what shipping disabled is supposed to
      * mean.
      */
+    /** The running endpoint, while enabled. 0 when not serving. */
+    private var serving: Long = 0L
+
     override fun onStart() {
         super.onStart()
+        if (isEnabled()) startServing()
         disposable += rxBus.toObservable(EventNewBG::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({ if (isEnabled()) enqueue() }, fabricPrivacy::logException)
@@ -87,7 +92,47 @@ class SwarmPlugin @Inject constructor(
 
     override fun onStop() {
         disposable.clear()
+        stopServing()
         super.onStop()
+    }
+
+    /**
+     * Serve the vault to peers.
+     *
+     * Only while enabled, and stopped on the way out. A disabled plugin that
+     * left a network endpoint listening would be exactly the surprise
+     * `enableByDefault(false)` exists to prevent.
+     *
+     * The endpoint id and the subject key are logged because there is nowhere
+     * else yet to see them, and without both a reader cannot fetch anything:
+     * one says where, the other is what a grant is made against.
+     */
+    private fun startServing() {
+        if (serving != 0L) return
+        val dir = java.io.File(context.filesDir, "diaswarm").also { it.mkdirs() }
+        val vault = java.io.File(dir, "vault")
+        if (!java.io.File(vault, "meta.json").exists()) {
+            aapsLogger.info(LTag.CORE, "swarm: nothing sealed yet, not serving")
+            return
+        }
+        SwarmNative.check()
+        serving = SwarmNative.netStart(vault.absolutePath, java.io.File(dir, "node.key").absolutePath)
+        if (serving == 0L) {
+            aapsLogger.error(LTag.CORE, "swarm: could not start serving")
+            return
+        }
+        aapsLogger.info(LTag.CORE, "swarm: serving as ${SwarmNative.netEndpointId(serving)}")
+        aapsLogger.info(
+            LTag.CORE,
+            "swarm: subject ${SwarmNative.vaultSubject(java.io.File(dir, "subject.id").absolutePath)}"
+        )
+    }
+
+    private fun stopServing() {
+        if (serving == 0L) return
+        SwarmNative.netStop(serving)
+        serving = 0L
+        aapsLogger.info(LTag.CORE, "swarm: stopped serving")
     }
 
     private fun enqueue() {

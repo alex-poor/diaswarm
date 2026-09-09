@@ -60,14 +60,18 @@ the frozen spec that nobody can diff and everybody trusts.
   user set while glucose values and temporary targets are always mg/dL.
   Emitting one un-normalised would put the same quantity in one stream a factor
   of eighteen apart. It needs the block API read properly first.
-- **The vault stays on the phone.** Enabled, the plugin now canonicalises,
-  deduplicates and **seals each day into a vault** in app-private storage. What
-  it does not do is move those bytes anywhere: there is no transport yet, so
-  reading them elsewhere means pulling the directory off the device by hand.
-- **Granting happens on the desktop**, with `diaswarm grant` against a pulled
-  vault. The epoch keys live beside the sealed data, so a pulled vault is fully
-  grantable — and equally, a pulled vault is the subject's whole secret. Treat
-  it accordingly.
+- **No screen.** Granting is driven by two preferences —
+  `swarm_grant_reader` and `swarm_revoke_reader` — acted on next sync pass and
+  then cleared. That is where a settings screen would write, so the mechanism is
+  the lasting part; until one exists they are set with `adb`. The endpoint id and
+  subject key are written to the log because there is nowhere else to see them.
+- **`follow` only.** `clinician` and `cohort` are separate key trees (§7.2) and
+  want a UI that says which one you are handing over. Offering them through a
+  preference nobody can see would be worse than not offering them.
+- **Pull, not push.** A reader fetches from the phone, so the phone has to be
+  awake and reachable. The 3 a.m. low alarm — the flagship — needs push or
+  store-and-forward, and neither exists. §9.5's Android background limits are
+  named in the docs and still unmeasured.
 
 ## It has run
 

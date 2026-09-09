@@ -76,6 +76,27 @@ public class Check {
               SwarmNative.vaultStatus("/proc/nonexistent").equals("no vault"),
               SwarmNative.vaultStatus("/proc/nonexistent"));
 
+        // --- granting, from the phone side --------------------------------
+        String reader = "11".repeat(32);   // a plausible 32-byte public key
+        long wraps = SwarmNative.vaultGrant(vault, ident, reader, "follow");
+        check("a grant publishes wraps for the sealed segments", wraps == 1,
+              "returned " + wraps);
+        check("a bad reader key is refused with a code",
+              SwarmNative.vaultGrant(vault, ident, "nothex", "follow") == -1, "not refused");
+
+        long from = SwarmNative.vaultRevoke(vault, ident, reader, "follow");
+        check("a withdrawal returns the segment it starts at", from >= 0, "returned " + from);
+
+        // --- serving ------------------------------------------------------
+        long net = SwarmNative.netStart(vault, base + "/node.key");
+        check("an endpoint starts", net != 0, "handle was 0");
+        String eid = SwarmNative.netEndpointId(net);
+        check("and reports a dialable id", eid.length() == 64, eid);
+        check("the id is stable across calls", eid.equals(SwarmNative.netEndpointId(net)), "changed");
+        SwarmNative.netStop(net);
+        SwarmNative.netStop(0);   // must be a no-op, not a crash
+        check("stopping twice does not crash", true, "");
+
         SwarmNative.emitterFree(e);
         check("freeing twice does not crash", freeTwice(), "crashed");
 

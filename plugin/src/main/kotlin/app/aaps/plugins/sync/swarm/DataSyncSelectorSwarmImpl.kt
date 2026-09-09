@@ -7,6 +7,7 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sync.DataSyncSelector
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.plugins.sync.swarm.keys.SwarmLongKey
+import app.aaps.plugins.sync.swarm.keys.SwarmStringKey
 import org.json.JSONObject
 import java.io.File
 import java.util.TimeZone
@@ -50,6 +51,18 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
 
     /** Native dedupe state, held across the whole upload. */
     private var emitter: Long = 0L
+
+    companion object {
+
+        /**
+         * The only purpose the phone grants under, for now.
+         *
+         * `clinician` and `cohort` are different key trees (§7.2) and want a UI
+         * that says which one you are handing over — offering them through a
+         * preference nobody can see would be worse than not offering them.
+         */
+        const val PURPOSE = "follow"
+    }
 
     /** One queue to walk, expressed once instead of fourteen times. */
     private class Source(
@@ -125,6 +138,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         try {
             sources.forEach { drain(it) }
             sealPending()
+            applyPendingGrants()
             val amendments = SwarmNative.emitterAmendments(emitter)
             if (amendments > 0) {
                 // Recorded, not acted on. See spec §7 and the class comment.
@@ -215,6 +229,35 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         }
         pending.clear()
         aapsLogger.info(LTag.CORE, "swarm: ${SwarmNative.vaultStatus(vault)}")
+    }
+
+    /**
+     * Act on a grant or withdrawal the user asked for, then clear the request.
+     *
+     * Cleared whether it succeeded or not: a request left in place would be
+     * retried on every pass forever, and a malformed key would retry forever
+     * silently. The log line is the record of what happened.
+     */
+    private fun applyPendingGrants() {
+        val vault = File(storage, "vault").absolutePath
+        val identity = File(storage, "subject.id").absolutePath
+
+        preferences.get(SwarmStringKey.GrantReader).trim().takeIf { it.isNotEmpty() }?.let { who ->
+            val n = SwarmNative.vaultGrant(vault, identity, who, PURPOSE)
+            preferences.put(SwarmStringKey.GrantReader, "")
+            if (n < 0) aapsLogger.error(LTag.CORE, "swarm: grant refused ($n) for ${who.take(16)}…")
+            else aapsLogger.info(LTag.CORE, "swarm: granted ${who.take(16)}… — $n wraps published")
+        }
+
+        preferences.get(SwarmStringKey.RevokeReader).trim().takeIf { it.isNotEmpty() }?.let { who ->
+            val from = SwarmNative.vaultRevoke(vault, identity, who, PURPOSE)
+            preferences.put(SwarmStringKey.RevokeReader, "")
+            if (from < 0) aapsLogger.error(LTag.CORE, "swarm: withdrawal refused ($from)")
+            else aapsLogger.info(
+                LTag.CORE,
+                "swarm: withdrew ${who.take(16)}… from segment $from — immediate"
+            )
+        }
     }
 
     /**

@@ -94,6 +94,40 @@ object SwarmNative {
     /** A one-line summary of the vault, for a log line or a status row. */
     external fun vaultStatus(vaultPath: String): String
 
+    /**
+     * Grant a reader everything, and publish their wraps. Returns wraps written,
+     * or a negative code.
+     */
+    external fun vaultGrant(
+        vaultPath: String,
+        identityPath: String,
+        readerPubHex: String,
+        purpose: String
+    ): Long
+
+    /** Withdraw, immediately. Returns the segment it takes effect from. */
+    external fun vaultRevoke(
+        vaultPath: String,
+        identityPath: String,
+        readerPubHex: String,
+        purpose: String
+    ): Long
+
+    /**
+     * Start serving this vault to peers. Returns a handle, or 0.
+     *
+     * **The point the phone stops being alone.** Until now the ciphertext sat on
+     * one device; from here a peer can hold it, and §7.4's price list starts
+     * applying: what leaves is permanent.
+     */
+    external fun netStart(vaultPath: String, nodeKeyPath: String): Long
+
+    /** The endpoint id a peer dials. Empty if not serving. */
+    external fun netEndpointId(handle: Long): String
+
+    /** Stop serving and release the handle. A no-op on 0. */
+    external fun netStop(handle: Long)
+
     /** The spec version this Kotlin was written against. */
     const val EXPECTED_SPEC_VERSION = 3
 

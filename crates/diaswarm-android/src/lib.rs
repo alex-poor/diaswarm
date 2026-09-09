@@ -276,6 +276,187 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultStatus<
     to_jstring(env, summary)
 }
 
+// ---------------------------------------------------------------------------
+// Granting, from the phone
+// ---------------------------------------------------------------------------
+//
+// Until this existed, sharing meant pulling a 3 MB vault over adb, running a
+// Rust CLI on a laptop and pushing it back. Nobody does that, which made the
+// flagship — hand your partner a key, take it back — something the design could
+// describe and not perform.
+
+fn parse_reader(hexed: &str) -> Option<[u8; 32]> {
+    let bytes = diaswarm_core::vault::unhex(hexed).ok()?;
+    bytes.try_into().ok()
+}
+
+/// Grant a reader, and publish the wraps they are now entitled to.
+///
+/// Returns the number of wraps written, or a negative code: -1 bad arguments,
+/// -2 identity unavailable, -3 vault unavailable, -4 the grant failed.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultGrant<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    vault_path: JString<'a>,
+    identity_path: JString<'a>,
+    reader_pub: JString<'a>,
+    purpose: JString<'a>,
+) -> jlong {
+    let (Ok(v), Ok(i), Ok(r), Ok(p)) = (
+        env.get_string(&vault_path),
+        env.get_string(&identity_path),
+        env.get_string(&reader_pub),
+        env.get_string(&purpose),
+    ) else {
+        return -1;
+    };
+    let (v, i, r, p) = (String::from(v), String::from(i), String::from(r), String::from(p));
+    let Some(reader) = parse_reader(&r) else { return -1 };
+    let Some(subject) = load_or_create_identity(Path::new(&i)) else { return -2 };
+    let Ok(vault) = Vault::open(Path::new(&v)) else { return -3 };
+
+    // From segment 0: a first grant hands over the whole record, which is what
+    // "share my data with my partner" means. Narrowing is the caller's job and
+    // wants a UI, not a default.
+    if vault.record_grant(&subject, &reader, &p, "grant", 0).is_err() {
+        return -4;
+    }
+    match vault.publish_wraps(&subject, &reader, &p) {
+        Ok(n) => n as jlong,
+        Err(_) => -4,
+    }
+}
+
+/// Withdraw, immediately. Returns the segment it takes effect from.
+///
+/// Rotates first, so everything written after this lands in a segment the
+/// reader is not wrapped for. Not "at the next day boundary" — at UTC+12 that
+/// could have been most of a day.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultRevoke<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    vault_path: JString<'a>,
+    identity_path: JString<'a>,
+    reader_pub: JString<'a>,
+    purpose: JString<'a>,
+) -> jlong {
+    let (Ok(v), Ok(i), Ok(r), Ok(p)) = (
+        env.get_string(&vault_path),
+        env.get_string(&identity_path),
+        env.get_string(&reader_pub),
+        env.get_string(&purpose),
+    ) else {
+        return -1;
+    };
+    let (v, i, r, p) = (String::from(v), String::from(i), String::from(r), String::from(p));
+    let Some(reader) = parse_reader(&r) else { return -1 };
+    let Some(subject) = load_or_create_identity(Path::new(&i)) else { return -2 };
+    let Ok(vault) = Vault::open(Path::new(&v)) else { return -3 };
+    match vault.revoke(&subject, &reader, &p) {
+        Ok(from) => from as jlong,
+        Err(_) => -4,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Serving, from the phone
+// ---------------------------------------------------------------------------
+
+/// A running endpoint: the tokio runtime and the router it owns.
+///
+/// Both are held because dropping either stops the other working, and Kotlin
+/// holds the only reference. There is no finaliser, on purpose — see the
+/// emitter above for why.
+struct Serving {
+    runtime: tokio::runtime::Runtime,
+    router: iroh::protocol::Router,
+    endpoint_id: String,
+}
+
+fn node_secret(path: &Path) -> Option<iroh::SecretKey> {
+    if let Ok(raw) = std::fs::read(path) {
+        let b: [u8; 32] = raw.try_into().ok()?;
+        return Some(iroh::SecretKey::from_bytes(&b));
+    }
+    let sk = iroh::SecretKey::generate();
+    std::fs::write(path, sk.to_bytes()).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Some(sk)
+}
+
+/// Start serving this vault. Returns a handle, or 0 on failure.
+///
+/// **This is the point the phone stops being alone.** Everything before it kept
+/// ciphertext on one device; from here a peer can hold it. feasibility.md §7.4
+/// is the price list for that, and it starts applying now: what leaves is
+/// permanent.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netStart<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    vault_path: JString<'a>,
+    node_key_path: JString<'a>,
+) -> jlong {
+    let (Ok(v), Ok(k)) = (env.get_string(&vault_path), env.get_string(&node_key_path)) else {
+        return 0;
+    };
+    let (v, k) = (PathBuf::from(String::from(v)), PathBuf::from(String::from(k)));
+    let Some(secret) = node_secret(&k) else { return 0 };
+    let endpoint_id = secret.public().to_string();
+
+    // Two worker threads. A loop phone has better things to do than run a
+    // network stack at whatever the default core count suggests.
+    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    else {
+        return 0;
+    };
+    let Ok(router) = runtime.block_on(diaswarm_net::wire::serve(v, secret)) else {
+        return 0;
+    };
+    Box::into_raw(Box::new(Serving { runtime, router, endpoint_id })) as jlong
+}
+
+/// The endpoint id a peer dials. Empty if not serving.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netEndpointId<'a>(
+    env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+) -> JString<'a> {
+    if handle == 0 {
+        return to_jstring(env, String::new());
+    }
+    let serving = unsafe { &*(handle as *const Serving) };
+    to_jstring(env, serving.endpoint_id.clone())
+}
+
+/// Stop serving and release the handle. Idempotent on 0.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netStop(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if handle == 0 {
+        return;
+    }
+    let serving = unsafe { Box::from_raw(handle as *mut Serving) };
+    let Serving { runtime, router, .. } = *serving;
+    // Shut the router down inside its own runtime, then drop the runtime. The
+    // other order leaves connections to be reaped by a runtime that is gone.
+    let _ = runtime.block_on(router.shutdown());
+    drop(runtime);
+}
+
 fn to_jstring(env: JNIEnv<'_>, s: String) -> JString<'_> {
     env.new_string(s).unwrap_or_else(|_| unsafe { JString::from_raw(std::ptr::null_mut()) })
 }
