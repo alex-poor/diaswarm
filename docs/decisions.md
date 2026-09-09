@@ -242,6 +242,39 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D14 · Transport is iroh, and it serves to anyone who asks
+
+**Settled 2026-09-09.** `crates/diaswarm-net` moves a vault between peers over
+iroh 1.1 — dial-by-endpoint-id, hole punching, relay fallback — which is what
+feasibility.md §8.8 recommended and the one dependency there that passes RQ8.
+
+**It authenticates nobody, deliberately.** A vault is sealed segments, wraps
+encrypted to one reader, and a grant log that names nobody (D13). There is
+nothing to withhold, and a transport that decided who to serve would reintroduce
+exactly what §9.2 removed: access by who a server serves rather than by who holds
+a key. Measured, on the phone's own 74-epoch history: a granted partner fetches
+74 segments and 74 wraps and opens 33,279 records; a stranger fetches the same 74
+segments, gets 0 wraps, and opens nothing.
+
+**A fetch takes every segment, not the openable ones.** Holding ciphertext you
+cannot read is the property §7.1 rests on — and taking only what you can open
+would announce what you were granted, which is the leak D13 closed in the log,
+reintroduced through traffic.
+
+**The grant log replicates**, per D13's requirement, and the fetched copy is
+verified against the subject's key rather than trusted.
+
+*What this is not:* it is **pull, not gossip**. A reader asks and a subject
+answers, so it is the wrong shape for the flagship — a follower needs data while
+the subject's phone is asleep, and a phone in a drawer answers nothing. Push,
+store-and-forward, and what an always-on peer holds are the next problem. §9.5
+already says the subject's side is nearly free, because AAPS has paid for the
+foreground service.
+
+*Reopens if:* `p2panda-net` turns out to give the gossip and sync layer more
+cheaply than writing it. It is built on the same iroh, so that swap is a
+transport-layer decision and not a key-layer one — the seam D2a preserved.
+
 ### D13 · The grant log names nobody
 
 **Settled 2026-09-09**, addressing what feasibility.md §12.0 called the sharpest
