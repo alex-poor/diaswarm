@@ -282,6 +282,122 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultStatus<
 }
 
 // ---------------------------------------------------------------------------
+// The pool
+// ---------------------------------------------------------------------------
+//
+// Turning swarm on puts this phone in a pool: it finds peers, works out which
+// slice of the subject space is its share, and holds what falls there — for
+// people it has never met and cannot read.
+
+/// A running pool membership: the runtime and the swarm it owns.
+struct Pooled {
+    runtime: tokio::runtime::Runtime,
+    swarm: diaswarm_net::swarm::Swarm,
+    node_id: String,
+}
+
+/// Join the pool. Returns a handle, or 0.
+///
+/// Uses the SAME node key file as before, so the phone keeps the endpoint id it
+/// already had. Everything that ranks peers ranks them by that id, and a new
+/// key would read as one peer leaving and another arriving — every bucket it
+/// held would reshuffle for nothing.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmJoin<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    store_path: JString<'a>,
+    node_key_path: JString<'a>,
+) -> jlong {
+    let (Ok(store), Ok(key_path)) = (env.get_string(&store_path), env.get_string(&node_key_path))
+    else {
+        return 0;
+    };
+    let store = PathBuf::from(String::from(store));
+    let key_path = PathBuf::from(String::from(key_path));
+
+    let Some(raw) = load_or_create_node_key(&key_path) else { return 0 };
+    let signing = p2panda_core::SigningKey::from_bytes(&raw);
+
+    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread().enable_all().build() else {
+        return 0;
+    };
+    let joined = runtime.block_on(diaswarm_net::swarm::Swarm::join(store, signing));
+    let Ok(swarm) = joined else { return 0 };
+    let Ok(node_id) = runtime.block_on(swarm.node_id()) else { return 0 };
+
+    Box::into_raw(Box::new(Pooled { runtime, swarm, node_id })) as jlong
+}
+
+/// This phone's id in the pool. Empty on a bad handle.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmNodeId<'a>(
+    env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+) -> JString<'a> {
+    if handle == 0 {
+        return to_jstring(env, String::new());
+    }
+    let pooled = unsafe { &*(handle as *const Pooled) };
+    to_jstring(env, pooled.node_id.clone())
+}
+
+/// One pass: say what we hold, hear what we should, take on a few of them.
+///
+/// Returns `pool<TAB>buckets<TAB>held<TAB>wanted<TAB>adopted`, or empty.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmTick<'a>(
+    env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    max_adopt: jlong,
+) -> JString<'a> {
+    if handle == 0 {
+        return to_jstring(env, String::new());
+    }
+    let pooled = unsafe { &*(handle as *const Pooled) };
+    let take = max_adopt.max(0) as usize;
+    match pooled.runtime.block_on(pooled.swarm.tick_and_adopt(take)) {
+        Ok((r, adopted)) => to_jstring(
+            env,
+            format!("{}\t{}\t{}\t{}\t{}", r.pool, r.buckets, r.held, r.wanted.len(), adopted),
+        ),
+        Err(_) => to_jstring(env, String::new()),
+    }
+}
+
+/// Leave the pool and release the handle. Idempotent on 0.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmLeave<'a>(
+    _env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+) {
+    if handle == 0 {
+        return;
+    }
+    // Dropping the runtime stops the actors p2panda spawned; dropping the swarm
+    // stops discovery and gossip. Order matters only in that both must happen.
+    let pooled = unsafe { Box::from_raw(handle as *mut Pooled) };
+    drop(pooled);
+}
+
+/// Read a 32-byte node key, creating one if absent.
+fn load_or_create_node_key(path: &Path) -> Option<[u8; 32]> {
+    if let Ok(raw) = std::fs::read(path) {
+        if raw.len() == 32 {
+            let mut k = [0u8; 32];
+            k.copy_from_slice(&raw);
+            return Some(k);
+        }
+    }
+    let k: [u8; 32] = iroh::SecretKey::generate().to_bytes();
+    std::fs::write(path, k).ok()?;
+    Some(k)
+}
+
+// ---------------------------------------------------------------------------
 // Following, from the phone
 // ---------------------------------------------------------------------------
 //
@@ -334,12 +450,18 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netRefresh<'
     // fetching from a throwaway endpoint hands out an address that stops
     // existing when the sync ends. Serving and fetching from the same endpoint
     // means the id this phone is known by is the id it answers on.
+    // The POOL handle, not the old serving one. One peer, one endpoint: a
+    // follower fetching from a second endpoint would be an identity the pool
+    // knows nothing about, and the far side would record it as somewhere to
+    // look that stops existing.
     if handle != 0 {
-        let serving = unsafe { &*(handle as *const Serving) };
-        let endpoint = serving.router.endpoint();
-        return match serving
+        let pooled = unsafe { &*(handle as *const Pooled) };
+        let Ok(endpoint) = pooled.runtime.block_on(pooled.swarm.iroh_endpoint()) else {
+            return -2;
+        };
+        return match pooled
             .runtime
-            .block_on(diaswarm_net::peer::refresh_all_on(endpoint, &store))
+            .block_on(diaswarm_net::peer::refresh_all_on(&endpoint, &store))
         {
             Ok(results) => results.iter().filter(|r| r.reached()).count() as jlong,
             Err(_) => -3,
@@ -604,99 +726,34 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultRevoke<
 // Serving, from the phone
 // ---------------------------------------------------------------------------
 
-/// A running endpoint: the tokio runtime and the router it owns.
-///
-/// Both are held because dropping either stops the other working, and Kotlin
-/// holds the only reference. There is no finaliser, on purpose — see the
-/// emitter above for why.
-struct Serving {
-    runtime: tokio::runtime::Runtime,
-    router: iroh::protocol::Router,
-    endpoint_id: String,
-}
 
-fn node_secret(path: &Path) -> Option<iroh::SecretKey> {
-    if let Ok(raw) = std::fs::read(path) {
-        let b: [u8; 32] = raw.try_into().ok()?;
-        return Some(iroh::SecretKey::from_bytes(&b));
-    }
-    let sk = iroh::SecretKey::generate();
-    std::fs::write(path, sk.to_bytes()).ok()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-    }
-    Some(sk)
-}
 
-/// Start serving this vault. Returns a handle, or 0 on failure.
-///
-/// **This is the point the phone stops being alone.** Everything before it kept
-/// ciphertext on one device; from here a peer can hold it. feasibility.md §7.4
-/// is the price list for that, and it starts applying now: what leaves is
-/// permanent.
-#[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netStart<'a>(
-    mut env: JNIEnv<'a>,
-    _class: JClass<'a>,
-    vault_path: JString<'a>,
-    node_key_path: JString<'a>,
-) -> jlong {
-    let (Ok(v), Ok(k)) = (env.get_string(&vault_path), env.get_string(&node_key_path)) else {
-        return 0;
-    };
-    let (v, k) = (PathBuf::from(String::from(v)), PathBuf::from(String::from(k)));
-    let Some(secret) = node_secret(&k) else { return 0 };
-    let endpoint_id = secret.public().to_string();
 
-    // Two worker threads. A loop phone has better things to do than run a
-    // network stack at whatever the default core count suggests.
-    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-    else {
-        return 0;
-    };
-    let Ok(router) = runtime.block_on(diaswarm_net::wire::serve(v, secret)) else {
-        return 0;
-    };
-    Box::into_raw(Box::new(Serving { runtime, router, endpoint_id })) as jlong
-}
 
-/// The endpoint id a peer dials. Empty if not serving.
-#[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netEndpointId<'a>(
-    env: JNIEnv<'a>,
-    _class: JClass<'a>,
-    handle: jlong,
-) -> JString<'a> {
-    if handle == 0 {
-        return to_jstring(env, String::new());
-    }
-    let serving = unsafe { &*(handle as *const Serving) };
-    to_jstring(env, serving.endpoint_id.clone())
-}
-
-/// Stop serving and release the handle. Idempotent on 0.
-#[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netStop(
-    _env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-) {
-    if handle == 0 {
-        return;
-    }
-    let serving = unsafe { Box::from_raw(handle as *mut Serving) };
-    let Serving { runtime, router, .. } = *serving;
-    // Shut the router down inside its own runtime, then drop the runtime. The
-    // other order leaves connections to be reaped by a runtime that is gone.
-    let _ = runtime.block_on(router.shutdown());
-    drop(runtime);
-}
 
 fn to_jstring(env: JNIEnv<'_>, s: String) -> JString<'_> {
     env.new_string(s).unwrap_or_else(|_| unsafe { JString::from_raw(std::ptr::null_mut()) })
+}
+
+#[cfg(test)]
+mod identity_tests {
+    /// THE PHONE MUST KEEP THE ID IT ALREADY HAD.
+    ///
+    /// The node key on disk was written for iroh and is now handed to p2panda.
+    /// If the two derive different public keys from the same 32 bytes, every
+    /// phone silently becomes a new peer on upgrade: its share of the pool
+    /// reshuffles, and anyone holding its old address finds nobody.
+    #[test]
+    fn the_same_node_key_gives_the_same_endpoint_id() {
+        let raw: [u8; 32] = iroh::SecretKey::generate().to_bytes();
+
+        let iroh_id = iroh::SecretKey::from_bytes(&raw).public().to_string();
+        let panda_id = p2panda_core::SigningKey::from_bytes(&raw).verifying_key().to_string();
+
+        assert_eq!(
+            iroh_id, panda_id,
+            "iroh and p2panda derive different ids from one key — upgrading would \
+             change every phone's identity"
+        );
+    }
 }

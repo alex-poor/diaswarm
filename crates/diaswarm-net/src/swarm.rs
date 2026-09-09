@@ -28,7 +28,7 @@
 //! particular. **Holding is not reading**: a peer carries ciphertext for people
 //! it has never met and cannot open a byte of it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -55,8 +55,13 @@ fn now_ms() -> i64 {
 /// about holding something is found out by the fetch failing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BucketMessage {
-    /// Subjects this peer holds that fall in this bucket.
-    Holding { subjects: Vec<String> },
+    /// Subjects this peer holds that fall in this bucket, and where to get them.
+    ///
+    /// The sender names itself, which it could lie about. It buys nothing: the
+    /// id is what a dial authenticates against, so a false one reaches nobody,
+    /// and a peer claiming to hold something it does not is found out by the
+    /// fetch coming back empty. Naming yourself is a hint, not a credential.
+    Holding { from: String, subjects: Vec<String> },
 }
 
 /// A running member of the pool.
@@ -77,8 +82,8 @@ pub struct Swarm {
     /// each other if their windows happen to overlap — which, tested, they do
     /// not. The subscription has to outlive the pass.
     joined: Arc<Mutex<HashMap<u64, p2panda_net::gossip::GossipHandle>>>,
-    /// Subjects heard about on bucket topics, accumulated by listeners.
-    heard: Arc<Mutex<HashSet<String>>>,
+    /// Subjects heard about on bucket topics, and who said they had them.
+    heard: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Swarm {
@@ -128,8 +133,16 @@ impl Swarm {
             _mdns: mdns,
             _presence: presence,
             joined: Arc::new(Mutex::new(HashMap::new())),
-            heard: Arc::new(Mutex::new(HashSet::new())),
+            heard: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    /// The iroh endpoint underneath, so the follow path uses the same identity.
+    ///
+    /// One peer, one endpoint. A phone that fetched from somewhere else would
+    /// be a second identity in the pool that nothing else knows about.
+    pub async fn iroh_endpoint(&self) -> Result<iroh::Endpoint> {
+        Ok(self.endpoint.endpoint().await?)
     }
 
     pub async fn node_id(&self) -> Result<String> {
@@ -189,13 +202,16 @@ impl Swarm {
                         let b = *bucket;
                         tokio::spawn(async move {
                             while let Some(Ok(bytes)) = rx.next().await {
-                                if let Ok(BucketMessage::Holding { subjects }) =
+                                if let Ok(BucketMessage::Holding { from, subjects }) =
                                     serde_json::from_slice::<BucketMessage>(&bytes)
                                 {
+                                    if from.parse::<p2panda_net::NodeId>().is_err() {
+                                        continue;
+                                    }
                                     let mut set = heard.lock().unwrap();
                                     for s in subjects {
                                         if is_subject(&s) && pool::bucket_of(&s, depth) == b {
-                                            set.insert(s);
+                                            set.insert(s, from.clone());
                                         }
                                     }
                                 }
@@ -211,20 +227,23 @@ impl Swarm {
             let ours: Vec<String> =
                 held.iter().filter(|s| pool::bucket_of(s, depth) == *bucket).cloned().collect();
             if !ours.is_empty() {
-                let msg = serde_json::to_vec(&BucketMessage::Holding { subjects: ours })?;
+                let msg = serde_json::to_vec(&BucketMessage::Holding {
+                    from: me.clone(),
+                    subjects: ours,
+                })?;
                 let _ = handle.publish(msg).await;
                 announced += 1;
             }
         }
 
-        let wanted: Vec<String> = self
+        let wanted: Vec<(String, String)> = self
             .heard
             .lock()
             .unwrap()
             .iter()
-            .filter(|s| !held.contains(*s))
-            .filter(|s| mine.contains(&pool::bucket_of(s, depth)))
-            .cloned()
+            .filter(|(s, _)| !held.contains(*s))
+            .filter(|(s, _)| mine.contains(&pool::bucket_of(s, depth)))
+            .map(|(s, from)| (s.clone(), from.clone()))
             .collect();
 
         Ok(TickReport {
@@ -235,6 +254,23 @@ impl Swarm {
             announced,
             wanted,
         })
+    }
+
+    /// One pass, and take on what it finds.
+    ///
+    /// Bounded per pass because this runs on a phone: a peer that has just
+    /// joined a large pool would otherwise try to pull its entire share in one
+    /// go, over mobile data, in a worker with a deadline. It catches up over
+    /// several passes instead.
+    pub async fn tick_and_adopt(&self, max: usize) -> Result<(TickReport, usize)> {
+        let report = self.tick().await?;
+        let mut taken = 0;
+        for (subject, from) in report.wanted.iter().take(max) {
+            if self.adopt(subject, from).await.is_ok() {
+                taken += 1;
+            }
+        }
+        Ok((report, taken))
     }
 
     /// Fetch a subject we ought to be holding, from any peer that has it.
@@ -262,8 +298,8 @@ pub struct TickReport {
     pub buckets: usize,
     pub held: usize,
     pub announced: usize,
-    /// Subjects in our buckets that we do not have yet.
-    pub wanted: Vec<String>,
+    /// Subjects in our buckets we do not have yet, and where to ask.
+    pub wanted: Vec<(String, String)>,
 }
 
 fn topic(bytes: [u8; 32]) -> Topic {

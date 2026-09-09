@@ -67,7 +67,7 @@ async fn a_stranger_ends_up_holding_your_ciphertext_without_being_asked() {
         if let Ok(report) = holder.tick().await {
             pool_seen = report.pool;
             if !report.wanted.is_empty() {
-                wanted = report.wanted.clone();
+                wanted = report.wanted.iter().map(|(s, _)| s.clone()).collect();
                 break;
             }
         }

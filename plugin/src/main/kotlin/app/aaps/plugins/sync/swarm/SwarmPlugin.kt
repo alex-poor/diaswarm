@@ -244,7 +244,7 @@ class SwarmPlugin @Inject constructor(
         // A follower's invite is how it hands over the key you must grant.
         SwarmNative.check()
         val subject = SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)
-        val endpoint = SwarmNative.netEndpointId(serving)
+        val endpoint = SwarmNative.swarmNodeId(serving)
         if (subject.isEmpty() || endpoint.isEmpty()) return ""
         return SwarmNative.inviteFor(subject, endpoint, DataSyncSelectorSwarmImpl.PURPOSE)
     }
@@ -343,7 +343,15 @@ class SwarmPlugin @Inject constructor(
         // not this phone's vault, and a store can be full of other people's
         // history while this phone has published nothing. Serving an empty one
         // costs an idle endpoint.
-        serving = SwarmNative.netStart(
+        // JOIN THE POOL, which also serves what we hold.
+        //
+        // This replaced starting a bare endpoint of our own. The difference is
+        // that a pool member finds other peers instead of waiting to be handed
+        // an address, works out which slice of the subject space is its share,
+        // and holds what falls there — for people it has never met and cannot
+        // read. Serving is the same protocol it always was, registered on
+        // p2panda's endpoint.
+        serving = SwarmNative.swarmJoin(
             SwarmPaths.store(context).absolutePath,
             SwarmPaths.nodeKey(context).absolutePath
         )
@@ -352,7 +360,7 @@ class SwarmPlugin @Inject constructor(
             return
         }
         SwarmEndpoint.handle = serving
-        aapsLogger.info(LTag.CORE, "swarm: serving as ${SwarmNative.netEndpointId(serving)}")
+        aapsLogger.info(LTag.CORE, "swarm: in the pool as ${SwarmNative.swarmNodeId(serving)}")
         aapsLogger.info(
             LTag.CORE,
             "swarm: subject ${SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)}"
@@ -366,9 +374,9 @@ class SwarmPlugin @Inject constructor(
     private fun stopServing() {
         SwarmEndpoint.handle = 0L
         if (serving == 0L) return
-        SwarmNative.netStop(serving)
+        SwarmNative.swarmLeave(serving)
         serving = 0L
-        aapsLogger.info(LTag.CORE, "swarm: stopped serving")
+        aapsLogger.info(LTag.CORE, "swarm: left the pool")
     }
 
     /**

@@ -752,6 +752,7 @@ dependencies = [
  "diaswarm-net",
  "iroh",
  "jni 0.21.1",
+ "p2panda-core",
  "serde_json",
  "tokio",
 ]

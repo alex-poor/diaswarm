@@ -123,6 +123,37 @@ object SwarmNative {
     /** Read one back as `subject<TAB>endpoint<TAB>purpose`; empty if not valid. */
     external fun inviteParse(text: String): String
 
+    // --- being in the pool -------------------------------------------------
+
+    /**
+     * Join the pool: find peers, work out this phone's share, hold it.
+     *
+     * Uses the same node key file as before, so the phone keeps the endpoint id
+     * it already had — everything that ranks peers ranks them by it, and a new
+     * key would read as one peer leaving and another arriving.
+     *
+     * Returns a handle, or 0 on failure.
+     */
+    external fun swarmJoin(storePath: String, nodeKeyPath: String): Long
+
+    /** This phone's id in the pool. Empty on a bad handle. */
+    external fun swarmNodeId(handle: Long): String
+
+    /**
+     * One pass: say what we hold, hear what we should, take on up to
+     * [maxAdopt] of them.
+     *
+     * Bounded because this runs on a phone — a peer joining a large pool would
+     * otherwise try to pull its whole share at once, over mobile data, in a
+     * worker with a deadline.
+     *
+     * Returns `pool<TAB>buckets<TAB>held<TAB>wanted<TAB>adopted`, or empty.
+     */
+    external fun swarmTick(handle: Long, maxAdopt: Long): String
+
+    /** Leave the pool and release the handle. Idempotent on 0. */
+    external fun swarmLeave(handle: Long)
+
     // --- following someone else -------------------------------------------
 
     /** Keep a copy of whoever sent this invite. 1 changed, 0 already known, <0 failed. */
@@ -164,20 +195,11 @@ object SwarmNative {
         purpose: String
     ): Long
 
-    /**
-     * Start serving this vault to peers. Returns a handle, or 0.
-     *
-     * **The point the phone stops being alone.** Until now the ciphertext sat on
-     * one device; from here a peer can hold it, and §7.4's price list starts
-     * applying: what leaves is permanent.
-     */
-    external fun netStart(vaultPath: String, nodeKeyPath: String): Long
+    // The bare-endpoint serving surface that used to live here is gone. Joining
+    // the pool serves what we hold, on one endpoint, under one identity — and
+    // two native handle types reachable from Kotlin is a crash waiting for
+    // whoever passes the wrong one.
 
-    /** The endpoint id a peer dials. Empty if not serving. */
-    external fun netEndpointId(handle: Long): String
-
-    /** Stop serving and release the handle. A no-op on 0. */
-    external fun netStop(handle: Long)
 
     /** The spec version this Kotlin was written against. */
     const val EXPECTED_SPEC_VERSION = 3

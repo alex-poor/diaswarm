@@ -113,15 +113,24 @@ public class Check {
         long from = SwarmNative.vaultRevoke(vault, ident, reader, "follow");
         check("a withdrawal returns the segment it starts at", from >= 0, "returned " + from);
 
-        // --- serving ------------------------------------------------------
-        long net = SwarmNative.netStart(vault, base + "/node.key");
-        check("an endpoint starts", net != 0, "handle was 0");
-        String eid = SwarmNative.netEndpointId(net);
-        check("and reports a dialable id", eid.length() == 64, eid);
-        check("the id is stable across calls", eid.equals(SwarmNative.netEndpointId(net)), "changed");
-        SwarmNative.netStop(net);
-        SwarmNative.netStop(0);   // must be a no-op, not a crash
-        check("stopping twice does not crash", true, "");
+        // --- the pool ------------------------------------------------------
+        //
+        // Joining serves what we hold AND finds peers. It replaced starting a
+        // bare endpoint; two native handle types reachable from Kotlin was a
+        // crash waiting for whoever passed the wrong one.
+        long pool = SwarmNative.swarmJoin(base + "/store", base + "/node.key");
+        check("joining the pool returns a handle", pool != 0, "handle was 0");
+        String poolId = SwarmNative.swarmNodeId(pool);
+        check("and reports a dialable id", poolId.length() == 64, poolId);
+        check("the id is stable across calls", poolId.equals(SwarmNative.swarmNodeId(pool)), "changed");
+        String tick = SwarmNative.swarmTick(pool, 0);
+        check("a pass reports pool/buckets/held/wanted/adopted",
+              tick.split("\t").length == 5, tick);
+        check("alone in the pool, it is still a pool of one",
+              Integer.parseInt(tick.split("\t")[0]) >= 1, tick);
+        SwarmNative.swarmLeave(pool);
+        SwarmNative.swarmLeave(0);   // must be a no-op, not a crash
+        check("leaving twice does not crash", true, "");
 
         SwarmNative.emitterFree(e);
         check("freeing twice does not crash", freeTwice(), "crashed");
