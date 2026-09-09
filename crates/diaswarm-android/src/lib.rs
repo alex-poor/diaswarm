@@ -281,6 +281,32 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultStatus<
     to_jstring(env, summary)
 }
 
+/// Who this subject has granted, one per line: `reader<TAB>purpose`.
+///
+/// Read from the vault's private book, which is the only thing that can put a
+/// name to a tag — the grant log deliberately cannot (D13). Empty when nobody
+/// has been granted, which is indistinguishable here from a vault that does
+/// not exist; both mean "nothing to show", and the caller knows which.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultReaders<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    vault_path: JString<'a>,
+) -> JString<'a> {
+    let Ok(v) = env.get_string(&vault_path) else { return to_jstring(env, String::new()) };
+    let Ok(vault) = Vault::open(Path::new(&String::from(v))) else {
+        return to_jstring(env, String::new());
+    };
+    let listing = vault
+        .readers()
+        .unwrap_or_default()
+        .iter()
+        .map(|k| format!("{}\t{}", k.reader, k.purpose))
+        .collect::<Vec<_>>()
+        .join("\n");
+    to_jstring(env, listing)
+}
+
 /// The one string a subject hands to someone they want to share with.
 ///
 /// Empty on failure — the caller has a subject key and an endpoint id to hand

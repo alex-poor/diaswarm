@@ -29,13 +29,29 @@ enum class SwarmLongKey(
 }
 
 /**
- * String preferences. Separate enum because AAPS keys are typed.
+ * String preferences, and these ones are meant to be SEEN.
+ *
+ * `StringPreferenceKey`, not `StringNonPreferenceKey`. The distinction is not
+ * cosmetic: a key that is not registered is invisible to `Preferences.get(String)`,
+ * is silently dropped from settings export, and — in this fork, whose preference
+ * list is rendered by Compose off the typed key — falls through to a plain
+ * click-through row that does nothing. Granting stayed an adb operation partly
+ * because of this one word.
  */
 enum class SwarmStringKey(
     override val key: String,
     override val defaultValue: String,
+    override val defaultedBySM: Boolean = false,
+    override val showInApsMode: Boolean = true,
+    override val showInNsClientMode: Boolean = true,
+    override val showInPumpControlMode: Boolean = true,
+    override val dependency: app.aaps.core.keys.interfaces.BooleanPreferenceKey? = null,
+    override val negativeDependency: app.aaps.core.keys.interfaces.BooleanPreferenceKey? = null,
+    override val hideParentScreenIfHidden: Boolean = false,
+    override val isPassword: Boolean = false,
+    override val isPin: Boolean = false,
     override val exportable: Boolean = true
-) : app.aaps.core.keys.interfaces.StringNonPreferenceKey {
+) : app.aaps.core.keys.interfaces.StringPreferenceKey {
 
     /**
      * A reader to grant, as 64 hex characters, acted on and cleared next pass.
@@ -49,4 +65,17 @@ enum class SwarmStringKey(
 
     /** A reader to withdraw from. Same shape, same lifecycle. */
     RevokeReader("swarm_revoke_reader", ""),
+
+    /**
+     * Identity for the "show my invite" button, which stores nothing.
+     *
+     * `AdaptiveClickPreference` requires a `StringPreferenceKey` even when the
+     * row is a button, so an empty-defaulted key is how AAPS gives one an
+     * identity — `StringKey.OverviewCopySettingsFromNs` is the same trick.
+     * Not exportable: there is no value to export.
+     */
+    ShowInvite("swarm_show_invite", "", exportable = false),
+
+    /** Same, for the list of who can currently read. */
+    ShowReaders("swarm_show_readers", "", exportable = false),
 }

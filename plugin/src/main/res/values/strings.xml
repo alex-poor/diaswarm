@@ -2,4 +2,21 @@
     <string name="swarm">Swarm sharing</string>
     <string name="swarm_shortname">SWARM</string>
     <string name="description_swarm">Share your records with named people, revocably, with no server in the middle. Off by default; reads only, and never writes to the loop.</string>
+
+    <string name="swarm_show_invite">Your invite</string>
+    <string name="swarm_show_invite_summary">Show the code someone scans to start following you</string>
+    <string name="swarm_invite_explain">Show this to someone who should be able to follow you. It is not a secret: it holds a public key and an address, and anyone who has it can download your data and read none of it. They still cannot open anything until you add their key below.</string>
+    <string name="swarm_invite_not_ready">Nothing to share yet. Turn Swarm sharing on and wait for the first records to be sealed — an invite needs both your key and somewhere to reach you.</string>
+    <string name="swarm_copy">Copy</string>
+
+    <string name="swarm_grant">Share with someone</string>
+    <string name="swarm_grant_summary">Paste the key they gave you. They will be able to read your whole history.</string>
+    <string name="swarm_revoke">Stop sharing with</string>
+    <string name="swarm_revoke_summary">Paste their key. Takes effect immediately — but they keep whatever they already downloaded.</string>
+
+    <string name="swarm_readers">Who can read</string>
+    <string name="swarm_readers_summary">The people you have shared with</string>
+    <string name="swarm_reader_row">%1$s\n%2$s</string>
+    <string name="swarm_readers_explain">To stop sharing with someone, copy their key above and paste it into “Stop sharing with”.</string>
+    <string name="swarm_no_readers">Nobody. Use “Share with someone” to add a key.</string>
 </resources>

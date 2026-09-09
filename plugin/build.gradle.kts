@@ -24,6 +24,17 @@ dependencies {
     implementation(project(":core:interfaces"))
     implementation(project(":core:keys"))
     implementation(project(":core:utils"))
+    // The Adaptive* preference widgets. Without this there is no way to build
+    // a settings screen, and granting stays an adb operation.
+    implementation(project(":core:validators"))
+    // MaterialAlertDialogBuilder and R.style.DialogTheme — the app's own dialog
+    // theme. Without it a dialog built from the activity's dark context renders
+    // its own text white on a white Material background: invisible, not absent.
+    implementation(project(":core:ui"))
+    // QR for the invite. Already in libs.versions.toml and in the gradle cache
+    // (it came in for the removed SmsCommunicator), and jitpack is enabled for
+    // every module, so this resolves offline.
+    implementation(libs.com.github.kenglxn.qrgen.android)
     // LoggingWorker, which the sync worker extends.
     implementation(project(":core:objects"))
     // WorkManager: the drain runs as a worker, off the loop's thread.

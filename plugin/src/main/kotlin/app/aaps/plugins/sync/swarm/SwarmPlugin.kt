@@ -14,10 +14,18 @@ import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
 import app.aaps.plugins.sync.swarm.workers.SwarmDataSyncWorker
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
-import app.aaps.core.interfaces.plugin.PluginBase
+import app.aaps.core.interfaces.plugin.PluginBaseWithPreferences
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.interfaces.resources.ResourceHelper
+import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.core.validators.preferences.AdaptiveClickPreference
+import app.aaps.core.validators.preferences.AdaptiveStringPreference
+import app.aaps.plugins.sync.swarm.keys.SwarmLongKey
+import app.aaps.plugins.sync.swarm.keys.SwarmStringKey
+import androidx.preference.PreferenceCategory
+import androidx.preference.PreferenceManager
+import androidx.preference.PreferenceScreen
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -50,7 +58,8 @@ class SwarmPlugin @Inject constructor(
     private val rxBus: RxBus,
     private val aapsSchedulers: AapsSchedulers,
     private val fabricPrivacy: FabricPrivacy,
-) : PluginBase(
+    preferences: Preferences,
+) : PluginBaseWithPreferences(
     PluginDescription()
         .mainType(PluginType.SYNC)
         .pluginName(R.string.swarm)
@@ -58,8 +67,18 @@ class SwarmPlugin @Inject constructor(
         .description(R.string.description_swarm)
         // Off. Deliberately. See the class comment.
         .enableByDefault(false)
-        .visibleByDefault(false),
-    aapsLogger, rh
+        .visibleByDefault(false)
+        // The screen is built in [addPreferenceScreen], not in XML — the XML
+        // path in this tree is dead code. Setting this is also what makes the
+        // gear icon appear next to the plugin in the Config Builder.
+        .preferencesId(PluginDescription.PREFERENCE_SCREEN),
+    // REGISTERING THE KEYS IS NOT BOOKKEEPING. Unregistered keys are invisible
+    // to `Preferences.get(String)`, are silently dropped from settings export,
+    // and in this fork — where the preference list is rendered by Compose off
+    // the typed key — render as a dead row. The high-water marks are here too
+    // so that a settings export actually carries them.
+    ownPreferences = listOf(SwarmLongKey::class.java, SwarmStringKey::class.java),
+    aapsLogger, rh, preferences
 ) {
 
     private val disposable = CompositeDisposable()
@@ -91,6 +110,107 @@ class SwarmPlugin @Inject constructor(
         disposable += rxBus.toObservable(EventNewHistoryData::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({ if (isEnabled()) enqueue() }, fabricPrivacy::logException)
+    }
+
+    /**
+     * The settings screen: share, withdraw, and see who can read.
+     *
+     * WHY THIS EXISTS AT ALL. Granting used to mean force-stopping a running
+     * insulin loop, editing an XML file over adb as root, and restarting it.
+     * That is not a thing to ask of anyone, including the person who wrote it,
+     * and it meant the whole design could only ever be used by one person.
+     *
+     * Granting still goes through the same preference the sync pass acts on,
+     * rather than calling the vault from here. One code path changes access,
+     * it runs on the worker thread, and this screen only writes a string to it
+     * — a settings screen that reached into the vault directly would be a
+     * second way to grant, on the UI thread, that the sync pass knew nothing
+     * about.
+     */
+    override fun addPreferenceScreen(
+        preferenceManager: PreferenceManager,
+        parent: PreferenceScreen,
+        context: Context,
+        requiredKey: String?
+    ) {
+        // Only when the whole screen is being built, not while drilling into
+        // some other plugin's sub-screen.
+        if (requiredKey != null) return
+
+        val category = PreferenceCategory(context)
+        parent.addPreference(category)
+        category.apply {
+            key = "swarm_settings"
+            title = rh.gs(R.string.swarm)
+            initialExpandedChildrenCount = 0
+
+            addPreference(
+                AdaptiveClickPreference(
+                    ctx = context,
+                    stringKey = SwarmStringKey.ShowInvite,
+                    title = R.string.swarm_show_invite,
+                    summary = R.string.swarm_show_invite_summary,
+                    onPreferenceClickListener = {
+                        SwarmSharing.showInvite(context, currentInvite(), inviteBlockedBecause())
+                        true
+                    }
+                )
+            )
+            addPreference(
+                AdaptiveStringPreference(
+                    ctx = context,
+                    stringKey = SwarmStringKey.GrantReader,
+                    title = R.string.swarm_grant,
+                    summary = R.string.swarm_grant_summary
+                )
+            )
+            addPreference(
+                AdaptiveStringPreference(
+                    ctx = context,
+                    stringKey = SwarmStringKey.RevokeReader,
+                    title = R.string.swarm_revoke,
+                    summary = R.string.swarm_revoke_summary
+                )
+            )
+            addPreference(
+                AdaptiveClickPreference(
+                    ctx = context,
+                    stringKey = SwarmStringKey.ShowReaders,
+                    title = R.string.swarm_readers,
+                    summary = R.string.swarm_readers_summary,
+                    onPreferenceClickListener = {
+                        SwarmSharing.showReaders(context, grantedReaders())
+                        true
+                    }
+                )
+            )
+        }
+    }
+
+    /**
+     * The invite, or empty if one cannot be made yet.
+     *
+     * Needs both halves: the subject key, which exists once anything has been
+     * sealed, and an endpoint id, which exists only while this node is serving.
+     */
+    private fun currentInvite(): String {
+        if (serving == 0L) return ""
+        SwarmNative.check()
+        val subject = SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)
+        val endpoint = SwarmNative.netEndpointId(serving)
+        if (subject.isEmpty() || endpoint.isEmpty()) return ""
+        return SwarmNative.inviteFor(subject, endpoint, DataSyncSelectorSwarmImpl.PURPOSE)
+    }
+
+    /** Why there is no invite, in words a person can act on. */
+    private fun inviteBlockedBecause(): String? =
+        if (serving == 0L) rh.gs(R.string.swarm_invite_not_ready) else null
+
+    private fun grantedReaders(): String {
+        SwarmNative.check()
+        val vault = SwarmPaths.vault(context, this::class.java)
+        if (!java.io.File(vault, "meta.json").exists()) return ""
+        return SwarmNative.vaultReaders(vault.absolutePath)
     }
 
     override fun onStop() {

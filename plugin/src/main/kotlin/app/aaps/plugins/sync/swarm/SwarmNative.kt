@@ -109,6 +109,20 @@ object SwarmNative {
      */
     external fun vaultRewrap(vaultPath: String): Long
 
+    /** Who has been granted, one per line as `reader<TAB>purpose`. */
+    external fun vaultReaders(vaultPath: String): String
+
+    /**
+     * The one string a subject hands to someone they want to share with.
+     *
+     * Built in Rust so the phone and the CLI cannot drift into two formats
+     * that look alike and are not. Empty if any part is malformed.
+     */
+    external fun inviteFor(subject: String, endpoint: String, purpose: String): String
+
+    /** Read one back as `subject<TAB>endpoint<TAB>purpose`; empty if not valid. */
+    external fun inviteParse(text: String): String
+
     external fun vaultGrant(
         vaultPath: String,
         identityPath: String,
