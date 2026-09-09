@@ -1,0 +1,16 @@
+[package]
+name = "p2panda-spaces-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pinned exactly, and `test_utils` on purpose: it supplies the SQLite-backed
+# store, the real group-membership DGM and the real message orderer. The seal
+# spike's finding turned on using p2panda-encryption's TEST dgm and orderer
+# instead, so the whole point here is to be on the shipping ones.
+[dependencies]
+p2panda-spaces = { version = "=0.7.1", features = ["test_utils"] }
+p2panda-auth = "=0.7.1"
+p2panda-core = "=0.7.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+futures = "0.3"

@@ -108,7 +108,20 @@ continues. **Forward-only grants, and revocation, come entirely from the library
 Cost measured: 3 windows over 10 epochs, 15 control messages, and one group
 state per window on the phone.
 
-## 6. THE BLOCKER: an added member goes stale
+## 6. ~~THE BLOCKER: an added member goes stale~~ — CORRECTED, and it was the harness
+
+> **Corrected the same day by [`../p2panda-spaces/FINDINGS.md`](../p2panda-spaces/FINDINGS.md) §2.**
+> The suspect this section named — `test_utils`' DGM and message orderer — was
+> the cause. On `p2panda-spaces`, which supplies the real implementations of
+> both, a reader added mid-group opens the days published before the add AND
+> every day after it. There is no blocker, and retroactive grants are a method
+> call.
+>
+> What is below is left as written because the measurement was real and the
+> reasoning is what a reader needs in order to trust the correction. **It is a
+> finding about the test utilities, not about the library.**
+
+### What was measured
 
 `add()` is the only way to give a reader history, and a reader added that way
 receives the secrets that exist at that moment and **then never advances**.

@@ -1,0 +1,5 @@
+# p2panda-encryption 0.7.1 declares rust-version 1.96. The repo's default
+# toolchain is older, and cargo silently resolves to 0.6.1 instead of failing —
+# which would have meant spiking a superseded release without noticing.
+[toolchain]
+channel = "1.98.1"
