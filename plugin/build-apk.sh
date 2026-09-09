@@ -24,7 +24,9 @@
 # no build; camaps' script says the same thing and it has been ignored before.
 set -euo pipefail
 
-CAMAPS=/home/alex/projects/camaps
+# Where the AAPS checkout and its toolchain live. Override for any machine
+# that is not the one this was written on.
+CAMAPS="${CAMAPS:-$HOME/projects/camaps}"
 export REPO="${REPO:-$CAMAPS/sdk/aaps-diaswarm}"
 export BRANCH="${BRANCH:-diaswarm-addon}"
 export SUFFIX="${SUFFIX:-swarm}"

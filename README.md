@@ -1,239 +1,184 @@
 # diaswarm
 
-Sharing diabetes data from FOSS loop apps — AAPS first — with **named people you
-choose**, revocably, without an operator in the middle.
+Share the data your insulin pump loop is already writing — with your partner, your
+parent, your clinician — **revocably, and with nobody in the middle**.
 
-> Your phone keeps writing exactly as it does now. Nothing about the loop
-> changes. What is added is the ability to hand a partner, a clinician or a
-> research cohort a key to some of it, and to take that key back.
+> Your phone keeps looping exactly as it does now. What is added is the ability to
+> hand someone a key to your record, and to take it back.
 
-**Status:** pre-POC. One tool works and is tested
-([`tools/canon.py`](tools/canon.py)); nothing else exists yet. The architecture is settled and written down — start at
-[docs/feasibility.md](docs/feasibility.md).
+**Status: working proof of concept, running on a live closed loop.** An AAPS add-on
+seals its own history and serves it; other devices replicate it and serve it onward;
+a granted reader opens it from any of them. Verified on real data —
+33,800 records over 73 days of looping — including a reader fetching the complete history
+from a relay while the originating phone was switched off.
+
+Not reviewed cryptography. See [Limits](#limits) before trusting it with anything.
 
 ---
 
-## The architecture in five lines
+## Why
 
-1. Records are **published as ciphertext** to a swarm of peers. Holders cannot
-   read what they hold.
-2. Access is **who holds a key**, never who a server decides to serve.
-3. Keys are **per-epoch** (a day) and **wrapped to each live grantee**.
-4. **Granting** starts the wrapping. **Revoking** stops it — prospectively, and
-   nothing recalls what someone already has.
-5. A **research commons** is a separate, always-on peer with its own gateway,
-   because researchers will not run a p2panda node.
+If you loop, your data already leaves your phone — usually to Nightscout, which
+means running a web server, keeping it patched, and trusting whoever hosts it.
+Sharing is all-or-nothing and mostly permanent: a URL and a token, handed out and
+rarely taken back.
 
-**Framework: p2panda**, whose `p2panda-encryption` *data mode* is built for
-exactly this — a shared group key, rotated on member removal, with joiners given
-prior secrets deliberately. Gaps get contributed upstream rather than forked.
+The alternative is normally framed as "self-hosting versus a company's cloud". That
+is the wrong axis. The question is **who decides who can read** — and in both cases
+it is whoever runs the server, not you.
 
-## What this is honest about
+diaswarm removes the server. Data is published as ciphertext to whatever devices
+care to hold it. Access is decided by **who holds a key**, and by nothing else.
+Withdrawing access does not ask a server to stop serving; it stops wrapping the
+next key.
 
-The whole design is one trade, and it is worth reading before anything else:
+## How it works
 
-| | |
+```
+records ──▶ epochs ──▶ segments ──▶ sealed ──▶ served to anyone
+                          │                          │
+                          └─▶ wrapped per reader ────┘
+                                     │
+                              grant log (signs, names nobody)
+```
+
+1. **Records** are normalised into a canonical stream — one line per event, stable
+   bytes, defined in [`spec/records.md`](spec/records.md).
+2. **Epochs** are days, cut at *your* fixed UTC offset rather than UTC, so a day is
+   a day where you live.
+3. **Segments** are the unit of key custody. A day can hold several; withdrawing
+   access cuts a new one immediately rather than waiting for midnight.
+4. Each segment is **sealed** under its own key (ChaCha20-Poly1305), and that key is
+   **wrapped** separately to each reader (X25519 + HKDF-SHA256).
+5. Grants are **signed and hash-chained**, and filed under a tag derived from the
+   shared secret — so the log proves what happened without naming anyone in it.
+6. Peers **hold what they follow and serve what they hold**. A peer stores segments,
+   every reader's wraps, and the grant log — and can read none of it.
+
+Revocation is the absence of a file. Nobody is told; the departing reader is simply
+not wrapped for the next segment. What they already downloaded stays readable, and
+nothing here pretends otherwise.
+
+## Sharing, from the phone
+
+An invite is one string, checksummed, that also fits in a QR code:
+
+```
+diaswarm:1:<subject-key>:<endpoint>:<purpose>:<check>
+```
+
+Its subject field is exactly the key someone would grant, so **one code works in
+both directions**:
+
+| | Phone A | Phone B |
+|---|---|---|
+| 1 | *Your invite* → show the code | |
+| 2 | | *Scan a code* → **Follow them** |
+| 3 | | *Your invite* → show the code |
+| 4 | *Scan a code* → **Share with them** | |
+| 5 | | *People you follow* → reading, and how old |
+
+Scanning never guesses which direction was meant — following someone and sharing
+with them are opposites, and both are ordinary — so it names the key and asks.
+
+An invite is **not a secret and not a grant**. Anyone holding it can download your
+ciphertext and open none of it.
+
+## The trade
+
+The whole design is one bargain, and it is worth reading before anything else.
+
+| You get | You give up |
 |---|---|
-| **You get** | Data available to your people when your phone is off. Per-recipient revocation enforced by key. A signed, tamper-evident record of every grant |
-| **You give up** | Any record of someone *reading*. Publication is permanent — there is no "delete my data". A leaked key never expires |
+| Data available to your people when your phone is off | Any record of someone *reading* — reads are invisible |
+| Revocation enforced by key, not by a server's goodwill | Deletion. Publication is permanent |
+| A signed, tamper-evident record of every grant | A leaked key never expires |
+| No server, no hosting bill, no operator to trust | Discovery: you still have to exchange a code |
 
-Language that must never be used, and the true version of each, is
-[docs/feasibility.md §11](docs/feasibility.md). It is not decoration: someone may
-make a 3 a.m. decision on what this says.
+Language that must never be used about this — and the true version of each claim —
+is in [docs/feasibility.md §11](docs/feasibility.md). It is not decoration. Someone
+may make a 3 a.m. decision based on what this says.
+
+## Safety
+
+The AAPS add-on **ships disabled** and is structurally incapable of dosing. It is a
+`DataSyncSelector`: it drains a queue outward. It holds no pump reference,
+implements no constraint, and has no path into the loop. The residual risk is not
+dosing — it is that a plugin which fails to construct takes the app with it, and an
+app that will not start is a loop that has stopped. That is why it is off by
+default, why the constructor does nothing, and why the native library is not loaded
+until something is actually shared.
+
+## Try it without a phone
+
+```sh
+cd crates/diaswarm-core
+cargo run --bin diaswarm -- keygen /tmp/me.id
+cargo run --bin diaswarm -- keygen /tmp/friend.id
+cargo run --bin diaswarm -- init /tmp/vault /tmp/me.id 12        # your UTC offset
+cargo run --bin diaswarm -- seal  /tmp/vault /tmp/me.id records.ndjson
+cargo run --bin diaswarm -- grant /tmp/vault /tmp/me.id "$(cargo run -q --bin diaswarm -- pub /tmp/friend.id)"
+cargo run --bin diaswarm -- read  /tmp/vault /tmp/friend.id      # what they can open
+cargo run --bin diaswarm -- log   /tmp/vault                     # every grant, verified
+```
+
+No AAPS database? `tools/mkfixture.py` builds a synthetic one, and
+`tools/canon.py db --stats` turns it into records and reports what it dropped and
+why.
+
+Two peers, one relaying:
+
+```sh
+cargo run --bin diaswarm-net -- serve /tmp/store /tmp/node.key   # peer 1
+cargo run --bin diaswarm-net -- keep  /tmp/store2 '<invite>'     # peer 2 follows
+cargo run --bin diaswarm-net -- peer  /tmp/store2 /tmp/n2.key /tmp/friend.id
+```
 
 ## Repository
 
 ```
-docs/feasibility.md    The assessment. Architecture, frameworks, costs, plan
-docs/decisions.md      What is settled, and what would reopen it
-spec/records.md        The canonical record stream — the wire contract
-crates/diaswarm-core   spec/records.md in Rust + sealing + the vault. One implementation
-crates/diaswarm-net    Moving a vault between peers, over iroh
-crates/diaswarm-core/src/bin/diaswarm.rs   the desktop side: seal, grant, revoke, read
-spike/p2panda-seal     What p2panda-encryption 0.7.1 actually does, measured
-tools/canon.py         AAPS SQLite → canonical records. Works today
-tools/seal.py          Canonical records → epochs, sealed and wrapped per grantee
-tools/mkfixture.py     A synthetic AAPS database, so the above runs with no real data
-tools/test_canon.py    Tests for the filters spec/records.md rests on
-tools/test_seal.py     Tests for the one property revocation has to have
-tools/port-session.sh  Make a Claude Code session resumable from this repo
+spec/records.md          The wire contract. Versioned in-band
+docs/feasibility.md      The assessment: architecture, costs, what must not be claimed
+docs/decisions.md        What is settled (D1–D15), and what would reopen each
+
+crates/diaswarm-core     Records, sealing, the vault, grants. The reference implementation
+crates/diaswarm-net      Peers: serving, fetching, following, over iroh (QUIC)
+crates/diaswarm-android  The JNI surface the phone calls
+plugin/                  The AAPS add-on: settings screen, scanner, sync worker
+
+tools/canon.py           AAPS SQLite → canonical records, with a dropped-and-why report
+tools/seal.py            The sealing construction in Python, byte-identical to Rust
+tools/mkfixture.py       A synthetic AAPS database, so everything runs with no real data
 ```
 
-The assessment is also published as a single mobile-readable page:
-**<https://claude.ai/code/artifact/8430821f-2724-402e-a5c5-881b8ea1f3ff>**. It is
-a rendering of `docs/feasibility.md`; the repo is the source, and the page has to
-be republished when the source moves.
+The Python and Rust implementations are checked against each other over real record
+streams, byte for byte, because two implementations that agree are evidence and one
+implementation is an assertion.
 
-## Resuming the design session
+## Building the AAPS add-on
 
-This work started in `~/projects/camaps`, and Claude Code keys sessions to the
-directory they ran in. The originating session has been ported here:
+The plugin lives here; AAPS itself stays untouched, on its own branch, in a git
+worktree. You need the AAPS source, the Android SDK and NDK, and:
 
 ```sh
-claude --resume 6a0f1ea9-a0d9-497d-a32f-1b0e33127fd2
+CAMAPS=/path/to/your/aaps-checkout ./plugin/build-apk.sh --install
 ```
 
-The copy is a snapshot. **Re-run `tools/port-session.sh <id>` at the end of any
-session in the old directory**, or the tail of it is lost. `tools/port-session.sh`
-with no argument lists candidates, newest first.
+It refuses to install if the signing certificate no longer matches the device,
+because on a looping phone a mismatch costs you a pump re-pairing.
 
-Project memories were seeded too — the swarm architecture, the AAPS database
-hazards, how to pull a fresh snapshot off the phone. The camaps loop memories
-(pump protocol, keybox, Hovorka) were deliberately left behind.
+## Limits
 
-## Try the one thing that works
-
-`canon.py` turns an AAPS database into the canonical stream and reports what it
-dropped and why. It is read-only, needs no network, and is the piece no framework
-provides.
-
-```sh
-tools/canon.py /path/to/androidaps.db --stats
-```
-
-On a 48-day snapshot of one real loop, in full — every line the tool prints:
-
-```
-  kept
-    cgm          11,974
-    tbr           6,141
-    bolus           729
-    carb            170
-    event            73
-    target           29
-    profile          12
-    TOTAL        19,128
-
-  dropped
-    invalid           2   isValid = 0
-    version      25,173   referenceId IS NOT NULL
-    cgm dup           0   second+ reading in a 5-min bucket
-
-  cgm      272.4/day after debounce over 44.0 days of CGM
-          (95% of the 288 a 5-minute sensor can produce)
-
-  size       1.66 MB ndjson     0.19 MB gzip   over 48.5 days
-  year       12.4 MB ndjson      1.5 MB gzip   projected
-```
-
-Two spans, deliberately: the records cover 48.5 days, the CGM in them covers 44.0,
-because the first reading arrives 4.6 days after the first record of another kind.
-Rates are quoted over the span of the thing being rated.
-
-**1.5 MB a year, compressed.** That number is why none of the hard parts of this
-are storage problems: a decade of one person's history fits in a phone's spare
-change, and a swarm member can hold many people's ciphertext without noticing.
-
-Real snapshots never enter this repo — `.gitignore` refuses `*.db` and
-`*.ndjson`. Copy the `-wal` alongside the `.db` or you will silently read stale
-data.
-
-**Which means nobody else could run any of this.** So there is a fixture:
-
-```sh
-tools/mkfixture.py /tmp/fixture.db && tools/canon.py /tmp/fixture.db --stats
-tools/test_canon.py
-```
-
-`mkfixture.py` writes a synthetic AAPS database containing one of each hazard —
-version rows, retracted rows, a row that is both, two CGM readings in one bucket,
-a carb entry with no duration beside one with a real zero, profiles in mmol/L and
-mg/dL and in a unit nobody recognises, and a table on an older schema. The tests
-assert what §3 of the spec claims, and they have been checked against a
-deliberately broken canonicaliser to confirm they fail when it is wrong.
-
-## The property, demonstrated
-
-`seal.py` cuts a canonical stream into UTC-day epochs, seals each under its own
-content key, and wraps that key to every live grantee. **Granting starts the
-wrapping; revoking stops it.** There is no delete step and no message to anyone —
-a revoked reader is simply one the loop no longer wraps for.
-
-```sh
-tools/canon.py snapshot.db -o stream.ndjson && tools/seal.py stream.ndjson --demo
-```
-
-On the same 48-day history, sealed a day at a time with the revocation landing
-two thirds of the way through:
-
-```
-  sealed  47 epochs, 19,128 records, one day at a time
-  partner revoked at epoch 20663, with 16 of 47 epochs still to come
-
-  what each reader can open, at the end
-    partner    31 of 47 epochs  follow
-    clinic     47 of 47 epochs  clinician
-    cohort      7 of 47 epochs  cohort
-
-  the property
-    nothing new          0 epochs gained after the stop   PASS
-    nothing recalled     31/31 previously held epochs still open   PASS
-    per-recipient        clinic unaffected: 47 of 47 epochs   PASS
-    revocation bites     partner holds 31 of 47, blind to 16   PASS
-
-  on the wire
-    key records       7.6 KB   85 wraps of 92 bytes
-    five readers      164 KB/year   granted throughout, against §7.2's estimate of 180
-```
-
-**Both halves of that are the promise.** A design where the revoked reader keeps
-reading is a broken revocation; one where their existing copy goes dark is
-claiming a recall it cannot perform, which
-[§11](docs/feasibility.md) says never to claim.
-
-It needs `cryptography` (X25519, ChaCha20-Poly1305, Ed25519), and it is
-**not reviewed cryptography** — standard primitives composed by hand, which is
-what stage 10.6's review gate exists to catch. It is also not a swarm: it writes
-files, and where those bytes go is a later stage.
-
-## Next
-
-Stage order and reasoning are in
-[docs/feasibility.md §10](docs/feasibility.md). Immediately:
-
-- ~~**Freeze the record shape**~~ — **done.** [`spec/records.md`](spec/records.md)
-  is v1 as of 2026-09-08: UTC-day epochs, an in-band schema version, `tdd`
-  removed, and ordering that two implementations agree on. Streams declare the
-  version they conform to, so a v2 is detectable rather than discovered.
-- ~~**Epoch sealing**~~ — **done as the framework-neutral reference.**
-  [`tools/seal.py`](tools/seal.py) demonstrates the property on real history and
-  prices it at 164 KB/year for five readers, against §7.2's estimate of 180.
-- ~~**Port it to `p2panda-encryption`**~~ — **done and measured.**
-  [`spike/p2panda-seal`](spike/p2panda-seal/FINDINGS.md): the property holds, and
-  revocation is *finer* than the epoch. But `add()` cannot scope history on join,
-  so a windowed grant needs its own group — and *"a clinician gets the last 90
-  days"* is a window.
-
-**The flagship is personal sharing — friends, family, clinicians**
-([D11](docs/decisions.md)). Privacy and sovereignty is the point; research
-donation is a good second. So, next:
-
-- **Followers are Android; iOS is out of scope** ([D12](docs/decisions.md)).
-  Every route to an iPhone ends at Apple's push service, and this design's claim
-  is that nobody in the middle can read or withhold anything. A real exclusion,
-  stated rather than engineered around.
-- **The AAPS plugin**, a `DataSyncSelector` sibling of `plugins/sync/xdrip`
-  (1,109 lines there as the template, verified against the checkout). Read-only
-  out of AAPS, always. The record logic is not written twice: the plugin is a
-  thin Kotlin shell over [`crates/diaswarm-core`](crates/diaswarm-core) via the
-  NDK, and that crate is asserted byte-identical to `canon.py` over 19,129 real
-  records.
-- **Group-per-window**, now that it is in the main path rather than a research
-  edge case.
+- **The cryptography has not been reviewed.** Standard primitives, composed by
+  hand. Do not rely on this where being wrong would matter.
+- **No forward secrecy.** A key that leaks opens everything it was ever wrapped for.
+- **Reads are invisible.** Nobody can tell you who has read their copy, or when.
+- **Discovery is manual.** You exchange a code. There is no directory, and no way to
+  ask the network who holds a given subject.
+- **Metadata leaks.** The number of grants and roughly when they happened are
+  visible in the log, even though who they name is not.
+- **iOS is out of scope.**
 
 ## Licence
 
-AGPL-3.0 — see [LICENSE](LICENSE). The AAPS plugin links AGPL code and must be;
-the rest follows it for now.
-
-**This is not settled.** Anything intended to land in p2panda should be written
-as a patch to p2panda under *their* Apache/MIT terms, not carried here — and if
-a shared core crate turns out to be worth other people using, it needs a
-permissive licence and that decision has to be made deliberately before there is
-history to relicense.
-
-## Not a medical device
-
-Nothing here participates in dosing, and the AAPS plugin is structurally
-read-only. A follower's view is not suitable for a treatment decision. Data can
-be stale, absent, or withheld by design, and the interface must say which.
+AGPL-3.0, matching AndroidAPS, whose interfaces the add-on compiles against.
