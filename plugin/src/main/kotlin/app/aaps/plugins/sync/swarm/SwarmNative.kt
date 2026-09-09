@@ -128,8 +128,15 @@ object SwarmNative {
     /** Keep a copy of whoever sent this invite. 1 changed, 0 already known, <0 failed. */
     external fun netFollow(storePath: String, inviteText: String): Long
 
-    /** Bring every followed subject up to date. Returns how many were reached. */
-    external fun netRefresh(storePath: String): Long
+    /**
+     * Bring every followed subject up to date. Returns how many were reached.
+     *
+     * Pass the serving handle when this phone is serving, so it fetches through
+     * the endpoint it answers on. Peers remember whoever fetched from them and
+     * pass that on; fetching from a throwaway endpoint hands out an address
+     * that stops existing when the sync ends. 0 means "not serving".
+     */
+    external fun netRefresh(servingHandle: Long, storePath: String): Long
 
     /** What this phone follows: `subject<TAB>purpose<TAB>reached` per line. */
     external fun netFollowing(storePath: String): String

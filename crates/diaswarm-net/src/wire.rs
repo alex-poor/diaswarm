@@ -13,7 +13,7 @@ use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, SecretKey};
 
 
-use crate::{answer, install, install_segment, install_wrap, Manifest, Request, WrapBlob, ALPN};
+use crate::{answer_from, install, install_segment, install_wrap, Manifest, Request, WrapBlob, ALPN};
 
 /// Serves one vault to whoever asks.
 ///
@@ -41,9 +41,15 @@ impl ProtocolHandler for VaultServer {
             // A request this peer cannot service closes that stream and nothing
             // else. One peer asking nonsense must not drop a connection another
             // peer is using.
+            // WHO IS ASKING, from the authenticated connection rather than from
+            // anything they said. A peer can therefore only ever add itself to
+            // a subject's holder list — it cannot name a third party, which is
+            // what would turn discovery into a way to point followers at an
+            // address of an attacker's choosing.
+            let caller = connection.remote_id().to_string();
             let reply = serde_json::from_slice::<Request>(&asked)
                 .ok()
-                .and_then(|req| answer(&self.store, &req).ok())
+                .and_then(|req| answer_from(&self.store, &req, Some(&caller)).ok())
                 .unwrap_or_default();
             send.write_all(&reply).await.map_err(AcceptError::from_err)?;
             send.finish().map_err(AcceptError::from_err)?;
@@ -138,7 +144,56 @@ pub async fn fetch_with(
     } else {
         Endpoint::bind(presets::N0).await?
     };
+    // Deliberately does NOT announce. This endpoint exists for the length of
+    // one fetch, so telling anyone to remember it would fill their holder list
+    // with addresses that stopped existing the moment the sync finished, and
+    // send later followers off to dial them.
+    let out = fetch_inner(&endpoint, addr, subject, into, false).await;
+    endpoint.close().await;
+    out
+}
+
+/// Fetch using an endpoint that already exists — this peer's own.
+///
+/// **A PEER HAS ONE IDENTITY, and this is what makes that true.** Fetching used
+/// to bind a fresh endpoint every time, so the id the far side saw was a
+/// throwaway that existed for the length of one sync. Everything still worked,
+/// because nothing depended on it — until discovery did. Then a subject
+/// faithfully recorded the address of a peer that had already ceased to exist,
+/// and handed it to followers as somewhere to look.
+///
+/// Serving and fetching from the same endpoint means the id a peer is known by
+/// is the id it can be reached at.
+pub async fn fetch_on(
+    endpoint: &Endpoint,
+    addr: EndpointAddr,
+    subject: &str,
+    into: &Path,
+) -> Result<(usize, usize)> {
+    fetch_inner(endpoint, addr, subject, into, true).await
+}
+
+async fn fetch_inner(
+    endpoint: &Endpoint,
+    addr: EndpointAddr,
+    subject: &str,
+    into: &Path,
+    announce: bool,
+) -> Result<(usize, usize)> {
     let conn = endpoint.connect(addr, ALPN).await.context("connect")?;
+
+    // SAY WHO WE ARE BEFORE ASKING FOR ANYTHING. This peer is about to hold a
+    // copy of the subject, so the far side should be able to send later
+    // followers here. Best effort: a peer that will not listen is still worth
+    // fetching from.
+    if announce {
+        let mine: Vec<String> = endpoint.addr().ip_addrs().map(|a| a.to_string()).collect();
+        let _ = ask(
+            &conn,
+            &Request::Announce { subject: subject.to_string(), addrs: mine },
+        )
+        .await;
+    }
 
     let manifest: Manifest =
         serde_json::from_slice(&ask(&conn, &Request::Manifest { subject: subject.to_string() }).await?).context("manifest")?;
@@ -185,8 +240,16 @@ pub async fn fetch_with(
         }
     }
 
+    // WHO ELSE HAS THIS. Asked last, because it only matters once the fetch
+    // worked, and a peer that could not serve the data is not worth taking
+    // addresses from. Failure here is not a failure of the fetch.
+    if let Ok(reply) = ask(&conn, &Request::Holders { subject: subject.to_string() }).await {
+        if let Ok(known) = serde_json::from_slice::<Vec<String>>(&reply) {
+            let _ = crate::install_holders(into, &known);
+        }
+    }
+
     conn.close(0u32.into(), b"done");
-    endpoint.close().await;
     Ok((fetched, installed))
 }
 

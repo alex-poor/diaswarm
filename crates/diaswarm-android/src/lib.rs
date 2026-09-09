@@ -321,10 +321,32 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netFollow<'a
 pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netRefresh<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
+    handle: jlong,
     store_path: JString<'a>,
 ) -> jlong {
     let Ok(store) = env.get_string(&store_path) else { return -1 };
     let store = PathBuf::from(String::from(store));
+
+    // FETCH THROUGH THE ENDPOINT WE SERVE ON, when there is one.
+    //
+    // A peer has one identity or discovery is worthless: the far side records
+    // whoever fetched from it and passes that on to later followers, so
+    // fetching from a throwaway endpoint hands out an address that stops
+    // existing when the sync ends. Serving and fetching from the same endpoint
+    // means the id this phone is known by is the id it answers on.
+    if handle != 0 {
+        let serving = unsafe { &*(handle as *const Serving) };
+        let endpoint = serving.router.endpoint();
+        return match serving
+            .runtime
+            .block_on(diaswarm_net::peer::refresh_all_on(endpoint, &store))
+        {
+            Ok(results) => results.iter().filter(|r| r.reached()).count() as jlong,
+            Err(_) => -3,
+        };
+    }
+
+    // Not serving — still worth fetching, just not worth being remembered for.
     let Ok(runtime) = tokio::runtime::Runtime::new() else { return -2 };
     match runtime.block_on(diaswarm_net::peer::refresh_all(&store, false)) {
         Ok(results) => results.iter().filter(|r| r.reached()).count() as jlong,

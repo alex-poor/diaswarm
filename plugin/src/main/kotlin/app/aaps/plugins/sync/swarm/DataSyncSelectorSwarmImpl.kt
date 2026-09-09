@@ -272,7 +272,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         val follows = SwarmNative.netFollowing(store).lines().count { it.isNotBlank() }
         if (follows == 0) return
 
-        val reached = SwarmNative.netRefresh(store)
+        val reached = SwarmNative.netRefresh(SwarmEndpoint.handle, store)
         if (reached < 0) aapsLogger.debug(LTag.CORE, "swarm: refresh failed ($reached)")
         else if (reached > 0) aapsLogger.debug(LTag.CORE, "swarm: refreshed $reached followed subject(s)")
 

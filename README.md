@@ -128,6 +128,7 @@ The whole design is one bargain, and it is worth reading before anything else.
 | Revocation enforced by key, not by a server's goodwill | Deletion. Publication is permanent |
 | A signed, tamper-evident record of every grant | A leaked key never expires |
 | No server, no hosting bill, no operator to trust | Discovery: you still have to exchange a code |
+| Peers find each other, so one phone sleeping is survivable | **The follower set is public.** Anyone with your key can ask who holds your data |
 
 Language that must never be used about this — and the true version of each claim —
 is in [docs/feasibility.md §11](docs/feasibility.md). It is not decoration. Someone
@@ -208,8 +209,13 @@ because on a looping phone a mismatch costs you a pump re-pairing.
   hand. Do not rely on this where being wrong would matter.
 - **No forward secrecy.** A key that leaks opens everything it was ever wrapped for.
 - **Reads are invisible.** Nobody can tell you who has read their copy, or when.
-- **Discovery is manual.** You exchange a code. There is no directory, and no way to
-  ask the network who holds a given subject.
+- **First contact is manual.** You exchange a code. There is no directory and no
+  way to search for a person. Peers do find *each other* after that, which is how
+  a follower survives your phone sleeping — see below.
+- **The follower set is discoverable.** Anyone holding your public key can ask any
+  peer who else carries your data and get back dialable endpoint ids. Not what was
+  said, but who is close enough to be watching. This is the price of availability
+  without a server, and it is not yet optional ([D18](docs/decisions.md)).
 - **Metadata leaks.** The number of grants and roughly when they happened are
   visible in the log, even though who they name is not.
 - **Background sync is at Android's mercy.** Two minutes while awake; Doze stretches

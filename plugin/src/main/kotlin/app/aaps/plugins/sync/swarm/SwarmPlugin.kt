@@ -344,6 +344,7 @@ class SwarmPlugin @Inject constructor(
             aapsLogger.error(LTag.CORE, "swarm: could not start serving")
             return
         }
+        SwarmEndpoint.handle = serving
         aapsLogger.info(LTag.CORE, "swarm: serving as ${SwarmNative.netEndpointId(serving)}")
         aapsLogger.info(
             LTag.CORE,
@@ -356,6 +357,7 @@ class SwarmPlugin @Inject constructor(
     }
 
     private fun stopServing() {
+        SwarmEndpoint.handle = 0L
         if (serving == 0L) return
         SwarmNative.netStop(serving)
         serving = 0L

@@ -242,6 +242,49 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D18 · Peers tell each other who holds what, and that publishes the follower set
+
+**Settled 2026-09-10.** A peer records whoever fetches a subject from it, and
+will tell anyone who asks. A follower folds those addresses into the list it
+tries. Wire version `diaswarm/4`.
+
+**Without it the swarm does not exist.** A follower knew exactly one address —
+the one it scanned — so the moment that device slept there was nowhere else to
+ask. The relay case was demonstrable but never happened: it worked because a
+person typed a second address in. Everything else in this design is about
+availability not depending on one phone, and it depended on one phone.
+
+**THE COST IS THE FOLLOWER SET, and it is not small.** Anyone holding a
+subject's public key can now ask any peer who else carries that subject, and
+get back stable, dialable endpoint ids. That is a social graph: not what was
+said, but who is close enough to someone to be watching their glucose. It is
+the leak feasibility.md §9 already named as the price of a swarm, arriving
+through the one door that makes availability work.
+
+Two things bound it, neither of which makes it go away:
+
+  * **A peer can only ever announce itself.** The identity recorded comes from
+    the authenticated QUIC connection, never from the message, so nobody can
+    add a third party — which would otherwise make discovery a way to aim
+    followers at an address of an attacker's choosing. Addresses ARE claimed,
+    but reaching one still requires a handshake matching the announced id, so a
+    lie costs one failed dial.
+  * **Thirty-two entries, oldest out first.** A bound, not a policy: an
+    unbounded list is somewhere to write as much as you like into someone
+    else's storage.
+
+**A peer has one identity.** Fetching used to bind a fresh endpoint per sync,
+which was harmless until something depended on it — and then a subject
+faithfully recorded the address of a peer that had already ceased to exist.
+Serving and fetching now share an endpoint, so the id a peer is known by is the
+id it answers on.
+
+*Reopens if:* the follower set turns out to matter more than availability. The
+obvious control is making advertisement opt-in per subject, or having the
+subject sign the list so it chooses who is discoverable — neither is built.
+
+---
+
 ### D17 · A follower polls; it is not pushed to
 
 **Settled 2026-09-09.** A phone that follows someone refreshes on a timer —
