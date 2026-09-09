@@ -417,15 +417,30 @@ impl Vault {
     /// Catches an entry that was **altered or removed from the middle**, which
     /// a per-entry signature alone does not.
     ///
-    /// **It does not catch a truncated tail**, and cannot. What remains after
+    /// **It does not catch a truncated tail — locally.** What remains after
     /// dropping the last entries is a valid prefix, and the subject holds every
-    /// key needed to re-sign a shorter log anyway. That is feasibility.md §6 in
-    /// concrete form: every mechanism reviewed there produces *an account the
-    /// reader cannot quietly rewrite*, and none produces *an account they cannot
-    /// simply omit*. Detecting a dropped tail needs someone else to have seen
-    /// it — a reader who remembers their own entries, or a transparency log that
-    /// gossips. Neither exists yet, and "tamper-evident" must not be read as
-    /// more than this.
+    /// key needed to re-sign a shorter log.
+    ///
+    /// **Replication is what closes that, and it is not a new mechanism.** Once
+    /// the log has reached peers, truncating the local copy is no longer
+    /// deletion but *equivocation*: this copy says one thing, theirs says
+    /// another, and the disagreement is the evidence. feasibility.md §7.4 lists
+    /// "publication is permanent" as a **cost** — you cannot delete your data.
+    /// Applied to the grant log it is the **benefit**: you cannot delete your
+    /// grants either. Same property, read from the other side.
+    ///
+    /// **Which makes it a requirement, not a hope: the grant log must replicate
+    /// to peers, not only the sealed data.** It is a few hundred bytes an entry,
+    /// so the cost is nothing, and without it the tamper-evidence §11 promises
+    /// rests on the subject's own copy being honest.
+    ///
+    /// Two limits survive replication and should not be talked past. An entry
+    /// created and dropped **before any peer saw it** leaves no trace anywhere —
+    /// the guarantee is "what was seen is permanent", never "the log is
+    /// complete". And a subject can show **different logs to different peers**;
+    /// catching that needs peers to compare with each other, which is what
+    /// Certificate Transparency calls gossip and what this design gets for free
+    /// only if peers actually do it.
     ///
     /// Returns the position of the first break.
     pub fn verify_chain(&self, subject: &VerifyingKey) -> Result<Option<u64>, VaultError> {

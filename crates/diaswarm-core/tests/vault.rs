@@ -275,19 +275,20 @@ fn altering_or_reordering_the_log_is_detectable() {
 }
 
 #[test]
-fn truncating_the_tail_is_not_detectable_here_and_that_is_the_honest_limit() {
+fn truncating_the_tail_is_not_detectable_from_one_copy_alone() {
     // A hash chain catches modification and reordering. It does NOT catch the
-    // owner deleting the END of their own log, because what remains is a valid
-    // prefix — and the subject holds every key needed to re-sign it anyway.
+    // owner deleting the END of their own log: what remains is a valid prefix,
+    // and the subject holds every key needed to re-sign it.
     //
-    // This is feasibility.md §6 arriving in code: every mechanism reviewed
-    // produces "an account the reader cannot quietly rewrite", and none
-    // produces "an account they cannot simply omit". Detecting a dropped tail
-    // needs someone else to have seen it — a reader who remembers, or a
-    // transparency log that gossips. Neither exists yet.
+    // REPLICATION IS WHAT CLOSES THIS, and it is not a new mechanism — it is the
+    // swarm. Once peers hold the log, truncating this copy is equivocation
+    // rather than deletion, and the disagreement between copies is the evidence.
+    // §7.4 lists "publication is permanent" as a cost; for the grant log it is
+    // the benefit.
     //
-    // Asserted rather than left implicit, so nobody later reads "tamper-evident"
-    // as more than it is.
+    // So this test pins what ONE COPY can establish, which is the state today.
+    // If it ever starts failing, something has begun tracking the head and the
+    // reasoning above needs revisiting rather than the test being deleted.
     let (run, vault, _) = live_run(3, 2);
     let path = run.dir.path().join("grants.ndjson");
     let text = std::fs::read_to_string(&path).unwrap();

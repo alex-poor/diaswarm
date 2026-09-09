@@ -272,14 +272,32 @@ made and roughly when. A log with one entry and a log with forty are
 distinguishable, and a burst of withdrawals looks like a burst. Hiding that needs
 cover traffic, which is a different design.
 
-**And the tamper-evidence is narrower than "tamper-evident" sounds.** The entries
-are hash-chained, so altering one or removing one from the middle is detectable.
-**Truncating the tail is not, and cannot be** — what remains is a valid prefix and
-the subject holds every key needed to re-sign a shorter log. That is D3's trade
-again: an account the reader cannot quietly rewrite, never one the subject cannot
-simply omit. Catching a dropped tail needs a reader who remembers or a log that
-gossips, and neither exists. A test asserts the limit so nobody later reads more
-into the word.
+**The tamper-evidence has two halves, and only one is local.** The entries are
+hash-chained, so altering one or removing one from the middle is detectable from
+a single copy. **Truncating the tail is not** — what remains is a valid prefix
+and the subject holds every key needed to re-sign a shorter log.
+
+**Replication closes that, and it is the swarm rather than a new mechanism.**
+Once peers hold the log, truncating the local copy is not deletion but
+*equivocation*: this copy says one thing, theirs says another, and the
+disagreement is the evidence. feasibility.md §7.4 lists *"publication is
+permanent"* as a **cost** — you cannot delete your data. Applied to the grant log
+it is the **benefit**: you cannot delete your grants either. The same property,
+read from the other side, and it is why D3's substitute for a read log is worth
+anything at all.
+
+⇒ **Therefore a requirement, recorded here so transport does not skip it: the
+grant log must replicate to peers, not only the sealed data.** A few hundred
+bytes an entry, so the cost is nothing — and without it the tamper-evidence §11
+promises rests on the subject's own copy being honest, which is exactly the thing
+it is supposed to establish.
+
+Two limits survive replication and should not be talked past. An entry created
+and dropped **before any peer saw it** leaves no trace anywhere: the guarantee is
+*what was seen is permanent*, never *the log is complete*. And a subject can show
+**different logs to different peers** — catching that needs peers to compare with
+each other, which Certificate Transparency calls gossip, and which this design
+gets only if peers actually do it.
 
 ### D12 · Followers are Android. iOS is out of scope
 
