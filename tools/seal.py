@@ -265,13 +265,18 @@ def live_epochs(grants: list[dict], reader: Identity, purpose: str,
 # The vault: one subject's sealed history plus its wraps and grants
 # --------------------------------------------------------------------------
 
-def by_epoch(records: list[dict]) -> dict[int, list[dict]]:
-    """Group records into UTC-day epochs. The header (t=0) is not an event."""
+def by_epoch(records: list[dict], offset_ms: int = 0) -> dict[int, list[dict]]:
+    """Group records into epochs at the stream's own offset.
+
+    The offset comes from the header, not from this machine's clock: cutting a
+    history at a different phase than it was sealed at produces a different set
+    of days, and every daily figure computed from them is quietly wrong.
+    """
     out: dict[int, list[dict]] = defaultdict(list)
     for r in records:
         if r.get("k") == "meta":
             continue
-        out[epoch_of(r["t"])].append(r)
+        out[epoch_of(r["t"], offset_ms)].append(r)
     return dict(out)
 
 
@@ -356,7 +361,8 @@ def demo(records: list[dict]) -> int:
     clinic = Identity.generate("clinic")
     cohort = Identity.generate("cohort")
 
-    epochs = by_epoch(records)
+    offset = next((r.get("offset", 0) for r in records if r.get("k") == "meta"), 0)
+    epochs = by_epoch(records, offset)
     order = sorted(epochs)
     first = order[0]
     revoke_at = order[int(len(order) * 2 / 3)]
@@ -444,9 +450,9 @@ def main() -> int:
     if header is None:
         print("  WARNING: no header — cannot tell which spec version this is,\n"
               "           or whether its glucose values are normalised.", file=sys.stderr)
-    elif header.get("epoch") != "utc-day":
+    elif header.get("epoch") != "offset-day":
         print(f"  refusing: stream declares epoch basis {header.get('epoch')!r}, "
-              f"this seals utc-day", file=sys.stderr)
+              f"this seals offset-day", file=sys.stderr)
         return 1
 
     if args.demo:

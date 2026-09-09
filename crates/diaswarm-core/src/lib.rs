@@ -22,12 +22,34 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 
 /// The version of `spec/records.md` this implements. Declared in the header.
-pub const SPEC_VERSION: u64 = 2;
+pub const SPEC_VERSION: u64 = 3;
 
-/// One epoch, one content key. UTC so an epoch has the same identity on every
-/// device — see spec §5.1 for why local midnight is not an option.
+/// A day's worth of milliseconds. The width of an epoch, not its phase.
 pub const EPOCH_MS: i64 = 24 * 60 * 60 * 1000;
-pub const EPOCH_BASIS: &str = "utc-day";
+
+/// How epochs are cut: a day, shifted by a fixed per-subject offset.
+///
+/// WHY NOT PLAIN UTC, WHICH THIS USED TO BE. UTC keeps epoch identity
+/// unambiguous — a constant, so a record maps to the same epoch wherever the
+/// phone is — and that argument is right and is preserved here, because a fixed
+/// offset is still a constant. What UTC got wrong was the PHASE. At UTC+12 a
+/// UTC epoch runs local noon to local noon, so one local day is split 12 hours
+/// either side of two epochs, and "share yesterday" shares two half-days.
+///
+/// Worse, revocation takes effect at the next boundary, so the worst case —
+/// nearly a full day retained — lands just after local noon, in the middle of
+/// the waking day. Shifted to local midnight the worst case lands while the
+/// subject is asleep, which is when least happens.
+///
+/// This is NOT local time. The offset is a fixed constant recorded once, so it
+/// does not follow DST and does not move when the subject travels: a record's
+/// epoch never depends on where it was written.
+pub const EPOCH_BASIS: &str = "offset-day";
+
+/// The offset to use when nothing better is known. Zero is plain UTC, which is
+/// what v2 did, so an unconfigured emitter behaves as before rather than
+/// silently choosing a phase for someone.
+pub const DEFAULT_EPOCH_OFFSET_MS: i64 = 0;
 
 /// A CGM sensor produces one reading per five minutes. A property of the
 /// hardware, not a tuning knob.
@@ -87,9 +109,9 @@ impl Record {
         self.0.get(key)
     }
 
-    /// Which epoch this record falls in. The unit of key custody.
-    pub fn epoch(&self) -> i64 {
-        epoch_of(self.t())
+    /// Which epoch this record falls in, under a given offset.
+    pub fn epoch(&self, offset_ms: i64) -> i64 {
+        epoch_of(self.t(), offset_ms)
     }
 
     /// Apply the spec's precision rules. Idempotent, and asserted so on real
@@ -168,15 +190,24 @@ fn round_half_even(value: f64, digits: i32) -> f64 {
     (value * factor).round_ties_even() / factor
 }
 
-pub fn epoch_of(t: i64) -> i64 {
-    t.div_euclid(EPOCH_MS)
+/// Which epoch a timestamp falls in.
+///
+/// `div_euclid`, not `/`: a plain divide truncates toward zero, so timestamps
+/// either side of the offset origin would share an epoch index.
+pub fn epoch_of(t: i64, offset_ms: i64) -> i64 {
+    (t + offset_ms).div_euclid(EPOCH_MS)
 }
 
 /// The stream header (spec §5.2). The only record that is not an event.
-pub fn header() -> Record {
+///
+/// Carries the epoch offset because a consumer cannot infer it: the same
+/// records cut at a different phase are a different set of days, and getting
+/// that wrong silently reshapes every daily figure computed from them.
+pub fn header(offset_ms: i64) -> Record {
     Record::new(0, kind::META)
         .set("spec", Some(Value::from(SPEC_VERSION)))
         .set("epoch", Some(Value::from(EPOCH_BASIS)))
+        .set("offset", Some(Value::from(offset_ms)))
         .set("unit", Some(Value::from("mgdl")))
 }
 
@@ -255,9 +286,9 @@ impl Emitted {
 }
 
 /// Encode a full stream: the header, then the records, one JSON object per line.
-pub fn encode(records: &[Record]) -> String {
+pub fn encode(records: &[Record], offset_ms: i64) -> String {
     let mut out = String::new();
-    out.push_str(&header().to_canonical_json());
+    out.push_str(&header(offset_ms).to_canonical_json());
     out.push('\n');
     for r in records {
         out.push_str(&r.to_canonical_json());

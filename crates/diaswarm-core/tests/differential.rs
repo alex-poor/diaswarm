@@ -14,6 +14,9 @@ use std::process::Command;
 
 use diaswarm_core::{debounce_cgm, encode, epoch_of, header, sort, Record, EPOCH_MS};
 
+/// The reference snapshot's own standing offset, which canon.py derives from it.
+const OFFSET: i64 = 12 * 3_600_000;
+
 fn repo_root() -> PathBuf {
     // crates/diaswarm-core -> repo root
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -76,7 +79,13 @@ fn canonical_encoding_is_byte_identical_to_the_python_emitter() {
 fn the_header_matches_the_python_header() {
     let Some(stream) = python_stream() else { return };
     let first = stream.lines().next().expect("a header line");
-    assert_eq!(header().to_canonical_json(), first);
+    // Read the offset back rather than assuming it: canon.py derives the phase
+    // from the data's own utcOffset, and hard-coding it here would test this
+    // test's guess instead of the two implementations agreeing.
+    let parsed = Record::from_json(first).expect("the header is a record");
+    let offset = parsed.get("offset").and_then(|v| v.as_i64()).expect("a declared offset");
+    assert_eq!(header(offset).to_canonical_json(), first);
+    assert_eq!(offset, OFFSET, "the fixture should carry a +12h utcOffset");
 }
 
 #[test]
@@ -123,13 +132,18 @@ fn absence_survives_the_round_trip() {
 }
 
 #[test]
-fn epochs_are_utc_days() {
-    assert_eq!(epoch_of(0), 0);
-    assert_eq!(epoch_of(EPOCH_MS - 1), 0);
-    assert_eq!(epoch_of(EPOCH_MS), 1);
+fn epochs_are_days_cut_at_a_fixed_offset() {
+    assert_eq!(epoch_of(0, 0), 0);
+    assert_eq!(epoch_of(EPOCH_MS - 1, 0), 0);
+    assert_eq!(epoch_of(EPOCH_MS, 0), 1);
     // Negative timestamps are before 1970 and should floor, not truncate
     // toward zero — otherwise two epochs share an index either side of it.
-    assert_eq!(epoch_of(-1), -1);
+    assert_eq!(epoch_of(-1, 0), -1);
+    // The offset moves the phase, not the width. At +12h the boundary lands at
+    // local midnight rather than local noon, which is the whole point of it.
+    assert_eq!(epoch_of(0, OFFSET), 0);
+    assert_eq!(epoch_of(EPOCH_MS / 2 - 1, OFFSET), 0);
+    assert_eq!(epoch_of(EPOCH_MS / 2, OFFSET), 1);
 }
 
 #[test]
@@ -146,7 +160,7 @@ fn debounce_keeps_the_first_reading_of_a_bucket() {
 #[test]
 fn encode_emits_a_header_then_one_line_per_record() {
     let records = vec![Record::new(1, "cgm").set("mgdl", Some(100.0.into()))];
-    let out = encode(&records);
+    let out = encode(&records, OFFSET);
     assert_eq!(out.lines().count(), 2);
     assert!(out.ends_with('\n'));
 }

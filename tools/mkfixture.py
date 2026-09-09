@@ -19,6 +19,7 @@ contains one of each hazard:
   * a carb entry with a NULL duration, and one with a real zero, which must
     not survive as the same record
   * durations in milliseconds, the unit v1 of the spec got wrong
+  * a utcOffset of +12h, the phase epochs are cut at
   * profiles in MMOL, in MGDL, and in a unit nobody recognises
   * an `extendedBoluses` table missing `referenceId`, i.e. an older schema,
     which must be reported as unread rather than silently yielding no records
@@ -44,7 +45,10 @@ T0 = 1_699_999_800_000
 assert T0 % (5 * 60_000) == 0, "T0 must sit on a 5-minute bucket boundary"
 MIN = 60_000
 
-TRACEABLE = "id INTEGER PRIMARY KEY, isValid INTEGER NOT NULL, referenceId INTEGER"
+# AAPS stamps utcOffset on every row, and canon.py derives the epoch phase from
+# it. A fixture without it would exercise a code path nobody runs.
+TRACEABLE = ("id INTEGER PRIMARY KEY, isValid INTEGER NOT NULL, referenceId INTEGER, "
+             "utcOffset INTEGER NOT NULL DEFAULT 43200000")
 
 SCHEMA = {
     "glucoseValues": f"{TRACEABLE}, timestamp INTEGER, value REAL, trendArrow TEXT, sourceSensor TEXT",

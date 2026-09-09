@@ -9,6 +9,7 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.plugins.sync.swarm.keys.SwarmLongKey
 import org.json.JSONObject
 import java.io.File
+import java.util.TimeZone
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -181,7 +182,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         // free text a person typed, comes before `t`. A note containing `"t":`
         // would silently file the record under the wrong day, or none.
         val epoch = try {
-            SwarmNative.epochOf(JSONObject(line).getLong("t"))
+            SwarmNative.epochOf(JSONObject(line).getLong("t"), offsetMs)
         } catch (e: Exception) {
             aapsLogger.error(LTag.CORE, "swarm: unparseable canonical line, dropped")
             return
@@ -205,7 +206,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         val vault = File(storage, "vault").absolutePath
         val identity = File(storage, "subject.id").absolutePath
         for ((epoch, body) in pending) {
-            val n = SwarmNative.vaultSeal(vault, identity, epoch, body.toString())
+            val n = SwarmNative.vaultSeal(vault, identity, epoch, offsetMs, body.toString())
             if (n < 0) {
                 aapsLogger.error(LTag.CORE, "swarm: sealing epoch $epoch failed with $n")
             } else {
@@ -227,4 +228,17 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private val storage: File by lazy {
         File(context.filesDir, "diaswarm").also { it.mkdirs() }
     }
+
+    /**
+     * The phase epochs are cut at: this device's standing offset from UTC.
+     *
+     * `rawOffset`, not the current offset — it excludes daylight saving, which
+     * is what "fixed" means here. An epoch that shifts twice a year is an epoch
+     * two implementations can disagree about, and a record's epoch must not
+     * depend on the time of year it was written.
+     *
+     * It is read once and then recorded in the vault, so moving zone later does
+     * not silently re-cut a history that was already sealed at another phase.
+     */
+    private val offsetMs: Long by lazy { TimeZone.getDefault().rawOffset.toLong() }
 }

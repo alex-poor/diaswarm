@@ -39,8 +39,9 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_epochOf(
     _env: JNIEnv,
     _class: JClass,
     t: jlong,
+    offset_ms: jlong,
 ) -> jlong {
-    epoch_of(t)
+    epoch_of(t, offset_ms)
 }
 
 /// The stream header (spec §5.2), as a canonical JSON line.
@@ -48,8 +49,9 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_epochOf(
 pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_header<'a>(
     env: JNIEnv<'a>,
     _class: JClass<'a>,
+    offset_ms: jlong,
 ) -> JString<'a> {
-    to_jstring(env, header().to_canonical_json())
+    to_jstring(env, header(offset_ms).to_canonical_json())
 }
 
 /// Canonicalise one record: sorted keys, absent fields omitted, no spaces.
@@ -186,11 +188,11 @@ fn load_or_create_identity(path: &Path) -> Option<Identity> {
     Some(id)
 }
 
-fn open_or_create_vault(vault: &Path, subject: &Identity) -> Option<Vault> {
+fn open_or_create_vault(vault: &Path, subject: &Identity, offset: i64) -> Option<Vault> {
     if vault.join("meta.json").exists() {
         Vault::open(vault).ok()
     } else {
-        Vault::create(vault, subject).ok()
+        Vault::create(vault, subject, offset).ok()
     }
 }
 
@@ -205,6 +207,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultSeal<'a
     vault_path: JString<'a>,
     identity_path: JString<'a>,
     epoch: jlong,
+    offset_ms: jlong,
     ndjson: JString<'a>,
 ) -> jlong {
     let (Ok(vault_s), Ok(id_s), Ok(body)) = (
@@ -219,7 +222,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultSeal<'a
     let body = String::from(body);
 
     let Some(subject) = load_or_create_identity(&id_p) else { return -2 };
-    let Some(vault) = open_or_create_vault(&vault_p, &subject) else { return -3 };
+    let Some(vault) = open_or_create_vault(&vault_p, &subject, offset_ms) else { return -3 };
 
     let records: Vec<Record> = body
         .lines()
@@ -229,7 +232,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultSeal<'a
         .collect();
 
     match vault.seal(epoch, &records) {
-        Ok(()) => records.len() as jlong,
+        Ok(_) => records.len() as jlong,
         Err(_) => -4,
     }
 }

@@ -90,7 +90,7 @@ def main() -> int:
           f"got {[r.get('dur') for r in tbrs]}")
     check("a temporary target duration is milliseconds",
           of_kind(recs, "target")[0].get("dur") == 45 * 60_000)
-    check("the stream declares spec v2", canon.SPEC_VERSION == 2)
+    check("the stream declares spec v3", canon.SPEC_VERSION == 3)
 
     # --- §2: units are fixed, never per-record ------------------------------
     profiles = {r["name"]: r for r in of_kind(recs, "profile")}
@@ -144,7 +144,8 @@ def main() -> int:
     first = json.loads(blob.split(b"\n")[0])
     check("the stream declares its spec version",
           first.get("spec") == canon.SPEC_VERSION, f"{first}")
-    check("the stream declares how epochs are cut", first.get("epoch") == "utc-day")
+    check("the stream declares how epochs are cut", first.get("epoch") == "offset-day")
+    check("and the phase they are cut at", "offset" in first, f"{first}")
     check("the stream declares its glucose unit", first.get("unit") == "mgdl")
     check("the header sorts ahead of every event", first["t"] == 0
           and all(r["t"] > 0 for r in recs))
@@ -157,11 +158,15 @@ def main() -> int:
 
     # --- v1: epochs are UTC days -------------------------------------------
     day = 86_400_000
-    check("an epoch is a UTC day",
+    check("an epoch is a day wide",
           canon.epoch_of(0) == 0 and canon.epoch_of(day - 1) == 0
           and canon.epoch_of(day) == 1)
-    check("epoch boundaries do not depend on the local zone",
-          canon.EPOCH_MS == day and canon.EPOCH_BASIS == "utc-day")
+    check("the offset shifts the phase, not the width",
+          canon.epoch_of(0, 12 * 3600_000) == 0
+          and canon.epoch_of(12 * 3600_000, 12 * 3600_000) == 1,
+          "a +12h offset must move the boundary to local midnight")
+    check("epoch identity does not depend on where a record was written",
+          canon.EPOCH_MS == day and canon.EPOCH_BASIS == "offset-day")
 
     print()
     if FAILURES:

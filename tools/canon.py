@@ -72,7 +72,7 @@ CGM_BUCKET_MS = 5 * 60 * 1000
 # The version of spec/records.md this emitter conforms to. Declared in the
 # stream's own header, because after glucose normalisation a consumer cannot
 # otherwise tell a normalised stream from an un-normalised one by looking at it.
-SPEC_VERSION = 2
+SPEC_VERSION = 3
 
 # One epoch, one content key (feasibility.md §7.2). UTC so that an epoch has the
 # same identity on every device: a local-midnight boundary is ambiguous across
@@ -81,7 +81,7 @@ SPEC_VERSION = 2
 # cost is real and named — away from UTC the boundary falls inside the waking
 # day, so "they keep the rest of the epoch" is harder to say plainly.
 EPOCH_MS = 24 * 60 * 60 * 1000
-EPOCH_BASIS = "utc-day"
+EPOCH_BASIS = "offset-day"
 
 # AAPS's own constant (Constants.MMOLL_TO_MGDL), not the textbook 18. Profile
 # blocks are stored in whichever unit the user set, so converting with the same
@@ -232,20 +232,42 @@ def _profile_scale(unit) -> tuple[float, str | None]:
     return 1.0, unit
 
 
-def epoch_of(t: int) -> int:
+def epoch_of(t: int, offset_ms: int = 0) -> int:
     """Which epoch a timestamp falls in. The unit of key custody, not of storage."""
-    return t // EPOCH_MS
+    return (t + offset_ms) // EPOCH_MS
 
 
-def header() -> dict:
+def standing_offset(db: sqlite3.Connection) -> int:
+    """The subject's usual UTC offset, from their own data.
+
+    AAPS stamps `utcOffset` on every row, so the phase to cut days at does not
+    have to be guessed or asked for. The MODE, not the latest: a fixed offset
+    should reflect where someone lives, not where they happened to be when the
+    snapshot was taken, and it must not follow DST — an epoch that moves twice a
+    year is an epoch two implementations can disagree about.
+    """
+    try:
+        row = db.execute(
+            "SELECT utcOffset, count(*) c FROM glucoseValues "
+            "WHERE isValid = 1 AND referenceId IS NULL "
+            "GROUP BY utcOffset ORDER BY c DESC LIMIT 1"
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    except sqlite3.OperationalError:
+        return 0
+
+
+def header(offset_ms: int = 0) -> dict:
     """The first line of an encoded stream. The only record that is not an event.
 
     It carries `t` and `k` like everything else, and `t` is 0 so that it sorts
     ahead of every real record if anything ever re-sorts the stream. What it
     declares is the three things a consumer cannot work out by looking:
 
-      spec   which version of spec/records.md this conforms to
-      epoch  how epochs are cut, so the sealing layer and a reader agree
+      spec    which version of spec/records.md this conforms to
+      epoch   how epochs are cut, and the fixed offset they are cut at — a
+              consumer cannot infer the phase, and the same records cut at a
+              different one are a different set of days
       unit   that every glucose quantity in the stream is mg/dL, INCLUDING the
              profile blocks, which AAPS itself stores in the user's own unit
     """
@@ -254,6 +276,7 @@ def header() -> dict:
         "k": Kind.META,
         "spec": SPEC_VERSION,
         "epoch": EPOCH_BASIS,
+        "offset": offset_ms,
         "unit": "mgdl",
     }
 
@@ -427,7 +450,7 @@ def debounce_cgm(records: list[dict]) -> tuple[list[dict], int]:
     return kept, dropped
 
 
-def encode(records: list[dict]) -> bytes:
+def encode(records: list[dict], offset_ms: int = 0) -> bytes:
     """Serialise to NDJSON.
 
     NDJSON is the POC format, chosen so a stream can be eyeballed, diffed and
@@ -436,10 +459,11 @@ def encode(records: list[dict]) -> bytes:
     stands in for that until it exists. Anything downstream should treat the
     record SHAPE as the contract and the encoding as replaceable.
     """
-    return b"".join(_canon_json(r).encode() + b"\n" for r in [header(), *records])
+    return b"".join(_canon_json(r).encode() + b"\n" for r in [header(offset_ms), *records])
 
 
-def report(db: sqlite3.Connection, records: list[dict], cgm_dropped: int, blob: bytes) -> None:
+def report(db: sqlite3.Connection, records: list[dict], cgm_dropped: int, blob: bytes,
+           offset: int = 0) -> None:
     """Print what was kept, what was dropped, and what it projects to."""
     kinds = Counter(r["k"] for r in records)
     span_ms = (records[-1]["t"] - records[0]["t"]) if records else 0
@@ -512,7 +536,7 @@ def report(db: sqlite3.Connection, records: list[dict], cgm_dropped: int, blob: 
             print(f"    {table:<20} {err}", file=sys.stderr)
 
     if records:
-        epochs = epoch_of(records[-1]["t"]) - epoch_of(records[0]["t"]) + 1
+        epochs = epoch_of(records[-1]["t"], offset) - epoch_of(records[0]["t"], offset) + 1
         print(
             f"\n  epochs  {epochs:>7,}   UTC days — {epochs * 5:,} key wraps for five "
             f"readers,\n          about {epochs * 5 * 100 / 1024:.0f} KB of key records "
@@ -553,6 +577,8 @@ def main() -> int:
     ap.add_argument("db", type=Path, help="AAPS SQLite snapshot (copy the -wal too)")
     ap.add_argument("-o", "--out", type=Path, help="write NDJSON here (default: stdout)")
     ap.add_argument("--stats", action="store_true", help="report to stderr and write nothing")
+    ap.add_argument("--offset", type=int, default=None,
+                    help="hours to cut epoch days at (default: the mode of the data's own utcOffset)")
     args = ap.parse_args()
 
     if not args.db.exists():
@@ -566,10 +592,12 @@ def main() -> int:
     print(f"  read {args.db}", file=sys.stderr)
     records = extract(db)
     records, cgm_dropped = debounce_cgm(records)
-    blob = encode(records)
+    offset = args.offset * 3_600_000 if args.offset is not None else standing_offset(db)
+    print(f"  epochs   days cut at UTC{offset / 3_600_000:+g}", file=sys.stderr)
+    blob = encode(records, offset)
 
     if args.stats or not args.out:
-        report(db, records, cgm_dropped, blob)
+        report(db, records, cgm_dropped, blob, offset)
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

@@ -22,11 +22,19 @@ object SwarmNative {
     /** Must match the spec version the plugin was written against. See [check]. */
     external fun specVersion(): Int
 
-    /** Which UTC-day epoch a timestamp falls in — the unit of key custody. */
-    external fun epochOf(t: Long): Long
+    /**
+     * Which epoch a timestamp falls in, at a given fixed offset.
+     *
+     * Epochs are days cut at a fixed phase, not UTC days. At UTC+12 a UTC epoch
+     * runs local noon to noon, so one local day splits across two — and a
+     * revocation waiting for the boundary lands worst in the middle of the
+     * waking day. The offset is a constant, not local time: a record's epoch
+     * must not depend on where the phone was when it was written.
+     */
+    external fun epochOf(t: Long, offsetMs: Long): Long
 
     /** The stream header (spec §5.2), as a canonical JSON line. */
-    external fun header(): String
+    external fun header(offsetMs: Long): String
 
     /** Canonicalise one record. Empty string if the input was not a record. */
     external fun canonicalLine(json: String): String
@@ -66,7 +74,13 @@ object SwarmNative {
      * not throw: an exception crossing JNI on a background thread inside a
      * process that has to keep dosing is a crash, not a diagnostic.
      */
-    external fun vaultSeal(vaultPath: String, identityPath: String, epoch: Long, ndjson: String): Long
+    external fun vaultSeal(
+        vaultPath: String,
+        identityPath: String,
+        epoch: Long,
+        offsetMs: Long,
+        ndjson: String
+    ): Long
 
     /**
      * The subject's public key, to hand to someone you are granting.
@@ -81,7 +95,7 @@ object SwarmNative {
     external fun vaultStatus(vaultPath: String): String
 
     /** The spec version this Kotlin was written against. */
-    const val EXPECTED_SPEC_VERSION = 2
+    const val EXPECTED_SPEC_VERSION = 3
 
     /**
      * Load the native library and refuse to run against a mismatched one.

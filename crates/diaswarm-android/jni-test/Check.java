@@ -11,16 +11,20 @@ public class Check {
     public static void main(String[] args) {
         System.loadLibrary("diaswarm_android");
 
-        check("spec version crosses the boundary", SwarmNative.specVersion() == 2,
+        check("spec version crosses the boundary", SwarmNative.specVersion() == 3,
               "got " + SwarmNative.specVersion());
-        check("epoch arithmetic is the core's", SwarmNative.epochOf(86_400_000L) == 1,
-              "got " + SwarmNative.epochOf(86_400_000L));
-        check("negative timestamps floor", SwarmNative.epochOf(-1L) == -1,
-              "got " + SwarmNative.epochOf(-1L));
+        check("epoch arithmetic is the core's", SwarmNative.epochOf(86_400_000L, 0L) == 1,
+              "got " + SwarmNative.epochOf(86_400_000L, 0L));
+        check("negative timestamps floor", SwarmNative.epochOf(-1L, 0L) == -1,
+              "got " + SwarmNative.epochOf(-1L, 0L));
+        check("the offset moves the phase, not the width",
+              SwarmNative.epochOf(43200000L - 1, 43200000L) == 0
+              && SwarmNative.epochOf(43200000L, 43200000L) == 1,
+              "a +12h offset must put the boundary at local midnight");
 
-        String header = SwarmNative.header();
+        String header = SwarmNative.header(43200000L);
         check("header is the canonical v2 header",
-              header.equals("{\"epoch\":\"utc-day\",\"k\":\"meta\",\"spec\":2,\"t\":0,\"unit\":\"mgdl\"}"),
+              header.equals("{\"epoch\":\"offset-day\",\"k\":\"meta\",\"offset\":43200000,\"spec\":3,\"t\":0,\"unit\":\"mgdl\"}"),
               header);
 
         // Keys unsorted, a null field, and an unrounded double: all three are
@@ -60,14 +64,14 @@ public class Check {
 
         String day = "{\"k\":\"cgm\",\"mgdl\":163.0,\"t\":1782938503230}\n"
                    + "{\"k\":\"cgm\",\"mgdl\":164.0,\"t\":1782938803230}\n";
-        long sealed = SwarmNative.vaultSeal(vault, ident, 20630L, day);
+        long sealed = SwarmNative.vaultSeal(vault, ident, 20630L, 43200000L, day);
         check("a day seals through JNI", sealed == 2, "returned " + sealed);
 
         String status = SwarmNative.vaultStatus(vault);
         check("the vault reports itself", status.startsWith("1 epochs"), status);
 
         check("a bad vault path fails with a code, not an exception",
-              SwarmNative.vaultSeal("/proc/nonexistent/vault", ident, 1L, day) < 0, "did not fail");
+              SwarmNative.vaultSeal("/proc/nonexistent/vault", ident, 1L, 0L, day) < 0, "did not fail");
         check("an unopenable vault reports rather than throws",
               SwarmNative.vaultStatus("/proc/nonexistent").equals("no vault"),
               SwarmNative.vaultStatus("/proc/nonexistent"));

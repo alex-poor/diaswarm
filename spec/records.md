@@ -1,6 +1,11 @@
 # The canonical record stream
 
-**Status: v2 — 2026-09-09.** Every later stage encodes against this.
+**Status: v3 — 2026-09-09.** Every later stage encodes against this.
+
+> **v3 moved the epoch boundary off UTC.** v1 and v2 cut days at UTC midnight,
+> on the argument that a constant offset keeps epoch identity unambiguous. That
+> argument is right and is kept — but it defended the *width* and said nothing
+> about the *phase*, and the phase was wrong. See §5.1.
 
 > **v1 was wrong about durations and lasted one day.** It said `dur` is minutes.
 > AAPS stores every duration in **milliseconds** — a 15-minute temp basal is
@@ -216,25 +221,48 @@ outside the contract this document exists to fix; dumping it is a job for
 
 ## 5. Epochs, and the header
 
-### 5.1 An epoch is a UTC day
+### 5.1 An epoch is a day, cut at a fixed offset
 
-**The unit of key custody, not of storage.** One content key per epoch, wrapped
-to each live grantee (feasibility.md §7.2); revoking stops the wrapping, so what
-a revoked reader keeps is bounded by the epoch length.
+**The unit of scoping.** Grants think in epochs, and a consumer buckets by them.
 
 ```
-epoch = floor(t / 86400000)
+epoch = floor((t + offset) / 86400000)
 ```
 
-**UTC, and the cost of that is named.** An epoch has to have the same identity on
-every device: a local-midnight boundary is ambiguous across travel and DST, and
-two peers disagreeing about which epoch a record belongs to is a correctness
-problem in a replicated store, not a cosmetic one. The price is that away from
-UTC the boundary falls inside the waking day — in NZ, near noon — which makes
-*"they keep the rest of the epoch"* harder to say plainly to a person. That is a
-wording problem in one place, against an ambiguity problem everywhere.
+**Why not plain UTC, which v1 and v2 used.** The argument for UTC was that an
+epoch must have the same identity on every device — a local-midnight boundary is
+ambiguous across travel and DST, and two peers disagreeing about which epoch a
+record belongs to is a correctness problem in a replicated store. **All of that
+is still true, and a fixed offset satisfies it**: it is a constant, so a record
+maps to the same epoch wherever and whenever it was written.
 
-**Measured, on the reference snapshot:** 49 epochs, so 245 key wraps for five
+What UTC got wrong was the **phase**. Measured on this project's own data, which
+is UTC+12:
+
+```
+epoch 20661:  Mon 27 Jul 12:00  →  Tue 28 Jul 12:00  local
+```
+
+A UTC epoch runs local noon to local noon, so **one local day is split 12 hours
+either side of two epochs** — "share yesterday" shares two half-days, and a
+windowed grant is half a day out at both ends. Worse, when revocation waited for
+the epoch boundary the worst case, nearly a full day retained, landed **just
+after local noon, in the middle of the waking day**. Shifted to local midnight
+the worst case lands while the subject is asleep.
+
+**This is not local time.** The offset is a fixed constant recorded once, so it
+does not follow DST and does not move when the subject travels. `tools/canon.py`
+derives it from the mode of AAPS's own `utcOffset` column — where someone lives,
+rather than where they happened to be when a snapshot was taken.
+
+**An epoch is not a key.** Revocation no longer waits for the boundary: the
+sealing layer cuts a new **segment** on withdrawal, so what a reader keeps is
+bounded by *when they were revoked*, not by the epoch. An epoch may hold several
+segments; it is still the unit grants and consumers speak in. That is a property
+of the sealing layer rather than of this document, and it is why epoch length is
+now a question of cost and scoping rather than of safety.
+
+**Measured, on the reference snapshot:** 47 epochs, 245 key wraps for five
 readers — about **24 KB of key records beside 1.66 MB of data**, which is
 179 KB/year against the 180 KB/year feasibility.md §7.2 predicted.
 
@@ -243,12 +271,15 @@ readers — about **24 KB of key records beside 1.66 MB of data**, which is
 The first line of an encoded stream:
 
 ```json
-{"epoch":"utc-day","k":"meta","spec":1,"t":0,"unit":"mgdl"}
+{"epoch":"offset-day","k":"meta","offset":43200000,"spec":3,"t":0,"unit":"mgdl"}
 ```
 
 - **`spec`** — the version of this document the stream conforms to.
 - **`epoch`** — how epochs are cut, so the sealing layer and a reader agree
   without a side channel.
+- **`offset`** — the phase they are cut at, in milliseconds. A consumer cannot
+  infer this, and the same records cut at a different phase are a **different set
+  of days**: every daily figure computed from them would be quietly wrong.
 - **`unit`** — that **every** glucose quantity in the stream is mg/dL, *including
   the profile blocks*, which AAPS itself stores in the user's own unit.
 
@@ -278,9 +309,10 @@ covers 44.0 of those days (§3.3).
 
 ## 7. Still open, after v1
 
-**Settled by v1**, and recorded here so they are not re-opened by accident:
-epoch boundaries (§5.1, UTC), the schema version (§5.2, in-band), `tdd` (§2,
-removed), and record ordering (§1, canonical-encoding tie-break, no id).
+**Settled**, and recorded here so they are not re-opened by accident: the schema
+version (§5.2, in-band), `tdd` (§2, removed), record ordering (§1,
+canonical-encoding tie-break, no id), durations in milliseconds (§2, v2), and
+epoch phase (§5.1, a fixed offset, v3).
 
 What remains:
 
