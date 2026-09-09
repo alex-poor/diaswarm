@@ -69,6 +69,27 @@ the frozen spec that nobody can diff and everybody trusts.
   grantable — and equally, a pulled vault is the subject's whole secret. Treat
   it accordingly.
 
+## It has run
+
+On a live closed loop (Pixel 7, YpsoPump, HovorkaMPC), 2026-09-09. The plugin
+was enabled, sealed the phone's own history, and the vault was pulled and opened
+on a laptop with a granted key:
+
+```
+swarm: sealed epoch 20705, 1129 records
+swarm: 73 epochs 20630..20705, 0 grants
+swarm: 1 post-emit edits this run
+
+  grant   for follow from segment 0    73 wraps written
+  opens   73 of 73 epochs, 33,278 records
+  stop    from segment 73 — immediate, the open segment was closed first
+  opens   73 of 74 epochs                ← the day sealed after the stop is dark
+```
+
+The vault carried `"offset": 43200000` — the device's own standing +12, derived
+on the phone. **The amendment counter fired once on real data**, which is the
+§7 measurement of post-seal edits beginning rather than being estimated.
+
 ## Verified
 
 Installed on a live closed loop (Pixel 7, YpsoPump, HovorkaMPC), 2026-09-09.
@@ -82,7 +103,7 @@ Installed on a live closed loop (Pixel 7, YpsoPump, HovorkaMPC), 2026-09-09.
 | Signer unchanged | `0a199dca…` — `install -r` stayed an update, pump key survived |
 | **AAPS registered it** | `ConfigBuilder_Enabled_SYNC_SwarmPlugin:false` at startup |
 | **…and hid it** | `ConfigBuilder_Visible_SYNC_SwarmPlugin:false` |
-| **Native library never loaded** | 0 `diaswarm` mappings in `/proc/<pid>/maps`, against 1251 `.so` mappings visible — so the check works and the answer is real |
+| **Native library loads only when enabled** | `nativeloader: Load …libdiaswarm_android.so … ok` appears once, when the worker first runs. **Not** `/proc/<pid>/maps`: the `.so` is packaged uncompressed and loaded from inside the APK, so it never appears there by name — an earlier check that read zero would have read zero either way |
 | Loop unaffected | `Closed Loop · looping`, HovorkaMPC deciding, `ypso_shared_key` intact, `dexopt [status=speed]` |
 
 The library ships inside the APK and is never mapped into the process. That is

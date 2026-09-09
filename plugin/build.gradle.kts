@@ -24,6 +24,18 @@ dependencies {
     implementation(project(":core:interfaces"))
     implementation(project(":core:keys"))
     implementation(project(":core:utils"))
+    // LoggingWorker, which the sync worker extends.
+    implementation(project(":core:objects"))
+    // WorkManager: the drain runs as a worker, off the loop's thread.
+    api(libs.androidx.work.runtime)
+
+    // Dagger has to run IN THIS MODULE. Declaring @Module and
+    // @ContributesAndroidInjector without the processor compiles fine and then
+    // fails at the app's KSP step with "SwarmModule_ContributesSwarmDataSyncWorker
+    // could not be resolved" — the annotations are read by the component in
+    // :app, but the classes they imply are generated here or not at all.
+    ksp(libs.com.google.dagger.compiler)
+    ksp(libs.com.google.dagger.android.processor)
 
     testImplementation(project(":shared:tests"))
 }

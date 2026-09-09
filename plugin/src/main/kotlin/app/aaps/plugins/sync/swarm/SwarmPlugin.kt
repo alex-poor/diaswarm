@@ -1,6 +1,18 @@
 package app.aaps.plugins.sync.swarm
 
+import android.content.Context
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequest
+import androidx.work.WorkManager
 import app.aaps.core.interfaces.logging.AAPSLogger
+import app.aaps.core.interfaces.rx.AapsSchedulers
+import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventNewBG
+import app.aaps.core.interfaces.rx.events.EventNewHistoryData
+import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
+import app.aaps.plugins.sync.swarm.workers.SwarmDataSyncWorker
+import io.reactivex.rxjava3.disposables.CompositeDisposable
+import io.reactivex.rxjava3.kotlin.plusAssign
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.data.plugin.PluginType
@@ -33,6 +45,10 @@ import javax.inject.Singleton
 class SwarmPlugin @Inject constructor(
     aapsLogger: AAPSLogger,
     rh: ResourceHelper,
+    private val context: Context,
+    private val rxBus: RxBus,
+    private val aapsSchedulers: AapsSchedulers,
+    private val fabricPrivacy: FabricPrivacy,
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.SYNC)
@@ -43,4 +59,47 @@ class SwarmPlugin @Inject constructor(
         .enableByDefault(false)
         .visibleByDefault(false),
     aapsLogger, rh
-)
+) {
+
+    private val disposable = CompositeDisposable()
+
+    /**
+     * Ask for a drain when new data lands.
+     *
+     * `beginUniqueWork` with `KEEP`, not `REPLACE`: a drain that is already
+     * running is doing the same work this request wants done, and cancelling it
+     * mid-seal to start again would rewrite a segment that is being written.
+     *
+     * Only while enabled. AAPS calls `onStart` on every plugin regardless, so
+     * without the guard a disabled plugin would still subscribe and still
+     * enqueue — which is the opposite of what shipping disabled is supposed to
+     * mean.
+     */
+    override fun onStart() {
+        super.onStart()
+        disposable += rxBus.toObservable(EventNewBG::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({ if (isEnabled()) enqueue() }, fabricPrivacy::logException)
+        disposable += rxBus.toObservable(EventNewHistoryData::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({ if (isEnabled()) enqueue() }, fabricPrivacy::logException)
+    }
+
+    override fun onStop() {
+        disposable.clear()
+        super.onStop()
+    }
+
+    private fun enqueue() {
+        WorkManager.getInstance(context).beginUniqueWork(
+            JOB_NAME,
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequest.Builder(SwarmDataSyncWorker::class.java).build()
+        ).enqueue()
+    }
+
+    companion object {
+
+        const val JOB_NAME = "SwarmDataSync"
+    }
+}

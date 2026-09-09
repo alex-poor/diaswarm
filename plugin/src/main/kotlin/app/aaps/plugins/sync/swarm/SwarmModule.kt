@@ -1,8 +1,8 @@
 package app.aaps.plugins.sync.swarm
 
+import app.aaps.plugins.sync.swarm.workers.SwarmDataSyncWorker
 import dagger.Module
-import dagger.Provides
-import javax.inject.Singleton
+import dagger.android.ContributesAndroidInjector
 
 /**
  * Dagger wiring for the swarm add-on.
@@ -13,9 +13,13 @@ import javax.inject.Singleton
  * general `DataSyncSelector` and get a surprise.
  */
 @Module
-class SwarmModule {
+abstract class SwarmModule {
 
-    @Provides
-    @Singleton
-    fun providesSwarmSelector(impl: DataSyncSelectorSwarmImpl): DataSyncSelectorSwarmImpl = impl
+    /**
+     * The worker needs this: `LoggingWorker` injects itself out of the
+     * application's injector in its constructor, so a worker with no
+     * contribution here fails at construction rather than at compile time.
+     */
+    @ContributesAndroidInjector
+    abstract fun contributesSwarmDataSyncWorker(): SwarmDataSyncWorker
 }
