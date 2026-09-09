@@ -68,6 +68,40 @@ which is what a commons enrolling at scale would want. Too immature to build on;
 TACo is being forked and relaunched H2 2026 — **which is now**, so this is a
 thing to go and look at rather than a thing to wait for.
 
+### D2a · The key layer ships as the reference construction, not p2panda
+
+**Settled 2026-09-09, amending D2.** D2 chose p2panda for the key layer. The
+spike that tested it (`spike/p2panda-seal`) confirmed the property holds and that
+revocation is *finer* than the epoch — and also that **`add()` cannot scope
+history on join**: a member added at the end opened every epoch, including six
+from before it existed. Time-scoping therefore needs one p2panda group per
+window.
+
+**D11 made that the flagship's problem, not a research edge case.** *"A clinician
+gets the last 90 days"* is a window. Under per-recipient wrapping a window is
+free — it is simply which keys you wrapped. Under p2panda it is a group to
+create, join, rotate and revoke, per grant.
+
+So the epoch-and-wrap construction is what ships: `crates/diaswarm-core::seal`,
+ported from `tools/seal.py` and **byte-compatible with it**, verified by sealing
+in one language and opening in the other in both directions.
+
+**This is a deferral, not a rejection.** The key layer sits behind one seam —
+`epoch_key`, `wrap`, `unwrap` — so p2panda can replace it without touching the
+record path, the plugin, or the file format. What changes is that it is no longer
+on the critical path, and the project no longer waits on someone else's 0.x.
+
+*Reopens if:* multi-device (§12.5) or a care team with several writers turns out
+to need real group agreement, which is what a CGKA is actually for and what
+per-recipient wrapping does badly. That is the case to watch, and it is not the
+flagship.
+
+⚠️ **Still not reviewed cryptography.** X25519 + HKDF-SHA256 +
+ChaCha20-Poly1305, Ed25519 for grants, composed by hand. D2's fallback argument
+— *"we extended an audited upstream" is an easier sentence than "we wrote our
+own"* — now cuts against this choice, and stage 10.6's review gate matters more
+because of it, not less.
+
 ### D3 · Audit is given up, deliberately
 
 **Settled and uncomfortable.** Public ciphertext means anyone can pull it and

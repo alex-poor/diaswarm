@@ -14,6 +14,8 @@
 //! of them: the record shape, the canonical encoding, deduplication, and the
 //! epoch a record falls in.
 
+pub mod seal;
+
 use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};

@@ -9,4 +9,15 @@ description = "spec/records.md v1: the canonical record stream, in one implement
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
+# Sealing. Standard primitives, pure Rust so the NDK build needs no C toolchain.
+# Composed by hand, which stage 10.6's external review gate exists to catch.
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+
 [dev-dependencies]
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
