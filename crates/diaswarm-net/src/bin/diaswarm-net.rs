@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use diaswarm_core::vault::{Identity, Vault};
-use diaswarm_net::wire::{fetch_as, have, serve, Who};
+use diaswarm_net::peer::{add_follow, load_follows, refresh_all};
+use diaswarm_net::wire::{fetch_as, have, serve};
 use iroh::{EndpointAddr, EndpointId, SecretKey};
 
 fn usage() -> ExitCode {
@@ -37,6 +38,25 @@ fn usage() -> ExitCode {
       failure is not an error on screen — it is a stale number that looks
       current. §12.3: "nothing happened" and "nothing arrived" must not
       look alike.
+
+  diaswarm-net keep <store> <subject-hex> <from-endpoint-id> [purpose]
+      Add a subject to what this peer keeps a copy of, or add another
+      endpoint to try for one it already keeps. Give a purpose to read it;
+      omit one to relay it — holding a history you cannot open is a normal
+      thing to do here, not a broken setup.
+
+  diaswarm-net peer <store> <node-secret-file> <identity> [seconds]
+      BE A PEER: serve everything in the store, and keep everything in
+      follows.json up to date, in one process. This is the difference
+      between a swarm and a demo. `follow` is a leaf — it takes a subject's
+      data and gives nothing back, so every reader depends on that subject's
+      phone being awake. A peer serves what it has replicated, so a partner
+      still sees glucose while the phone is asleep, and the grant log gets
+      the other copies D13 needs for truncation to be detectable.
+
+      Each subject is fetched from the first endpoint that answers. That
+      list is the mechanism, not a fallback: any peer holding a subject
+      serves identical bytes.
 
   diaswarm-net nodekey <file>        a stable node secret, created if absent
 "#
@@ -92,6 +112,141 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             }
+        }
+
+        Some("keep") => {
+            let (Some(store), Some(subject), Some(from)) = (arg(1), arg(2), arg(3)) else {
+                return usage();
+            };
+            let purpose = arg(4);
+            match add_follow(Path::new(store), subject, from, purpose) {
+                Ok(changed) => {
+                    let how = match purpose {
+                        Some(p) => format!("to read, as {p}"),
+                        None => "to relay — held, not readable".to_string(),
+                    };
+                    if changed {
+                        println!("  keeping      {}…  {how}", &subject[..16.min(subject.len())]);
+                        println!("  from         {from}");
+                    } else {
+                        println!("  unchanged    already keeping that, from that endpoint");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  {e:#}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+
+        Some("peer") => {
+            let (Some(store), Some(key), Some(ident)) = (arg(1), arg(2), arg(3)) else {
+                return usage();
+            };
+            let every = arg(4).and_then(|s| s.parse::<u64>().ok()).unwrap_or(120);
+            let store = PathBuf::from(store);
+            let identity = match load_identity(Path::new(ident)) {
+                Ok(i) => i,
+                Err(e) => {
+                    eprintln!("  {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let secret = match node_secret(Path::new(key)) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("  {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let follows = load_follows(&store).unwrap_or_default();
+            println!("  endpoint id  {}", secret.public());
+            println!("  serving      {}  (every vault in the store)", store.display());
+            if follows.is_empty() {
+                println!("  keeping      nothing yet — add some with `diaswarm-net keep`");
+            }
+            for f in &follows {
+                let how = f.purpose.clone().unwrap_or_else(|| "relay".into());
+                println!(
+                    "  keeping      {}…  as {how}, from {} endpoint(s)",
+                    &f.subject[..16],
+                    f.from.len()
+                );
+            }
+            let router = match serve(store.clone(), secret).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("  {e:?}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            println!("  online       refreshing every {every}s (ctrl-c to stop)");
+
+            loop {
+                match refresh_all(&store, false).await {
+                    Ok(results) => {
+                        for r in results {
+                            let short = &r.subject[..16];
+                            match &r.via {
+                                Some(via) => {
+                                    println!(
+                                        "  {short}…  +{} segments, +{} wraps   via {}…",
+                                        r.segments,
+                                        r.wraps,
+                                        &via[..16]
+                                    );
+                                    // For a subject this peer can read, say what
+                                    // it reads AND HOW OLD IT IS. A follower's
+                                    // dangerous failure is not an error on
+                                    // screen — it is a number that looks current
+                                    // and is nine hours old (§12.3). A relay
+                                    // prints nothing here, because holding
+                                    // something unreadable is the intent.
+                                    if let Some(p) = follows
+                                        .iter()
+                                        .find(|f| f.subject == r.subject)
+                                        .and_then(|f| f.purpose.as_deref())
+                                    {
+                                        let dir = store.join(&r.subject);
+                                        match latest_reading(&dir, &identity, p) {
+                                            Some((t, mgdl)) => {
+                                                let now = std::time::SystemTime::now()
+                                                    .duration_since(std::time::UNIX_EPOCH)
+                                                    .map(|d| d.as_millis() as i64)
+                                                    .unwrap_or(0);
+                                                println!(
+                                                    "            {:.1} mg/dL, {} min old",
+                                                    mgdl,
+                                                    (now - t) / 60_000
+                                                );
+                                            }
+                                            None => println!(
+                                                "            nothing opens as '{p}' — held, not readable"
+                                            ),
+                                        }
+                                    }
+                                }
+                                // NOT SILENCE. A peer nobody could reach and a
+                                // peer with nothing new must not look alike —
+                                // §12.3, and the failure this whole display
+                                // exists to catch.
+                                None => {
+                                    println!("  {short}…  NOT REACHED from any of its endpoints:");
+                                    for (ep, why) in &r.failures {
+                                        println!("       {}…  {}", &ep[..16.min(ep.len())], why.lines().next().unwrap_or(""));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => println!("  refresh failed: {e:#}"),
+                }
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => break,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(every)) => {}
+                }
+            }
+            router.shutdown().await.ok();
         }
 
         Some("serve") => {
@@ -159,34 +314,29 @@ async fn main() -> ExitCode {
             };
 
             let dir = PathBuf::from(into).join(subject.to_ascii_lowercase());
-            match fetch_as(
-                EndpointAddr::from(eid),
-                subject,
-                Who::Reader { identity: reader, purpose: purpose.to_string() },
-                &dir,
-                false,
-            )
-            .await
-            {
+            match fetch_as(EndpointAddr::from(eid), subject, &dir, false).await {
                 Ok((segments, wraps)) => {
-                    println!("  fetched      {segments} segments, {wraps} wraps for {purpose}");
-                    // SEGMENTS BUT NO WRAPS IS ITS OWN FAILURE, and it used to
-                    // print as an unremarkable pair of numbers followed by an
-                    // empty reading. It means the bytes arrived and none of
-                    // them are for you: either nothing was granted, or the
-                    // subject granted and then never wrapped what it sealed
-                    // afterwards.
-                    if segments > 0 && wraps == 0 {
-                        println!(
-                            "  NOTHING FOR YOU  the history is here but none of it is wrapped\n                             \x20              for this key and purpose ({purpose}). Check the\n                             \x20              subject granted THIS key, and that their vault\n                             \x20              has sealed anything since."
-                        );
-                    }
+                    println!("  fetched      {segments} segments, {wraps} new wraps");
                     match Vault::open(&dir) {
                         Ok(vault) => {
-                            let me = load_identity(Path::new(ident)).unwrap();
-                            let opened = vault.read_as(&me, purpose).unwrap_or_default();
+                            let opened = vault.read_as(&reader, purpose).unwrap_or_default();
                             let records: usize = opened.values().map(Vec::len).sum();
                             println!("  opens        {} epochs, {records} records", opened.len());
+                            // HELD BUT UNREADABLE IS ITS OWN OUTCOME, and it
+                            // used to print as an unremarkable pair of numbers
+                            // followed by an empty reading.
+                            //
+                            // Judged on what OPENS, not on how many wraps just
+                            // arrived. Those became different questions when
+                            // peers started mirroring every reader's wraps: a
+                            // second sync legitimately installs none, and a
+                            // relay holds thousands it cannot use. Only "I can
+                            // open nothing" is a fault.
+                            if records == 0 && segments > 0 {
+                                println!("  NOTHING FOR YOU  the history is here, and none of it opens for this");
+                                println!("                   key as '{purpose}'. Check the subject granted THIS");
+                                println!("                   key, and under this purpose.");
+                            }
                         }
                         Err(e) => println!("  fetched, but the vault does not open: {e:?}"),
                     }
@@ -221,15 +371,7 @@ async fn main() -> ExitCode {
             let (mut reachable, mut missed) = (0u32, 0u32);
 
             loop {
-                let me = load_identity(Path::new(ident)).unwrap();
-                let result = fetch_as(
-                    EndpointAddr::from(eid),
-                    &subject,
-                    Who::Reader { identity: me, purpose: purpose.clone() },
-                    &dir,
-                    false,
-                )
-                .await;
+                let result = fetch_as(EndpointAddr::from(eid), &subject, &dir, false).await;
 
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)

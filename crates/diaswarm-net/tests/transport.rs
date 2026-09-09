@@ -8,9 +8,8 @@
 use std::path::Path;
 
 use diaswarm_core::vault::{hex, Identity, Vault};
-use diaswarm_core::seal::grant_tag;
 use diaswarm_core::{Record, EPOCH_MS};
-use diaswarm_net::wire::{fetch_with, have, serve_with, Who};
+use diaswarm_net::wire::{fetch_with, have, serve_with};
 use diaswarm_core::vault::Store;
 use iroh::SecretKey;
 
@@ -62,11 +61,10 @@ async fn a_reader_fetches_over_the_network_and_opens_what_it_was_granted() {
 
     // --- the partner ------------------------------------------------------
     let got = tmp("partner");
-    let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
-    let (segments, wraps) = fetch_with(addr.clone(), &hex(&subject.enc_public()), Who::Tag(tag), &got, true).await.expect("fetch");
+    let (segments, wraps) = fetch_with(addr.clone(), &hex(&subject.enc_public()), &got, true).await.expect("fetch");
 
     assert_eq!(segments, 3, "every segment should transfer, readable or not");
-    assert_eq!(wraps, 2, "the partner was granted from segment 1, so two wraps");
+    assert_eq!(wraps, 2, "the subject holds two wraps in total, all of which travel");
 
     let fetched = Vault::open(&got).expect("the fetched vault opens");
     let opened = fetched.read_as(&partner, "follow").expect("read");
@@ -74,16 +72,21 @@ async fn a_reader_fetches_over_the_network_and_opens_what_it_was_granted() {
     assert!(!opened.contains_key(&20_000), "opened a day it was never granted");
     assert_eq!(opened[&20_001][0].get("mgdl").and_then(|v| v.as_f64()), Some(101.0));
 
-    // --- a stranger, holding the same bytes -------------------------------
+    // --- a stranger, holding EXACTLY the same bytes ------------------------
+    //
+    // Stronger than it used to be. A fetch no longer says who is asking, so a
+    // stranger receives every segment AND every wrap the partner did — the
+    // identical vault, byte for byte — and still opens nothing. That is the
+    // claim in its sharpest form: access is decided by which key you hold, not
+    // by what you were sent.
     let theirs = tmp("stranger");
-    let their_tag = hex(&grant_tag(&stranger.encryption, &subject.enc_public(), "follow"));
     let (segments, wraps) =
-        fetch_with(addr, &hex(&subject.enc_public()), Who::Tag(their_tag), &theirs, true).await.expect("stranger fetch");
+        fetch_with(addr, &hex(&subject.enc_public()), &theirs, true).await.expect("stranger fetch");
     assert_eq!(segments, 3, "a stranger gets the ciphertext, by design");
-    assert_eq!(wraps, 0, "and no wraps");
+    assert_eq!(wraps, 2, "and the wraps too — they are useless without a key");
     assert!(
         Vault::open(&theirs).unwrap().read_as(&stranger, "follow").unwrap().is_empty(),
-        "a stranger opened something after fetching the whole vault"
+        "a stranger opened something while holding the partner's own wraps"
     );
 
     router.shutdown().await.ok();
@@ -94,12 +97,11 @@ async fn the_grant_log_travels_too() {
     // D13: tamper-evidence against the subject rests on other copies existing.
     // A transport that moved only the data would leave the log unverifiable.
     let served = tmp("served-log");
-    let (subject, partner, _) = make_vault(&served);
+    let (subject, _partner, _) = make_vault(&served);
 
     let router = serve_with(served, SecretKey::generate(), true).await.unwrap();
     let got = tmp("got-log");
-    let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
-    fetch_with(router.endpoint().addr(), &hex(&subject.enc_public()), Who::Tag(tag), &got, true).await.unwrap();
+    fetch_with(router.endpoint().addr(), &hex(&subject.enc_public()), &got, true).await.unwrap();
 
     let fetched = Vault::open(&got).unwrap();
     let grants = fetched.grants().unwrap();
@@ -124,18 +126,19 @@ async fn a_second_sync_fetches_only_what_changed() {
     let router = serve_with(served.clone(), SecretKey::generate(), true).await.unwrap();
     let addr = router.endpoint().addr();
     let got = tmp("incr-got");
-    let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
 
-    let (first, _) = fetch_with(addr.clone(), &hex(&subject.enc_public()), Who::Tag(tag.clone()), &got, true).await.unwrap();
+    let (first, first_wraps) = fetch_with(addr.clone(), &hex(&subject.enc_public()), &got, true).await.unwrap();
     assert_eq!(first, 3, "the first sync should fetch everything");
+    assert_eq!(first_wraps, 2);
 
-    let (second, _) = fetch_with(addr.clone(), &hex(&subject.enc_public()), Who::Tag(tag.clone()), &got, true).await.unwrap();
+    let (second, second_wraps) = fetch_with(addr.clone(), &hex(&subject.enc_public()), &got, true).await.unwrap();
     assert_eq!(second, 0, "nothing changed, so nothing should be re-fetched, got {second}");
+    assert_eq!(second_wraps, 0, "and the wraps should not be moved again either");
 
     // A new day, and the follower picks it up without re-fetching the rest.
     vault.seal(20_003, &day(20_003, 103.0)).unwrap();
     vault.publish_wraps(&subject, &partner.enc_public(), "follow").unwrap();
-    let (third, _) = fetch_with(addr, &hex(&subject.enc_public()), Who::Tag(tag), &got, true).await.unwrap();
+    let (third, _) = fetch_with(addr, &hex(&subject.enc_public()), &got, true).await.unwrap();
     assert_eq!(third, 1, "a new day should cost exactly one segment, got {third}");
 
     let opened = Vault::open(&got).unwrap().read_as(&partner, "follow").unwrap();
@@ -158,8 +161,7 @@ async fn a_reader_gets_a_subject_from_a_peer_that_is_not_the_subject() {
     let phone = serve_with(origin.clone(), SecretKey::generate(), true).await.unwrap();
     let relay_store = tmp("relay-store");
     let relay_vault = relay_store.join(&subject_hex);
-    let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
-    fetch_with(phone.endpoint().addr(), &subject_hex, Who::Tag(tag.clone()), &relay_vault, true)
+    fetch_with(phone.endpoint().addr(), &subject_hex, &relay_vault, true)
         .await
         .expect("the middle peer replicates");
     phone.shutdown().await.ok();
@@ -172,7 +174,7 @@ async fn a_reader_gets_a_subject_from_a_peer_that_is_not_the_subject() {
     // A reader that has never spoken to the subject.
     let got = tmp("via-relay");
     let (segments, wraps) =
-        fetch_with(relay.endpoint().addr(), &subject_hex, Who::Tag(tag), &got, true)
+        fetch_with(relay.endpoint().addr(), &subject_hex, &got, true)
             .await
             .expect("fetch from the relay");
     assert_eq!(segments, 3);
@@ -191,14 +193,13 @@ async fn a_relaying_peer_cannot_read_what_it_carries() {
     // that replicates a vault holds ciphertext and wraps addressed to someone
     // else. §7.1 — a holder that cannot read is a holder anyone can be.
     let origin = tmp("origin2");
-    let (subject, partner, _) = make_vault(&origin);
+    let (subject, _partner, _) = make_vault(&origin);
     let subject_hex = hex(&subject.enc_public());
     let carrier = Identity::generate();
 
     let phone = serve_with(origin, SecretKey::generate(), true).await.unwrap();
     let held = tmp("carried").join(&subject_hex);
-    let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
-    fetch_with(phone.endpoint().addr(), &subject_hex, Who::Tag(tag), &held, true).await.unwrap();
+    fetch_with(phone.endpoint().addr(), &subject_hex, &held, true).await.unwrap();
 
     let vault = Vault::open(&held).unwrap();
     assert!(
@@ -244,20 +245,8 @@ async fn a_follower_keeps_reading_days_sealed_after_the_grant() {
     let addr = router.endpoint().addr();
 
     let into = tmp("follower");
-    let (_segments, wraps) = fetch_with(
-        addr,
-        &hex(&subject.enc_public()),
-        // As a reader, not a precomputed tag: this is the path the follower
-        // CLI takes, so it is the path that has to be exercised.
-        Who::Reader {
-            identity: Identity::from_bytes(&partner.to_bytes()),
-            purpose: "follow".into(),
-        },
-        &into,
-        true,
-    )
-    .await
-    .expect("fetch");
+    let (_segments, wraps) =
+        fetch_with(addr, &hex(&subject.enc_public()), &into, true).await.expect("fetch");
 
     assert_eq!(wraps, 4, "every sealed day must arrive wrapped, not just the granted one");
 

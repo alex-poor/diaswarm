@@ -73,9 +73,24 @@ val buildRustCore = tasks.register<Exec>("buildRustCore") {
         }
     )
 
-    inputs.dir(crate.resolve("src"))
-    inputs.dir(project.file("../crates/diaswarm-core/src"))
-    inputs.file(crate.resolve("Cargo.toml"))
+    // EVERY CRATE THE .so LINKS, or gradle will skip a build that mattered.
+    //
+    // This listed only core and android, so a change confined to
+    // diaswarm-net — which is most of the transport, the ALPN included —
+    // left the task UP-TO-DATE. The build then "succeeded", the APK
+    // installed, and the phone ran the previous native half: it announced an
+    // old wire version and every peer was told it "doesn't support any known
+    // protocol". Nothing anywhere said the .so was stale.
+    //
+    // Derived from the directory rather than listed by hand, so a fourth
+    // crate cannot be forgotten the same way.
+    project.file("../crates").listFiles()?.sorted()?.forEach { c ->
+        if (c.resolve("Cargo.toml").exists()) {
+            inputs.dir(c.resolve("src"))
+            inputs.file(c.resolve("Cargo.toml"))
+            if (c.resolve("Cargo.lock").exists()) inputs.file(c.resolve("Cargo.lock"))
+        }
+    }
     outputs.dir(project.file("src/main/jniLibs"))
 
     doFirst {

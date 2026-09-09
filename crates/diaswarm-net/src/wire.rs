@@ -12,8 +12,6 @@ use iroh::endpoint::{presets, Connection};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, SecretKey};
 
-use diaswarm_core::seal::grant_tag;
-use diaswarm_core::vault::{hex, Identity};
 
 use crate::{answer, install, install_segment, install_wrap, Manifest, Request, WrapBlob, ALPN};
 
@@ -84,20 +82,20 @@ async fn ask(conn: &Connection, req: &Request) -> Result<Vec<u8>> {
     Ok(recv.read_to_end(64 * 1024 * 1024).await?)
 }
 
-/// Fetch a whole vault, plus the wraps for one tag, into a local directory.
+/// Fetch a whole vault into a local directory.
 ///
-/// Fetches EVERY segment, not only the ones this tag can open. Deliberate on
-/// two counts: a peer holding ciphertext it cannot read is the property the
-/// architecture rests on (§7.1), and fetching only what you can open would tell
-/// anyone watching exactly what you were granted — which is the leak D13 just
-/// closed in the grant log, reintroduced through traffic.
-pub async fn fetch(
-    addr: EndpointAddr,
-    subject: &str,
-    tag: &str,
-    into: &Path,
-) -> Result<(usize, usize)> {
-    fetch_with(addr, subject, Who::Tag(tag.to_string()), into, false).await
+/// Fetches EVERY segment and EVERY wrap, not only what the caller can open.
+/// Deliberate on three counts: a peer holding ciphertext it cannot read is the
+/// property the architecture rests on (§7.1); taking only what you can open
+/// would tell anyone watching exactly what you were granted, which is the leak
+/// D13 closed in the grant log arriving instead through traffic; and a copy
+/// missing other readers' wraps cannot be passed on, so relaying would be
+/// impossible and every reader would be back to depending on the subject.
+///
+/// Note what is NOT a parameter: who you are. A fetch is the same request for
+/// everybody.
+pub async fn fetch(addr: EndpointAddr, subject: &str, into: &Path) -> Result<(usize, usize)> {
+    fetch_with(addr, subject, into, false).await
 }
 
 /// Which subjects a peer holds. The swarm question.
@@ -114,31 +112,13 @@ pub async fn have(addr: EndpointAddr, local_only: bool) -> Result<Vec<String>> {
     Ok(subjects)
 }
 
-/// Who is fetching.
-///
-/// A reader knows their own secret but not, before the manifest arrives, the
-/// subject's public key — and the tag needs both. Passing the identity lets the
-/// tag be derived mid-flight, which is why this is not just a string.
-///
-/// The alternative, and what this replaced, was fetching the whole vault once
-/// with a placeholder tag purely to learn the subject, then fetching it all
-/// again. That downloaded six megabytes twice over a relay to answer a question
-/// the manifest had already answered.
-pub enum Who {
-    /// Derive the tag once the subject is known.
-    Reader { identity: Identity, purpose: String },
-    /// A tag already computed.
-    Tag(String),
-}
-
 pub async fn fetch_as(
     addr: EndpointAddr,
     subject: &str,
-    who: Who,
     into: &Path,
     local_only: bool,
 ) -> Result<(usize, usize)> {
-    fetch_with(addr, subject, who, into, local_only).await
+    fetch_with(addr, subject, into, local_only).await
 }
 
 /// Fetch one subject's vault from any peer that holds it.
@@ -150,7 +130,6 @@ pub async fn fetch_as(
 pub async fn fetch_with(
     addr: EndpointAddr,
     subject: &str,
-    who: Who,
     into: &Path,
     local_only: bool,
 ) -> Result<(usize, usize)> {
@@ -165,20 +144,6 @@ pub async fn fetch_with(
         serde_json::from_slice(&ask(&conn, &Request::Manifest { subject: subject.to_string() }).await?).context("manifest")?;
     let grants = ask(&conn, &Request::Grants { subject: subject.to_string() }).await?;
     install(into, &manifest, &grants)?;
-
-    // The subject is in the manifest, so the tag can be derived now — one pass.
-    let tag = match &who {
-        Who::Tag(t) => t.clone(),
-        Who::Reader { identity, purpose } => {
-            let meta: serde_json::Value = serde_json::from_str(&manifest.meta)?;
-            let subject_hex = meta["subject"].as_str().context("meta has no subject")?;
-            let bytes = diaswarm_core::vault::unhex(subject_hex)
-                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-            let subject: [u8; 32] =
-                bytes.try_into().map_err(|_| anyhow::anyhow!("subject key is not 32 bytes"))?;
-            hex(&grant_tag(&identity.encryption, &subject, purpose))
-        }
-    };
 
     // INCREMENTAL, BY SIZE. A follower syncs every few minutes and almost
     // nothing has changed; re-fetching the whole history to learn that would
@@ -199,22 +164,43 @@ pub async fn fetch_with(
         fetched += 1;
     }
 
-    // NOT `unwrap_or_default()`. A peer that fails to answer this replies with
-    // nothing, and nothing is not valid JSON — so swallowing the parse error
-    // reported "0 wraps" for a request the other end had refused. That is the
-    // ALPN mistake again in a different place: a broken exchange presented as
-    // a true and boring answer. An empty list is `[]` and still parses, so the
-    // two states stay distinguishable.
-    let reply = ask(&conn, &Request::Wraps { subject: subject.to_string(), tag: tag.clone() }).await?;
-    let wraps: Vec<WrapBlob> = serde_json::from_slice(&reply)
-        .with_context(|| format!("the peer did not answer for wraps ({} bytes)", reply.len()))?;
-    let opened = wraps.len();
-    for w in wraps {
-        install_wrap(into, w.seq, &tag, &w.bytes)?;
+    // Wraps are immutable — one is never re-issued — so equal counts mean
+    // there is nothing to ask for. Cheap, and it keeps a two-minute refresh
+    // loop from moving every reader's wraps over and over.
+    let held = count_local_wraps(into);
+    let mut installed = 0usize;
+    if held < manifest.wraps {
+        // NOT `unwrap_or_default()`. A peer that fails to answer this replies
+        // with nothing, and nothing is not valid JSON — so swallowing the parse
+        // error reported "0 wraps" for a request the other end had refused.
+        // That is the ALPN mistake again in a different place: a broken
+        // exchange presented as a true and boring answer. An empty list is `[]`
+        // and still parses, so the two states stay distinguishable.
+        let reply = ask(&conn, &Request::Wraps { subject: subject.to_string() }).await?;
+        let wraps: Vec<WrapBlob> = serde_json::from_slice(&reply)
+            .with_context(|| format!("the peer did not answer for wraps ({} bytes)", reply.len()))?;
+        for w in wraps {
+            install_wrap(into, w.seq, &w.tag, &w.bytes)?;
+            installed += 1;
+        }
     }
-    let _ = fetched;
 
     conn.close(0u32.into(), b"done");
     endpoint.close().await;
-    Ok((fetched, opened))
+    Ok((fetched, installed))
+}
+
+/// How many wrap files are already on disk here.
+fn count_local_wraps(vault: &Path) -> usize {
+    let Ok(dirs) = std::fs::read_dir(vault.join("wraps")) else { return 0 };
+    let mut n = 0;
+    for seg in dirs.flatten() {
+        if let Ok(files) = std::fs::read_dir(seg.path()) {
+            n += files
+                .flatten()
+                .filter(|f| f.file_name().to_string_lossy().ends_with(".wrap"))
+                .count();
+        }
+    }
+    n
 }

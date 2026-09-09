@@ -28,6 +28,7 @@
 //! subject's phone is asleep. Push and store-and-forward are the next problem,
 //! not this one.
 
+pub mod peer;
 pub mod wire;
 
 use std::path::{Path, PathBuf};
@@ -42,7 +43,7 @@ use serde::{Deserialize, Serialize};
 /// failed request that a follower reported as "unreachable" — the subject
 /// looked offline when it was merely older. An ALPN mismatch refuses the
 /// connection instead, which is a thing a person can act on.
-pub const ALPN: &[u8] = b"diaswarm/2";
+pub const ALPN: &[u8] = b"diaswarm/3";
 
 /// One request. One per stream, answered with raw bytes then a clean close.
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,8 +61,25 @@ pub enum Request {
     Grants { subject: String },
     /// One sealed segment.
     Segment { subject: String, seq: u64, epoch: i64 },
-    /// Every wrap filed under one tag.
-    Wraps { subject: String, tag: String },
+    /// EVERY wrap this peer holds for a subject, whoever they are for.
+    ///
+    /// Asking for one tag was the obvious design and it was wrong twice over.
+    ///
+    /// It made relaying impossible: a peer holding a subject it cannot read
+    /// does not know anyone else's tags, so it replicated segments and no
+    /// wraps — a copy of the history that opens for nobody, which is not a
+    /// replica of anything. The swarm demo only worked because the relaying
+    /// laptop happened to be fetching AS the reader.
+    ///
+    /// And it leaked: naming your tag tells the peer you are dialling exactly
+    /// which entry in the public grant log you are. D13 took the reader's name
+    /// out of the log; asking for it by name over the wire put it back. Now
+    /// every fetcher sends the same request, so the traffic says nothing.
+    ///
+    /// Costs about 100 bytes per reader per segment — 15 KB for a year of one
+    /// reader, and the manifest's count means it is skipped when nothing has
+    /// changed.
+    Wraps { subject: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -79,12 +97,21 @@ pub struct Manifest {
     ///
     /// Comparing sizes needs no such assumption: re-fetch what differs.
     pub segments: Vec<(u64, i64, u64)>,
+    /// How many wrap files this peer holds, across every reader.
+    ///
+    /// A wrap is never re-issued, so the count only grows: equal counts mean
+    /// there is nothing to fetch. That is the whole of the incremental check,
+    /// and it is enough because these are immutable.
+    #[serde(default)]
+    pub wraps: usize,
 }
 
 /// One wrap, as it travels.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WrapBlob {
     pub seq: u64,
+    /// Which reader it is for — unlinkable to a person without their key.
+    pub tag: String,
     pub bytes: Vec<u8>,
 }
 
@@ -122,7 +149,20 @@ pub fn manifest(vault: &Path) -> Result<Manifest> {
         }
     }
     segments.sort_unstable();
-    Ok(Manifest { meta, segments })
+    Ok(Manifest { meta, segments, wraps: count_wraps(vault) })
+}
+
+/// How many wrap files a vault holds, across every reader.
+fn count_wraps(vault: &Path) -> usize {
+    let wraps = vault.join("wraps");
+    let Ok(dirs) = std::fs::read_dir(&wraps) else { return 0 };
+    let mut n = 0;
+    for seg in dirs.flatten() {
+        if let Ok(files) = std::fs::read_dir(seg.path()) {
+            n += files.flatten().filter(|f| f.file_name().to_string_lossy().ends_with(".wrap")).count();
+        }
+    }
+    n
 }
 
 /// Answer one request from the vault on disk.
@@ -158,24 +198,30 @@ pub fn answer(store: &Path, req: &Request) -> Result<Vec<u8>> {
             let path = segments_dir(&vault).join(format!("{seq}.{epoch}.seal"));
             Ok(std::fs::read(path).context("no such segment")?)
         }
-        Request::Wraps { subject, tag } => {
+        Request::Wraps { subject } => {
             let vault = vault_of(store, subject)?;
-            if tag.len() != 64 || !tag.bytes().all(|b| b.is_ascii_hexdigit()) {
-                anyhow::bail!("a tag is 64 hex characters");
-            }
             let mut out = Vec::new();
             let wraps = vault.join("wraps");
             if wraps.exists() {
                 for seg in std::fs::read_dir(&wraps)? {
                     let seg = seg?;
                     let Ok(seq) = seg.file_name().to_string_lossy().parse::<u64>() else { continue };
-                    let path = seg.path().join(format!("{tag}.wrap"));
-                    if let Ok(bytes) = std::fs::read(path) {
-                        out.push(WrapBlob { seq, bytes });
+                    for file in std::fs::read_dir(seg.path())?.flatten() {
+                        let name = file.file_name().to_string_lossy().to_string();
+                        let Some(tag) = name.strip_suffix(".wrap") else { continue };
+                        // Names come off this peer's own disk, but they end up
+                        // in a path on the receiver's, so they are checked
+                        // here as well as there.
+                        if tag.len() != 64 || !tag.bytes().all(|b| b.is_ascii_hexdigit()) {
+                            continue;
+                        }
+                        if let Ok(bytes) = std::fs::read(file.path()) {
+                            out.push(WrapBlob { seq, tag: tag.to_string(), bytes });
+                        }
                     }
                 }
             }
-            out.sort_by_key(|w| w.seq);
+            out.sort_by(|a, b| (a.seq, &a.tag).cmp(&(b.seq, &b.tag)));
             Ok(serde_json::to_vec(&out)?)
         }
     }
@@ -198,6 +244,11 @@ pub fn install_segment(into: &Path, seq: u64, epoch: i64, bytes: &[u8]) -> Resul
 }
 
 pub fn install_wrap(into: &Path, seq: u64, tag: &str, bytes: &[u8]) -> Result<()> {
+    // The tag arrives from another peer and becomes a filename, so it is
+    // checked here rather than trusted. `seq` is already a number.
+    if tag.len() != 64 || !tag.bytes().all(|b| b.is_ascii_hexdigit()) {
+        anyhow::bail!("a tag is 64 hex characters");
+    }
     let dir = into.join("wraps").join(seq.to_string());
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join(format!("{tag}.wrap")), bytes)?;

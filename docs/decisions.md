@@ -242,6 +242,44 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D15 · A fetch says nothing about who is fetching
+
+**Settled 2026-09-09.** A peer asks for a subject's whole vault — every
+segment, every wrap, whoever they are for — and every peer sends the identical
+request. Wire version `diaswarm/3`.
+
+The first design asked for the wraps under one tag, which was the obvious thing
+and was wrong twice.
+
+**It made relaying impossible.** A peer holding a friend's history does not know
+anyone else's tags, so it replicated segments and no wraps: a copy that opens
+for nobody, which is not a replica of anything. The swarm demonstration on
+2026-09-09 only worked because the relaying laptop was fetching *as the reader*
+and so happened to pick up that reader's wraps. Writing the same scenario as an
+honest test — a relay granted nothing — failed immediately.
+
+**And it leaked.** Naming your tag tells the peer you dial exactly which entry
+in the public grant log you are. D13 took the reader out of the log; asking for
+that entry by name over the wire put it back, against a peer who is by design
+not trusted. Now a relay and a reader are indistinguishable on the wire, and the
+only difference is which wraps each can afterwards open — decided locally, by
+which key they hold.
+
+**Costs almost nothing.** About 100 bytes per reader per segment: 15 KB for a
+year of one reader. The manifest carries a wrap count and wraps are never
+re-issued, so an unchanged subject transfers nothing at all.
+
+Verified in `crates/diaswarm-net/tests/transport.rs`: a stranger now receives
+byte-for-byte the same vault as the granted partner — every segment and every
+wrap — and still opens nothing. That is the architecture's claim in its
+sharpest available form.
+
+*Reopens if:* the number of readers grows enough that mirroring all wraps is no
+longer negligible, which would need per-reader ranges in the manifest rather
+than a return to naming tags.
+
+---
+
 ### D14 · Transport is iroh, and it serves to anyone who asks
 
 **Settled 2026-09-09.** `crates/diaswarm-net` moves a vault between peers over
