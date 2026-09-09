@@ -19,6 +19,10 @@ Two things have been done end to end on real hardware, with real data:
 * **A relay.** A stranger peer, granted nothing, replicated 146 segments and all 219
   wraps, could open none of it, and served the complete history to a granted reader
   while the originating phone was switched off. 33,800 records over 73 days.
+* **A pool.** Two phones on a wifi network, with nothing configured between them,
+  found each other, agreed independently on the size of the pool, and each worked
+  out the same share of the subject space to carry. Turning the feature on is the
+  whole instruction — there is no address to exchange and nobody to ask.
 
 Not reviewed cryptography. See [Limits](#limits) before trusting it with anything.
 
