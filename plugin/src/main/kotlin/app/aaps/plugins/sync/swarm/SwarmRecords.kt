@@ -4,9 +4,12 @@ import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.CA
 import app.aaps.core.data.model.EB
 import app.aaps.core.data.model.GV
+import app.aaps.core.data.model.PS
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.TT
+import app.aaps.core.data.model.data.Block
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -82,14 +85,46 @@ object SwarmRecords {
             put("why", value.reason.name)
         }
 
-        // ProfileSwitch is not here yet, and its absence is deliberate: §2
-        // requires the ISF and target blocks normalised to mg/dL, because AAPS
-        // stores profile blocks in whichever unit the user set while glucose
-        // values and temporary targets are always mg/dL. Emitting an
-        // un-normalised profile would put the same quantity in one stream a
-        // factor of eighteen apart. It needs the block API read properly first.
+        // The blocks ARE the profile. Without basal rates, ISF, IC and targets
+        // by time of day a consumer cannot say what the loop was trying to do,
+        // which makes every insulin record beside them uninterpretable (§2).
+        //
+        // `unit` is passed through RAW and the native side converts and removes
+        // it. AAPS stores these blocks in whichever unit the user set while
+        // glucose values and temporary targets are always mg/dL, so an
+        // un-normalised profile puts the same quantity in one stream a factor of
+        // eighteen apart. Doing the conversion here would put that rule in two
+        // places, and a rule about units in two places is a rule that will
+        // disagree with itself.
+        is PS -> obj(value.timestamp, "profile") {
+            put("name", value.profileName)
+            put("pct", value.percentage)
+            put("shift", value.timeshift)
+            put("dur", value.duration)
+            put("unit", value.glucoseUnit.name)
+            put("basal", blocks(value.basalBlocks) { JSONObject().put("amount", it.amount) })
+            put("isf", blocks(value.isfBlocks) { JSONObject().put("amount", it.amount) })
+            put("ic", blocks(value.icBlocks) { JSONObject().put("amount", it.amount) })
+            put("target", JSONArray().apply {
+                value.targetBlocks.forEach {
+                    put(
+                        JSONObject()
+                            .put("duration", it.duration)
+                            .put("lowTarget", it.lowTarget)
+                            .put("highTarget", it.highTarget)
+                    )
+                }
+            })
+        }
+
         else -> null
     }
+
+    /** Blocks as `[{duration, …}]`, in the order AAPS holds them. */
+    private inline fun blocks(list: List<Block>, field: (Block) -> JSONObject): JSONArray =
+        JSONArray().apply {
+            list.forEach { put(field(it).put("duration", it.duration)) }
+        }
 
     /**
      * A record is `t` and `k` plus whatever the device reported.

@@ -301,3 +301,54 @@ fn truncating_the_tail_is_not_detectable_from_one_copy_alone() {
         "if this now fails, tail truncation became detectable and §6 needs revisiting"
     );
 }
+
+#[test]
+fn sealing_a_segment_again_adds_to_it_rather_than_replacing_it() {
+    // THE BUG THIS EXISTS FOR. A caller passes what it has just collected, not
+    // the whole day. Replacing the segment with that destroyed everything
+    // sealed earlier — silently, from the only copy the subject had. It showed
+    // up as a reader's record count FALLING between two fetches.
+    let dir = tempdir::TempDir::new("append").unwrap();
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject, OFFSET).unwrap();
+    let epoch = 20_000;
+
+    vault.record_grant(&subject, &reader.enc_public(), "follow", "grant", 0).unwrap();
+
+    // Three passes, each carrying only what arrived since the last.
+    vault.seal(epoch, &day(epoch, 100.0)).unwrap();
+    vault.seal(epoch, &day(epoch + 0, 101.0)).unwrap();
+    vault.seal(epoch, &day(epoch + 0, 102.0)).unwrap();
+    vault.publish_wraps(&subject, &reader.enc_public(), "follow").unwrap();
+
+    let opened = vault.read_as(&reader, "follow").unwrap();
+    let values: Vec<f64> = opened[&epoch]
+        .iter()
+        .filter_map(|r| r.get("mgdl").and_then(|v| v.as_f64()))
+        .collect();
+    assert_eq!(values, vec![100.0, 101.0, 102.0], "a re-seal dropped earlier records");
+}
+
+#[test]
+fn resealing_the_same_records_does_not_duplicate_them() {
+    // A full resync re-drains everything. Without the check that would append
+    // the whole history to a segment that already had it.
+    let dir = tempdir::TempDir::new("dedupe").unwrap();
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject, OFFSET).unwrap();
+    let epoch = 20_000;
+
+    vault.record_grant(&subject, &reader.enc_public(), "follow", "grant", 0).unwrap();
+    vault.seal(epoch, &day(epoch, 100.0)).unwrap();
+    vault.seal(epoch, &day(epoch, 100.0)).unwrap();
+    vault.seal(epoch, &day(epoch, 100.0)).unwrap();
+    vault.publish_wraps(&subject, &reader.enc_public(), "follow").unwrap();
+
+    assert_eq!(
+        vault.read_as(&reader, "follow").unwrap()[&epoch].len(),
+        1,
+        "the same record was sealed three times and appeared more than once"
+    );
+}

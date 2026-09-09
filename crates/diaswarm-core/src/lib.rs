@@ -118,6 +118,24 @@ impl Record {
     /// data: normalising an already-canonical stream must not move a single byte.
     pub fn normalise(mut self) -> Self {
         let kind = self.kind().to_string();
+
+        // Profile blocks first: the unit that decides the scale is removed by
+        // the same step that applies it, so a normalised record never carries
+        // one and an un-normalisable record always does.
+        if kind == kind::PROFILE {
+            let unit = self.0.get("unit").and_then(Value::as_str).map(str::to_string);
+            let (scale, recognised) = profile_scale(unit.as_deref());
+            if recognised {
+                if let Some(isf) = self.0.get_mut("isf") {
+                    scale_blocks(isf, scale, &["amount"]);
+                }
+                if let Some(target) = self.0.get_mut("target") {
+                    scale_blocks(target, scale, &["lowTarget", "highTarget"]);
+                }
+                self.0.remove("unit");
+            }
+        }
+
         for (key, value) in self.0.iter_mut() {
             let Some(digits) = precision(&kind, key) else { continue };
             let Some(n) = value.as_f64() else { continue };
@@ -185,6 +203,42 @@ fn precision(kind: &str, key: &str) -> Option<i32> {
 /// 0.125 at two places would be 0.13 here and 0.12 there: one reading in a
 /// thousand differing, which is exactly the kind of drift that is never noticed
 /// and never explained.
+/// AAPS's own constant (`Constants.MMOLL_TO_MGDL`), not the textbook 18.
+///
+/// Profile blocks are stored in whichever unit the user set, so converting with
+/// the constant the loop itself used is what reproduces the numbers it dosed on.
+pub const MMOLL_TO_MGDL: f64 = 18.0182;
+
+/// How to get a profile's glucose-bearing blocks into mg/dL.
+///
+/// THE HAZARD. `cgm.mgdl` and `target.lo` are mg/dL always, but profile blocks
+/// are in the user's own unit. Emitting both untouched puts a target of 160.2
+/// and a target of 5 in one stream meaning nearly the same thing — a factor of
+/// eighteen apart — which is exactly what §2 forbids. An unrecognised unit is
+/// left alone AND kept visible, so a consumer meets "not normalised" rather than
+/// a plausible wrong number.
+fn profile_scale(unit: Option<&str>) -> (f64, bool) {
+    match unit.map(|u| u.trim().to_ascii_uppercase()).as_deref() {
+        Some("MGDL") | Some("MG/DL") => (1.0, true),
+        Some("MMOL") | Some("MMOLL") | Some("MMOL/L") => (MMOLL_TO_MGDL, true),
+        _ => (1.0, false),
+    }
+}
+
+fn scale_blocks(value: &mut Value, scale: f64, fields: &[&str]) {
+    let Some(blocks) = value.as_array_mut() else { return };
+    for b in blocks {
+        let Some(obj) = b.as_object_mut() else { continue };
+        for f in fields {
+            if let Some(n) = obj.get(*f).and_then(Value::as_f64) {
+                if let Some(r) = serde_json::Number::from_f64(round_half_even(n * scale, 1)) {
+                    obj.insert((*f).to_string(), Value::Number(r));
+                }
+            }
+        }
+    }
+}
+
 fn round_half_even(value: f64, digits: i32) -> f64 {
     let factor = 10f64.powi(digits);
     (value * factor).round_ties_even() / factor
@@ -286,6 +340,16 @@ impl Emitted {
 }
 
 /// Encode a full stream: the header, then the records, one JSON object per line.
+/// Just the records, no header. For appending to a stream that has one.
+pub fn encode_records(records: &[Record]) -> String {
+    let mut out = String::new();
+    for r in records {
+        out.push_str(&r.to_canonical_json());
+        out.push('\n');
+    }
+    out
+}
+
 pub fn encode(records: &[Record], offset_ms: i64) -> String {
     let mut out = String::new();
     out.push_str(&header(offset_ms).to_canonical_json());

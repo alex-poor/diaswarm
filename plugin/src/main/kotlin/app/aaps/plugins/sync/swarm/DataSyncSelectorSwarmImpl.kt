@@ -105,6 +105,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 { id -> persistenceLayer.getNextSyncElementTherapyEvent(id).blockingGet()
                     ?.let { it.first to it.second.id } },
                 { (it as app.aaps.core.data.model.TE).isValid }),
+            Source("profile", SwarmLongKey.ProfileSwitchLastSyncedId,
+                { persistenceLayer.getLastProfileSwitchId() },
+                { id -> persistenceLayer.getNextSyncElementProfileSwitch(id).blockingGet()
+                    ?.let { it.first to it.second.id } },
+                { (it as app.aaps.core.data.model.PS).isValid }),
             Source("target", SwarmLongKey.TemporaryTargetLastSyncedId,
                 { persistenceLayer.getLastTemporaryTargetId() },
                 { id -> persistenceLayer.getNextSyncElementTemporaryTarget(id).blockingGet()

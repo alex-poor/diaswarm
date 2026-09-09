@@ -22,6 +22,7 @@ enum class SwarmLongKey(
     ExtendedBolusLastSyncedId("swarm_extended_bolus_last_synced_id", 0L),
     TherapyEventLastSyncedId("swarm_therapy_event_last_synced_id", 0L),
     TemporaryTargetLastSyncedId("swarm_temporary_target_last_synced_id", 0L),
+    ProfileSwitchLastSyncedId("swarm_profile_switch_last_synced_id", 0L),
 
     /** How many genuine post-emit edits have been seen. See spec §7. */
     AmendmentsSeen("swarm_amendments_seen", 0L),

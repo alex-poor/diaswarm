@@ -228,3 +228,48 @@ fn rounding_matches_python_ties_to_even() {
     assert_eq!(cgm(100.35), 100.4);
     assert_eq!(cgm(163.04), 163.0);
 }
+
+#[test]
+fn a_mmol_profile_is_normalised_to_mgdl_and_loses_its_unit() {
+    // §2: cgm.mgdl and target.lo are mg/dL always, profile blocks are in the
+    // user's own unit. Untouched, one stream carries a target of 5 and a target
+    // of 160.2 meaning nearly the same thing.
+    let r = Record::new(1, "profile")
+        .set("name", Some("BAU".into()))
+        .set("unit", Some("MMOL".into()))
+        .set("isf", Some(serde_json::json!([{"duration": 86400000, "amount": 2.0}])))
+        .set(
+            "target",
+            Some(serde_json::json!([{"duration": 86400000, "lowTarget": 5.0, "highTarget": 6.0}])),
+        )
+        .set("basal", Some(serde_json::json!([{"duration": 86400000, "amount": 0.5}])))
+        .normalise();
+
+    assert!(r.get("unit").is_none(), "a normalised profile still declares a unit");
+    assert_eq!(r.get("isf").unwrap()[0]["amount"].as_f64(), Some(36.0));
+    assert_eq!(r.get("target").unwrap()[0]["lowTarget"].as_f64(), Some(90.1));
+    assert_eq!(r.get("target").unwrap()[0]["highTarget"].as_f64(), Some(108.1));
+    // U/h and g/U carry no glucose unit and must never be scaled.
+    assert_eq!(r.get("basal").unwrap()[0]["amount"].as_f64(), Some(0.5));
+}
+
+#[test]
+fn an_mgdl_profile_is_left_alone_but_still_loses_its_unit() {
+    let r = Record::new(1, "profile")
+        .set("unit", Some("MGDL".into()))
+        .set("isf", Some(serde_json::json!([{"duration": 1, "amount": 36.0}])))
+        .normalise();
+    assert!(r.get("unit").is_none());
+    assert_eq!(r.get("isf").unwrap()[0]["amount"].as_f64(), Some(36.0));
+}
+
+#[test]
+fn an_unrecognised_unit_is_admitted_rather_than_guessed() {
+    // A visible "not normalised" beats a plausible wrong number.
+    let r = Record::new(1, "profile")
+        .set("unit", Some("FURLONGS".into()))
+        .set("isf", Some(serde_json::json!([{"duration": 1, "amount": 2.0}])))
+        .normalise();
+    assert_eq!(r.get("unit").and_then(|v| v.as_str()), Some("FURLONGS"));
+    assert_eq!(r.get("isf").unwrap()[0]["amount"].as_f64(), Some(2.0), "scaled a unit it did not know");
+}

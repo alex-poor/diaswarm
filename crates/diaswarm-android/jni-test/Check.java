@@ -76,6 +76,17 @@ public class Check {
               SwarmNative.vaultStatus("/proc/nonexistent").equals("no vault"),
               SwarmNative.vaultStatus("/proc/nonexistent"));
 
+        // --- a profile crosses the boundary and is normalised --------------
+        String mmol = "{\"k\":\"profile\",\"t\":1782938503230,\"unit\":\"MMOL\","
+                    + "\"isf\":[{\"duration\":86400000,\"amount\":2.0}],"
+                    + "\"target\":[{\"duration\":86400000,\"lowTarget\":5.0,\"highTarget\":6.0}],"
+                    + "\"basal\":[{\"duration\":86400000,\"amount\":0.5}]}";
+        String norm = SwarmNative.canonicalLine(mmol);
+        check("a mmol profile is converted to mg/dL through JNI",
+              norm.contains("\"amount\":36.0") && norm.contains("\"lowTarget\":90.1"), norm);
+        check("and no longer declares a unit", !norm.contains("\"unit\""), norm);
+        check("basal rates are not scaled", norm.contains("\"amount\":0.5"), norm);
+
         // --- granting, from the phone side --------------------------------
         String reader = "11".repeat(32);   // a plausible 32-byte public key
         long wraps = SwarmNative.vaultGrant(vault, ident, reader, "follow");

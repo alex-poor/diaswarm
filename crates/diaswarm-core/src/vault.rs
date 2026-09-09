@@ -41,7 +41,12 @@ use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::seal::{epoch_key, grant_tag, open_epoch, seal_epoch, unwrap, wrap, KEY_BYTES};
-use crate::{encode, epoch_of, Record, SPEC_VERSION};
+use crate::{encode, encode_records, epoch_of, Record, SPEC_VERSION};
+
+/// A freshly created segment holds only its header.
+fn existing_was_empty(plaintext: &[u8]) -> bool {
+    plaintext.split(|b| *b == b'\n').filter(|l| !l.is_empty()).count() <= 1
+}
 
 #[derive(Debug)]
 pub enum VaultError {
@@ -318,9 +323,43 @@ impl Vault {
             }
         };
 
-        let plaintext = encode(records, self.offset);
-        let sealed = seal_epoch(plaintext.as_bytes(), &key, epoch, &self.subject_pub);
-        fs::write(self.root.join("segments").join(seg.seal_name()), sealed)?;
+        // APPEND, DO NOT REPLACE. A segment is written to repeatedly as its
+        // records arrive, and a caller passes what it has just collected — not
+        // the whole day. Writing that over the segment destroys everything
+        // sealed into it earlier, silently: the subject loses history from the
+        // only copy they have, and a reader who could read it yesterday cannot
+        // today, with no error anywhere. Found by watching a reader's record
+        // count fall from 32,150 to 27,874 between two fetches.
+        let path = self.root.join("segments").join(seg.seal_name());
+        let existing = match fs::read(&path) {
+            Ok(sealed) => open_epoch(&sealed, &key, epoch, &self.subject_pub)
+                .map_err(|_| VaultError::Malformed("a sealed segment did not open".into()))?,
+            Err(_) => Vec::new(),
+        };
+
+        let mut plaintext = if existing.is_empty() {
+            encode(&[], self.offset).into_bytes()
+        } else {
+            existing
+        };
+
+        // Skip anything already in the segment. The emitter dedupes within one
+        // pass and the high-water marks stop a record being drained twice, but a
+        // full resync would otherwise append the whole history again.
+        let seen: std::collections::HashSet<&[u8]> =
+            plaintext.split(|b| *b == b'\n').collect();
+        let addition: Vec<Record> = records
+            .iter()
+            .filter(|r| !seen.contains(r.to_canonical_json().as_bytes()))
+            .cloned()
+            .collect();
+        if addition.is_empty() && !existing_was_empty(&plaintext) {
+            return Ok(seg);
+        }
+        plaintext.extend_from_slice(encode_records(&addition).as_bytes());
+
+        let sealed = seal_epoch(&plaintext, &key, epoch, &self.subject_pub);
+        fs::write(&path, sealed)?;
         Ok(seg)
     }
 
