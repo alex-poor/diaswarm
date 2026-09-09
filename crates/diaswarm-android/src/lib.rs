@@ -276,6 +276,28 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultStatus<
     to_jstring(env, summary)
 }
 
+/// Bring every granted reader's wraps up to date. Returns the number written,
+/// or a negative code.
+///
+/// Sealing does this on every write, so on a healthy vault this returns 0. It
+/// exists for the vault that is not healthy: one written by a build that only
+/// wrapped at grant time, whose readers are holding segments they cannot open.
+/// Called at start so that repairs itself rather than waiting for someone to
+/// notice a follower has gone quiet.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultRewrap<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    vault_path: JString<'a>,
+) -> jlong {
+    let Ok(v) = env.get_string(&vault_path) else { return -1 };
+    let Ok(vault) = Vault::open(Path::new(&String::from(v))) else { return -3 };
+    match vault.rewrap() {
+        Ok(done) => done.written as jlong,
+        Err(_) => -4,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Granting, from the phone
 // ---------------------------------------------------------------------------

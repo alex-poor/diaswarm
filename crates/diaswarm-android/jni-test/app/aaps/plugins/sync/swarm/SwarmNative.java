@@ -13,6 +13,7 @@ public class SwarmNative {
     public static native long vaultSeal(String vaultPath, String identityPath, long epoch, long offsetMs, String ndjson);
     public static native String vaultSubject(String identityPath);
     public static native String vaultStatus(String vaultPath);
+    public static native long vaultRewrap(String vaultPath);
     public static native long vaultGrant(String vaultPath, String identityPath, String readerPubHex, String purpose);
     public static native long vaultRevoke(String vaultPath, String identityPath, String readerPubHex, String purpose);
     public static native long netStart(String vaultPath, String nodeKeyPath);

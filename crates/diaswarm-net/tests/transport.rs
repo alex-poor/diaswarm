@@ -208,3 +208,65 @@ async fn a_relaying_peer_cannot_read_what_it_carries() {
     assert!(!vault.segments().unwrap().is_empty(), "it is carrying something, though");
     phone.shutdown().await.ok();
 }
+
+/// THE FIELD FAILURE, END TO END OVER THE WIRE.
+///
+/// A subject grants a follower, and then simply keeps looping. No further
+/// grant is ever made, because in real use none ever is. Every test above
+/// granted after the sealing was finished, which made wrapping-at-grant-time
+/// sufficient by construction and hid this for the whole of the build.
+///
+/// What it looked like: the follower connected, fetched every segment, and
+/// opened none of them. 123 segments, 0 wraps, a reading that never changed
+/// and no error at any layer to say why.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_follower_keeps_reading_days_sealed_after_the_grant() {
+    let served = tmp("later-days");
+    let subject = Identity::generate();
+    let partner = Identity::generate();
+
+    let store = Store::open(&served).unwrap();
+    let dir = store.path_for(&subject.enc_public());
+    std::fs::create_dir_all(&dir).unwrap();
+    let vault = Vault::create(&dir, &subject, OFFSET).unwrap();
+
+    // Day one, then the grant — the order a person actually does it in.
+    vault.seal(20_500, &day(20_500, 100.0)).unwrap();
+    vault.record_grant(&subject, &partner.enc_public(), "follow", "grant", 0).unwrap();
+    vault.publish_wraps(&subject, &partner.enc_public(), "follow").unwrap();
+
+    // Then the days after, with nobody granting anything.
+    for i in 1..4 {
+        vault.seal(20_500 + i, &day(20_500 + i, 100.0 + i as f64)).unwrap();
+    }
+
+    let router = serve_with(served.clone(), SecretKey::generate(), true).await.unwrap();
+    let addr = router.endpoint().addr();
+
+    let into = tmp("follower");
+    let (_segments, wraps) = fetch_with(
+        addr,
+        &hex(&subject.enc_public()),
+        // As a reader, not a precomputed tag: this is the path the follower
+        // CLI takes, so it is the path that has to be exercised.
+        Who::Reader {
+            identity: Identity::from_bytes(&partner.to_bytes()),
+            purpose: "follow".into(),
+        },
+        &into,
+        true,
+    )
+    .await
+    .expect("fetch");
+
+    assert_eq!(wraps, 4, "every sealed day must arrive wrapped, not just the granted one");
+
+    let fetched = Vault::open(&into).unwrap();
+    let opened = fetched.read_as(&partner, "follow").unwrap();
+    assert_eq!(
+        opened.keys().copied().collect::<Vec<_>>(),
+        vec![20_500, 20_501, 20_502, 20_503],
+        "a follower must keep reading after the day they were granted on"
+    );
+    router.shutdown().await.unwrap();
+}

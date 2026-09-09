@@ -35,3 +35,7 @@ local.properties
 /crates/*/target/
 /crates/*/jniLibs/
 /plugin/src/main/jniLibs/
+
+# Gradle output for the AAPS module. Root-only `/build/` missed this, so
+# every build committed 764 files including two ~20 MB .so binaries.
+/plugin/build/

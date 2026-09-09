@@ -81,7 +81,10 @@ class SwarmPlugin @Inject constructor(
 
     override fun onStart() {
         super.onStart()
-        if (isEnabled()) startServing()
+        if (isEnabled()) {
+            repairWraps()
+            startServing()
+        }
         disposable += rxBus.toObservable(EventNewBG::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({ if (isEnabled()) enqueue() }, fabricPrivacy::logException)
@@ -94,6 +97,31 @@ class SwarmPlugin @Inject constructor(
         disposable.clear()
         stopServing()
         super.onStop()
+    }
+
+    /**
+     * Catch up any wraps a granted reader is owed but does not have.
+     *
+     * Sealing keeps these current, so this normally writes nothing. It is here
+     * because an earlier build wrapped only at the moment a grant was made, so
+     * every segment sealed afterwards — one per day, plus one per rotation —
+     * reached the reader as bytes they could not open. Nothing reported it:
+     * the follower kept syncing and kept showing the same stale reading.
+     *
+     * A vault granted by that build has no record of whose key it was (the
+     * grant log names nobody, by design), so this cannot repair those on its
+     * own; re-applying the grant with the reader's key does, and no longer
+     * appends to the log when the grant already stands.
+     */
+    private fun repairWraps() {
+        SwarmNative.check()
+        val vault = SwarmPaths.vault(context, this::class.java)
+        if (!java.io.File(vault, "meta.json").exists()) return
+        when (val n = SwarmNative.vaultRewrap(vault.absolutePath)) {
+            0L -> Unit
+            in 1..Long.MAX_VALUE -> aapsLogger.info(LTag.CORE, "swarm: wrapped $n segments readers were owed")
+            else -> aapsLogger.warn(LTag.CORE, "swarm: could not bring wraps up to date ($n)")
+        }
     }
 
     /**

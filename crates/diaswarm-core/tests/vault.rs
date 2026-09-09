@@ -379,3 +379,143 @@ fn a_reader_does_not_see_a_record_twice_when_segments_overlap() {
         .collect();
     assert_eq!(values, vec![100.0, 101.0], "overlapping segments were double-counted");
 }
+
+/// A GRANT MUST KEEP WORKING TOMORROW.
+///
+/// The bug this pins: wrapping happened only when a grant was made, so a
+/// reader received the segments that existed at that instant and nothing
+/// after. Sealing carries on cutting a segment per epoch, and every one of
+/// them was unopenable — the reader kept syncing, kept receiving bytes, and
+/// kept reporting the same stale reading with no error anywhere. Seen in the
+/// field as 123 segments fetched and 0 wraps.
+///
+/// Every earlier test granted after all the sealing was done, which made the
+/// grant-time wrap sufficient by construction. That ordering is the whole
+/// test: grant FIRST, seal AFTER.
+#[test]
+fn a_grant_covers_segments_sealed_after_it() {
+    let dir = tempdir::TempDir::new("later").unwrap();
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject, OFFSET).unwrap();
+
+    // Day one exists, and the reader is granted while that is all there is.
+    let base: i64 = 20_100;
+    vault.seal(base, &day(base, 5.0)).unwrap();
+    vault.record_grant(&subject, &reader.enc_public(), "follow", "grant", 0).unwrap();
+    vault.publish_wraps(&subject, &reader.enc_public(), "follow").unwrap();
+
+    // Then the days that made the bug: nothing further is granted, because in
+    // real use nothing further is. The subject simply keeps looping.
+    for i in 1..5 {
+        vault.seal(base + i, &day(base + i, 5.0 + i as f64)).unwrap();
+    }
+
+    let read = vault.read_as(&reader, "follow").unwrap();
+    let epochs: Vec<i64> = read.keys().copied().collect();
+    assert_eq!(
+        epochs,
+        (0..5).map(|i| base + i).collect::<Vec<_>>(),
+        "a reader granted on day one must be able to open days two onward; \
+         got only {epochs:?}"
+    );
+}
+
+/// The same thing through a rotation rather than an epoch boundary.
+///
+/// Revoking one reader rotates the vault, which cuts a fresh segment inside
+/// the SAME epoch. Everyone still granted has to be wrapped for it, or a
+/// reader loses the rest of the day whenever some unrelated reader is
+/// withdrawn — a revocation that silently revokes more than it names.
+#[test]
+fn rotating_for_one_reader_does_not_cut_off_another() {
+    let dir = tempdir::TempDir::new("rot").unwrap();
+    let subject = Identity::generate();
+    let staying = Identity::generate();
+    let leaving = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject, OFFSET).unwrap();
+
+    let epoch: i64 = 20_200;
+    vault.record_grant(&subject, &staying.enc_public(), "follow", "grant", 0).unwrap();
+    vault.record_grant(&subject, &leaving.enc_public(), "follow", "grant", 0).unwrap();
+    vault.seal(epoch, &day(epoch, 5.0)).unwrap();
+
+    vault.revoke(&subject, &leaving.enc_public(), "follow").unwrap();
+
+    // Later in the same day, into the segment the rotation cut.
+    let later = vec![
+        Record::new(epoch * EPOCH_MS + 7_200_000, "cgm").set("mgdl", Some(9.0.into()))
+    ];
+    vault.seal(epoch, &later).unwrap();
+
+    let stayed = vault.read_as(&staying, "follow").unwrap();
+    assert_eq!(
+        stayed.get(&epoch).map(|r| r.len()),
+        Some(2),
+        "a reader who was not revoked must still get the rest of the day"
+    );
+    let left = vault.read_as(&leaving, "follow").unwrap();
+    assert_eq!(
+        left.get(&epoch).map(|r| r.len()),
+        Some(1),
+        "the revoked reader keeps what they had and gets nothing after"
+    );
+}
+
+/// Re-stating a grant that already stands must not grow the log.
+///
+/// It has to stay re-runnable, because re-granting is how a subject repairs a
+/// vault whose wraps went missing; a hash-chained log that gained a line every
+/// time someone toggled a setting would make the real history unreadable.
+#[test]
+fn re_granting_is_idempotent_but_still_repairs() {
+    let dir = tempdir::TempDir::new("idem").unwrap();
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject, OFFSET).unwrap();
+
+    let epoch: i64 = 20_300;
+    vault.seal(epoch, &day(epoch, 5.0)).unwrap();
+    vault.record_grant(&subject, &reader.enc_public(), "follow", "grant", 0).unwrap();
+    vault.publish_wraps(&subject, &reader.enc_public(), "follow").unwrap();
+    assert_eq!(vault.grants().unwrap().len(), 1);
+
+    // Delete the wraps, the way the field failure left them, and re-grant.
+    std::fs::remove_dir_all(dir.path().join("wraps")).unwrap();
+    assert!(vault.read_as(&reader, "follow").unwrap().is_empty());
+
+    vault.record_grant(&subject, &reader.enc_public(), "follow", "grant", 0).unwrap();
+    let repaired = vault.publish_wraps(&subject, &reader.enc_public(), "follow").unwrap();
+    assert_eq!(repaired, 1, "re-granting must re-issue the missing wrap");
+    assert_eq!(vault.grants().unwrap().len(), 1, "and must not append to the log");
+    assert!(!vault.read_as(&reader, "follow").unwrap().is_empty());
+}
+
+/// The subject's book of readers must not be something a peer can ask for.
+///
+/// It is the mapping the grant log deliberately does not contain (D13). A
+/// vault is copied wholesale by design, so the check that matters is that the
+/// book is not part of what a copy carries.
+#[test]
+fn the_reader_book_is_not_served() {
+    let dir = tempdir::TempDir::new("book").unwrap();
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject, OFFSET).unwrap();
+    vault.record_grant(&subject, &reader.enc_public(), "follow", "grant", 0).unwrap();
+
+    let book = dir.path().join("readers.json");
+    assert!(book.exists(), "the subject must remember who they granted to");
+    let text = std::fs::read_to_string(&book).unwrap();
+    assert!(
+        text.contains(&diaswarm_core::vault::hex(&reader.enc_public())),
+        "the book has to hold the actual key, or it cannot wrap"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&book).unwrap().permissions().mode();
+        assert_eq!(mode & 0o077, 0, "the book must not be group- or world-readable");
+    }
+}

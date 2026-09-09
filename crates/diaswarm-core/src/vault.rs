@@ -13,7 +13,16 @@
 //!   segments/<seq>.<epoch>.key     that key — the subject's copy, never shared
 //!   wraps/<seq>/<reader>.wrap      that key, wrapped to one reader
 //!   grants.ndjson                  signed: granted what, from which segment
+//!   readers.json                   the subject's private book: tag -> reader key
 //! ```
+//!
+//! **`readers.json` NEVER LEAVES.** It is the one file here that would undo
+//! D13: the grant log names nobody precisely so that a holder learns nothing
+//! about who reads, and this book is the mapping back. Nothing in
+//! `diaswarm-net` serves it — a manifest lists segments, and every other
+//! request names a specific file — and a replica of a vault does not contain
+//! it. It exists because a grant made today has to keep wrapping tomorrow's
+//! segments, and wrapping needs the reader's public key.
 //!
 //! **A SEGMENT, NOT A DAY, IS THE UNIT OF KEY CUSTODY.** An epoch is still how
 //! access is scoped and addressed — grants think in days — but a day can hold
@@ -204,6 +213,48 @@ pub fn unhex(s: &str) -> Result<Vec<u8>, VaultError> {
         .collect()
 }
 
+/// What a rewrap pass did.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Rewrap {
+    /// Wraps written that were missing.
+    pub written: usize,
+    /// Segments a reader is entitled to whose key could not be read. Any of
+    /// these means the vault has lost data — that segment opens for nobody.
+    pub unwrappable: usize,
+}
+
+/// Which segments a tag is entitled to: the latest statement at or before a
+/// segment decides it, and only a grant makes it live.
+fn live_segments(grants: &[Grant], segments: &[SegmentId], tag: &str) -> BTreeSet<u64> {
+    let mut mine: Vec<&Grant> = grants.iter().filter(|g| g.tag == tag).collect();
+    mine.sort_by_key(|g| g.segment);
+
+    let mut live = BTreeSet::new();
+    for seg in segments {
+        let mut state: Option<&str> = None;
+        for g in &mine {
+            if g.segment <= seg.seq {
+                state = Some(&g.act);
+            }
+        }
+        if state == Some("grant") {
+            live.insert(seg.seq);
+        }
+    }
+    live
+}
+
+/// One remembered reader: the tag they are filed under and the key to wrap to.
+///
+/// The purpose is kept only so a subject can be told who is who; the tag is
+/// what everything else is keyed by, and it already fixes the purpose.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnownReader {
+    pub tag: String,
+    pub reader: String,
+    pub purpose: String,
+}
+
 pub struct Vault {
     root: PathBuf,
     subject_pub: [u8; 32],
@@ -354,12 +405,35 @@ impl Vault {
             .cloned()
             .collect();
         if addition.is_empty() && !existing_was_empty(&plaintext) {
+            // Nothing new to seal, but the wraps may still be behind — this is
+            // the path a repair takes when a sync finds no fresh records.
+            self.rewrap()?;
             return Ok(seg);
         }
         plaintext.extend_from_slice(encode_records(&addition).as_bytes());
 
         let sealed = seal_epoch(&plaintext, &key, epoch, &self.subject_pub);
         fs::write(&path, sealed)?;
+
+        // WRAP THE SEGMENT FOR EVERYONE ENTITLED TO IT, HERE, EVERY TIME.
+        //
+        // Wrapping used to happen only when a grant was made, so a reader
+        // received exactly the segments that existed at that instant and
+        // nothing after. A new segment is cut at every epoch boundary, so a
+        // follower granted today silently stopped receiving data tomorrow:
+        // segments kept arriving, none of them openable, and no error anywhere
+        // to say so. Observed in the field as 123 segments fetched, 0 wraps.
+        //
+        // AFTER the write, not before: a segment is discovered by its `.seal`
+        // file, so a brand-new one is invisible to `segments()` until this
+        // point. Calling it earlier wrapped every segment except the one just
+        // created — which is the same failure one day late, and is exactly
+        // what the first version of this fix did.
+        //
+        // This is the only place segments come into existence (`rotate` merely
+        // empties the open map; the next seal cuts the new ones), which is
+        // what makes "entitled to" and "has a wrap for" the same set.
+        self.rewrap()?;
         Ok(seg)
     }
 
@@ -384,7 +458,26 @@ impl Vault {
         segment: u64,
     ) -> Result<String, VaultError> {
         let tag = hex(&grant_tag(&subject.encryption, reader_pub, purpose));
+
+        // The subject's private note of who this tag is, so segments cut after
+        // today can still be wrapped for them. Written for a withdrawal too:
+        // `entitled` is what decides whether anything gets wrapped, so keeping
+        // the key costs nothing and lets a later re-grant work.
+        self.remember_reader(&tag, reader_pub, purpose)?;
+
         let existing = self.grants()?;
+
+        // IDEMPOTENT. Re-stating a grant that already stands appends nothing.
+        // The log is hash-chained and permanent, so a settings toggle applied
+        // twice — or a grant re-issued to repair missing wraps — would
+        // otherwise grow it with lines that say nothing new. The wrapping below
+        // still runs, which is what makes re-granting a usable repair.
+        if let Some(last) = existing.iter().filter(|g| g.tag == tag).next_back() {
+            if last.act == act && last.segment == segment {
+                return Ok(tag);
+            }
+        }
+
         let seq = existing.len() as u64;
         let prev = match existing.last() {
             Some(last) => chain_hash(&grant_payload(
@@ -499,29 +592,112 @@ impl Vault {
     /// Entitlement is a property of the signed log, not of anything a server
     /// decides.
     pub fn entitled(&self, tag: &str) -> Result<BTreeSet<u64>, VaultError> {
-        let mut mine: Vec<Grant> = self
-            .grants()?
-            .into_iter()
-            .filter(|g| g.tag == tag)
-            .collect();
-        mine.sort_by_key(|g| g.segment);
-
-        let mut live = BTreeSet::new();
-        for seg in self.segments()? {
-            let mut state: Option<&str> = None;
-            for g in &mine {
-                if g.segment <= seg.seq {
-                    state = Some(&g.act);
-                }
-            }
-            if state == Some("grant") {
-                live.insert(seg.seq);
-            }
-        }
-        Ok(live)
+        Ok(live_segments(&self.grants()?, &self.segments()?, tag))
     }
 
-    /// Wrap every segment this reader is entitled to and has not been sent.
+    /// The subject's private book of who reads. Empty if there is none.
+    pub fn readers(&self) -> Result<Vec<KnownReader>, VaultError> {
+        let path = self.root.join("readers.json");
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        serde_json::from_slice(&fs::read(path)?).map_err(|e| VaultError::Malformed(e.to_string()))
+    }
+
+    /// Note a reader's key against their tag, so later segments can be wrapped.
+    ///
+    /// An upsert keyed by tag, and the tag already fixes the purpose, so
+    /// re-granting the same reader the same thing rewrites one entry rather
+    /// than accumulating them.
+    pub fn remember_reader(
+        &self,
+        tag: &str,
+        reader_pub: &[u8; 32],
+        purpose: &str,
+    ) -> Result<(), VaultError> {
+        let mut book = self.readers()?;
+        let entry = KnownReader {
+            tag: tag.to_string(),
+            reader: hex(reader_pub),
+            purpose: purpose.to_string(),
+        };
+        match book.iter_mut().find(|k| k.tag == tag) {
+            Some(slot) => *slot = entry,
+            None => book.push(entry),
+        }
+        let path = self.root.join("readers.json");
+        fs::write(&path, serde_json::to_vec_pretty(&book).unwrap())?;
+        // The book is the one file here that undoes D13's unlinkability, so it
+        // is not left readable the way a sealed segment safely is.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    }
+
+    /// Bring every remembered reader's wraps up to date with the segments.
+    ///
+    /// Needs no identity: a wrap is made with an ephemeral key against the
+    /// reader's public one, so the subject's secret is not involved. That is
+    /// what lets [`Vault::seal`] call this on every write.
+    pub fn rewrap(&self) -> Result<Rewrap, VaultError> {
+        let book = self.readers()?;
+        if book.is_empty() {
+            return Ok(Rewrap::default());
+        }
+        let segments = self.segments()?;
+        let grants = self.grants()?;
+        let mut total = Rewrap::default();
+        for known in &book {
+            let Ok(bytes) = unhex(&known.reader) else { continue };
+            let Ok(reader_pub) = <[u8; 32]>::try_from(bytes.as_slice()) else { continue };
+            let one = self.wrap_for(&known.tag, &reader_pub, &grants, &segments)?;
+            total.written += one.written;
+            total.unwrappable += one.unwrappable;
+        }
+        Ok(total)
+    }
+
+    /// Wrap every segment one tag is entitled to and has not been given.
+    fn wrap_for(
+        &self,
+        tag: &str,
+        reader_pub: &[u8; 32],
+        grants: &[Grant],
+        segments: &[SegmentId],
+    ) -> Result<Rewrap, VaultError> {
+        let live = live_segments(grants, segments, tag);
+        let mut out = Rewrap::default();
+        for seg in segments {
+            if !live.contains(&seg.seq) {
+                continue;
+            }
+            let dir = self.root.join("wraps").join(seg.seq.to_string());
+            let path = dir.join(format!("{tag}.wrap"));
+            if path.exists() {
+                continue; // a wrap is not re-issued
+            }
+            // A SEGMENT WHOSE KEY IS GONE IS SKIPPED, NOT FATAL. Without its
+            // key that segment is unreadable by everyone, the subject included
+            // — the loss already happened, and refusing to seal from now on
+            // would turn one lost day into every future one. Counted, so a
+            // caller can say so rather than quietly wrapping less than it
+            // claimed.
+            let Ok(key) = self.segment_key(seg) else {
+                out.unwrappable += 1;
+                continue;
+            };
+            fs::create_dir_all(&dir)?;
+            fs::write(path, wrap(&key, seg.epoch, reader_pub))?;
+            out.written += 1;
+        }
+        Ok(out)
+    }
+
+    /// Wrap every segment this reader is entitled to and has not been sent,
+    /// remembering them so that later segments are wrapped too.
     pub fn publish_wraps(
         &self,
         subject: &Identity,
@@ -531,23 +707,9 @@ impl Vault {
         // The wrap FILENAME used to be the reader's public key, which leaked
         // exactly what the grant log stopped leaking. Same tag, same reasoning.
         let tag = hex(&grant_tag(&subject.encryption, reader_pub, purpose));
-        let entitled = self.entitled(&tag)?;
-        let mut written = 0;
-        for seg in self.segments()? {
-            if !entitled.contains(&seg.seq) {
-                continue;
-            }
-            let dir = self.root.join("wraps").join(seg.seq.to_string());
-            fs::create_dir_all(&dir)?;
-            let path = dir.join(format!("{tag}.wrap"));
-            if path.exists() {
-                continue; // a wrap is not re-issued
-            }
-            let key = self.segment_key(&seg)?;
-            fs::write(path, wrap(&key, seg.epoch, reader_pub))?;
-            written += 1;
-        }
-        Ok(written)
+        self.remember_reader(&tag, reader_pub, purpose)?;
+        let out = self.wrap_for(&tag, reader_pub, &self.grants()?, &self.segments()?)?;
+        Ok(out.written)
     }
 
     /// Everything a reader can actually open, grouped by epoch.

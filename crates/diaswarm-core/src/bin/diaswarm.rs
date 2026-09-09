@@ -53,8 +53,17 @@ fn usage() -> ExitCode {
       holds, and nothing here pretends to.
 
   diaswarm pub  <identity-file>          the public key to hand someone
+  diaswarm tag  <identity-file> <other-pub-hex> <purpose>
+      The name this pair uses inside a vault: the grant log records it and
+      the wrap files are called after it. Either side derives it — subject
+      with reader's public key, or reader with subject's. When a reader
+      fetches segments but opens nothing, compare this against the log.
   diaswarm read <vault> <identity-file> [purpose]   what this reader can open
   diaswarm log  <vault> <subject-identity>   every grant and withdrawal, verified
+  diaswarm rewrap <vault>
+      Wrap every segment each granted reader is entitled to and has not been
+      given. Sealing does this already; run it to repair a vault written
+      before that was true, or one whose wraps were lost.
 "#
     );
     ExitCode::from(2)
@@ -66,47 +75,6 @@ fn load(path: &Path) -> Result<Identity, String> {
         .try_into()
         .map_err(|_| format!("{}: not a 64-byte identity", path.display()))?;
     Ok(Identity::from_bytes(&bytes))
-}
-
-/// A private note of which tag is whom.
-///
-/// THIS FILE MUST NOT BE PUBLISHED. It is the mapping the tags exist to keep
-/// out of the vault, so it lives beside the subject's identity rather than
-/// inside the directory that gets copied. Without it the subject can still see
-/// their own grant log; they just cannot put names to it, which is the correct
-/// trade — the vault should not be able to.
-fn book_path(identity: &Path) -> PathBuf {
-    identity.with_extension("readers.json")
-}
-
-fn read_book(identity: &Path) -> Vec<(String, String)> {
-    let Ok(text) = fs::read_to_string(book_path(identity)) else { return Vec::new() };
-    text.lines()
-        .filter_map(|l| l.split_once('\t'))
-        .map(|(t, w)| (t.to_string(), w.to_string()))
-        .collect()
-}
-
-fn note_reader(
-    identity: &Path,
-    _vault: &Vault,
-    subject: &Identity,
-    reader_pub: &[u8; 32],
-    purpose: &str,
-    _act: &str,
-) -> Result<(), String> {
-    let tag = hex(&grant_tag(&subject.encryption, reader_pub, purpose));
-    if read_book(identity).iter().any(|(t, _)| *t == tag) {
-        return Ok(());
-    }
-    use std::io::Write;
-    let mut f = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(book_path(identity))
-        .map_err(|e| e.to_string())?;
-    writeln!(f, "{tag}\t{}… for {purpose}", &hex(reader_pub)[..16]).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 fn reader_pub(arg: &str) -> Result<[u8; 32], String> {
@@ -140,6 +108,21 @@ fn run() -> Result<(), String> {
         "pub" => {
             let id = load(Path::new(arg(1)?))?;
             out!("{}", hex(&id.enc_public()));
+        }
+
+        // The tag is the only name a reader has inside a vault: it is what
+        // grants are recorded under and what wrap files are called. When a
+        // reader fetches and opens nothing, the question is always "is the tag
+        // I derive the tag the subject filed under?" — and until this existed
+        // there was no way to ask it without reading the source.
+        //
+        // Derivable from either side: the subject's identity plus the reader's
+        // public key, or the reader's identity plus the subject's public key.
+        // Both produce the same 32 bytes; that is the point of the ECDH.
+        "tag" => {
+            let id = load(Path::new(arg(1)?))?;
+            let other = reader_pub(arg(2)?)?;
+            out!("{}", hex(&grant_tag(&id.encryption, &other, arg(3)?)));
         }
 
         "init" => {
@@ -184,7 +167,6 @@ fn run() -> Result<(), String> {
                 let from = vault
                     .revoke(&subject, &reader, purpose)
                     .map_err(|e| format!("{e:?}"))?;
-                note_reader(Path::new(arg(2)?), &vault, &subject, &reader, purpose, "stop")?;
                 out!("  stop     {} for {purpose}, from segment {from}", &arg(3)?[..16]);
                 out!("           immediate — the current segment was closed first");
                 return Ok(());
@@ -219,12 +201,37 @@ fn run() -> Result<(), String> {
             vault
                 .record_grant(&subject, &reader, purpose, "grant", at)
                 .map_err(|e| format!("{e:?}"))?;
-            note_reader(Path::new(arg(2)?), &vault, &subject, &reader, purpose, "grant")?;
             let n = vault
                 .publish_wraps(&subject, &reader, purpose)
                 .map_err(|e| format!("{e:?}"))?;
             out!("  grant    {} for {purpose} from segment {at}", &arg(3)?[..16]);
             out!("  wraps    {n} written");
+        }
+
+        // Repair, and the answer to "the reader says they can see nothing".
+        //
+        // Sealing keeps wraps current by itself, so this is only needed for a
+        // vault written before it did — or one whose wraps were lost. It reads
+        // the subject's private book, so it can only be run where that lives.
+        "rewrap" => {
+            let vault = Vault::open(Path::new(arg(1)?)).map_err(|e| format!("{e:?}"))?;
+            let book = vault.readers().map_err(|e| format!("{e:?}"))?;
+            if book.is_empty() {
+                out!("  readers  none remembered — nothing to wrap for.");
+                out!("           A grant made by an older build left no record of");
+                out!("           whose key it was; re-run `grant` with the reader's");
+                out!("           public key. The log will not gain a line for it.");
+                return Ok(());
+            }
+            let done = vault.rewrap().map_err(|e| format!("{e:?}"))?;
+            for k in &book {
+                out!("  reader   {}… for {}", &k.reader[..16], k.purpose);
+            }
+            out!("  wraps    {} written", done.written);
+            if done.unwrappable > 0 {
+                out!("  LOST     {} segments have no key and open for nobody,", done.unwrappable);
+                out!("           including you. Nothing can recover those.");
+            }
         }
 
         "read" => {
@@ -264,16 +271,19 @@ fn run() -> Result<(), String> {
         "log" => {
             let vault = Vault::open(Path::new(arg(1)?)).map_err(|e| format!("{e:?}"))?;
             let subject = load(Path::new(arg(2)?))?;
-            // The log itself names nobody. The book is private and local, and
-            // is the only thing that can put a name to a tag.
-            let book = read_book(Path::new(arg(2)?));
+            // The log itself names nobody. The subject's book does, and it
+            // lives inside the vault but is never served — the same file
+            // sealing uses to keep wraps current, so there is one record of
+            // who reads rather than two that can disagree. The earlier version
+            // kept a second book beside the identity holding only the first 16
+            // hex of each key, which was enough to print a label and not
+            // enough to wrap anything.
+            let book = vault.readers().map_err(|e| format!("{e:?}"))?;
             for g in vault.grants().map_err(|e| format!("{e:?}"))? {
                 let ok = Vault::verify(&g, &subject.verifying());
-                let who = book
-                    .iter()
-                    .find(|(t, _)| *t == g.tag)
-                    .map(|(_, w)| w.as_str())
-                    .unwrap_or("(unknown — not in this machine's book)");
+                let known = book.iter().find(|k| k.tag == g.tag);
+                let label = known.map(|k| format!("{}… for {}", &k.reader[..16], k.purpose));
+                let who = label.as_deref().unwrap_or("(unknown — not in this vault's book)");
                 out!(
                     "  {}  {:<6} from segment {:>4}  tag {}  {}",
                     if ok { "signed " } else { "BAD SIG" },

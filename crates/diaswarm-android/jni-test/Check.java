@@ -95,6 +95,21 @@ public class Check {
         check("a bad reader key is refused with a code",
               SwarmNative.vaultGrant(vault, ident, "nothex", "follow") == -1, "not refused");
 
+        // A GRANT MUST STILL COVER WHAT IS SEALED TOMORROW.
+        //
+        // The check above passes whether or not that is true, because it grants
+        // and then stops. That is what let a build ship where wrapping happened
+        // only at grant time: the phone kept sealing a segment a day, none of
+        // them wrapped, and the follower opened nothing. Sealing a fresh epoch
+        // AFTER the grant is the whole point of this case.
+        check("sealing after a grant wraps the new segment too",
+              SwarmNative.vaultSeal(vault, ident, 2L, 0L, day) >= 0, "seal failed");
+        check("so a healthy vault has nothing left to repair",
+              SwarmNative.vaultRewrap(vault) == 0,
+              "rewrap wrote " + SwarmNative.vaultRewrap(vault) + ", so sealing had not");
+        check("and rewrap reports a bad path rather than throwing",
+              SwarmNative.vaultRewrap("/proc/nonexistent") < 0, "did not fail");
+
         long from = SwarmNative.vaultRevoke(vault, ident, reader, "follow");
         check("a withdrawal returns the segment it starts at", from >= 0, "returned " + from);
 

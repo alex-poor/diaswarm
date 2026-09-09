@@ -98,6 +98,17 @@ object SwarmNative {
      * Grant a reader everything, and publish their wraps. Returns wraps written,
      * or a negative code.
      */
+    /**
+     * Bring every granted reader's wraps up to date; returns how many were
+     * written, or a negative code.
+     *
+     * Sealing keeps them current by itself, so on a healthy vault this is 0.
+     * It is here for the vault that is not: one written by a build that wrapped
+     * only at grant time, leaving followers with segments they cannot open and
+     * nothing anywhere saying so.
+     */
+    external fun vaultRewrap(vaultPath: String): Long
+
     external fun vaultGrant(
         vaultPath: String,
         identityPath: String,

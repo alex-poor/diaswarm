@@ -199,9 +199,15 @@ pub async fn fetch_with(
         fetched += 1;
     }
 
-    let wraps: Vec<WrapBlob> =
-        serde_json::from_slice(&ask(&conn, &Request::Wraps { subject: subject.to_string(), tag: tag.clone() }).await?)
-            .unwrap_or_default();
+    // NOT `unwrap_or_default()`. A peer that fails to answer this replies with
+    // nothing, and nothing is not valid JSON — so swallowing the parse error
+    // reported "0 wraps" for a request the other end had refused. That is the
+    // ALPN mistake again in a different place: a broken exchange presented as
+    // a true and boring answer. An empty list is `[]` and still parses, so the
+    // two states stay distinguishable.
+    let reply = ask(&conn, &Request::Wraps { subject: subject.to_string(), tag: tag.clone() }).await?;
+    let wraps: Vec<WrapBlob> = serde_json::from_slice(&reply)
+        .with_context(|| format!("the peer did not answer for wraps ({} bytes)", reply.len()))?;
     let opened = wraps.len();
     for w in wraps {
         install_wrap(into, w.seq, &tag, &w.bytes)?;

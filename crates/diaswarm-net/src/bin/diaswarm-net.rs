@@ -170,6 +170,17 @@ async fn main() -> ExitCode {
             {
                 Ok((segments, wraps)) => {
                     println!("  fetched      {segments} segments, {wraps} wraps for {purpose}");
+                    // SEGMENTS BUT NO WRAPS IS ITS OWN FAILURE, and it used to
+                    // print as an unremarkable pair of numbers followed by an
+                    // empty reading. It means the bytes arrived and none of
+                    // them are for you: either nothing was granted, or the
+                    // subject granted and then never wrapped what it sealed
+                    // afterwards.
+                    if segments > 0 && wraps == 0 {
+                        println!(
+                            "  NOTHING FOR YOU  the history is here but none of it is wrapped\n                             \x20              for this key and purpose ({purpose}). Check the\n                             \x20              subject granted THIS key, and that their vault\n                             \x20              has sealed anything since."
+                        );
+                    }
                     match Vault::open(&dir) {
                         Ok(vault) => {
                             let me = load_identity(Path::new(ident)).unwrap();
