@@ -181,16 +181,43 @@ async fn fetch_inner(
     announce: bool,
 ) -> Result<(usize, usize)> {
     let conn = endpoint.connect(addr, ALPN).await.context("connect")?;
+    let out = fetch_over_inner(&conn, subject, into, announce, Some(endpoint)).await;
+    conn.close(0u32.into(), b"done");
+    return out;
+}
+
+/// Fetch over a connection somebody else opened.
+///
+/// Split out so the pool can use it: p2panda dials by node id and hands back a
+/// connection, and everything after that is the protocol this crate already
+/// spoke. The wire did not need to change to join a swarm — only the way peers
+/// find each other did.
+pub async fn fetch_over(
+    conn: &Connection,
+    subject: &str,
+    into: &Path,
+) -> Result<(usize, usize)> {
+    fetch_over_inner(conn, subject, into, false, None).await
+}
+
+async fn fetch_over_inner(
+    conn: &Connection,
+    subject: &str,
+    into: &Path,
+    announce: bool,
+    endpoint: Option<&Endpoint>,
+) -> Result<(usize, usize)> {
+    let _ = endpoint;
 
     // SAY WHO WE ARE BEFORE ASKING FOR ANYTHING. This peer is about to hold a
     // copy of the subject, so the far side should be able to send later
     // followers here. Best effort: a peer that will not listen is still worth
     // fetching from.
-    if announce {
+    if let (true, Some(ep)) = (announce, endpoint) {
         // Local addresses only. A public one is a home address, it is
         // resolvable through discovery anyway, and it would be handed to
         // anyone who asks who holds this subject.
-        let mine: Vec<String> = endpoint
+        let mine: Vec<String> = ep
             .addr()
             .ip_addrs()
             .filter(|a| crate::is_local_address(a))
@@ -257,7 +284,6 @@ async fn fetch_inner(
         }
     }
 
-    conn.close(0u32.into(), b"done");
     Ok((fetched, installed))
 }
 

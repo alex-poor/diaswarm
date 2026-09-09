@@ -30,6 +30,7 @@
 
 pub mod peer;
 pub mod pool;
+pub mod swarm;
 pub mod wire;
 
 use std::path::{Path, PathBuf};

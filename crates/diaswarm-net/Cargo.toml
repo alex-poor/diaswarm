@@ -12,6 +12,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "fs
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+# D2a: the moment two devices must sync, p2panda-net over iroh is the answer.
+p2panda-net = "=0.7.1"
+p2panda-core = "=0.7.1"
+futures-util = "0.3"
 anyhow = "1"
 
 [dev-dependencies]

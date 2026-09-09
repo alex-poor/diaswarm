@@ -1,0 +1,285 @@
+//! Being in the pool: find peers, work out your share, hold it.
+//!
+//! WHAT CHANGED, AND WHY IT IS SMALLER THAN IT LOOKS. `wire.rs` moves a vault
+//! between two peers who already know about each other. It has no way to meet
+//! anybody, so the pool it serves is whoever you handed an invite to. This
+//! module supplies the missing half — membership — using p2panda-net, which
+//! D2a said to use the moment two devices had to sync and which was then
+//! reimplemented badly three times.
+//!
+//! **The vault protocol is untouched.** p2panda's `Endpoint` takes a protocol
+//! handler and dials by node id, so [`crate::wire::VaultServer`] registers on
+//! p2panda's endpoint and answers exactly the requests it always did. What goes
+//! away is everything that was about *finding* peers: the holder list, the
+//! address announcements, the public-address filter, `parse_upstream`. All of
+//! it is p2panda's job and it does it properly.
+//!
+//! HOW A PEER DECIDES WHAT TO HOLD:
+//!
+//!   1. Join the presence topic. Everyone with swarm on is there; it carries no
+//!      data and exists only to be somewhere to count.
+//!   2. Pool size decides how finely the subject space is cut ([`pool`]) and
+//!      which buckets are yours.
+//!   3. Join those bucket topics. Announce the subjects you hold on them, and
+//!      hear about the ones you should.
+//!   4. Fetch what you should hold and do not have.
+//!
+//! Nobody asks you to hold anything and you are not holding it for anyone in
+//! particular. **Holding is not reading**: a peer carries ciphertext for people
+//! it has never met and cannot open a byte of it.
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use anyhow::{Context, Result};
+use futures_util::StreamExt;
+use p2panda_core::{Hash, Topic};
+use p2panda_net::iroh_mdns::MdnsDiscoveryMode;
+use p2panda_net::{AddressBook, Discovery, Endpoint, Gossip, MdnsDiscovery};
+use serde::{Deserialize, Serialize};
+
+use crate::pool;
+use crate::wire::VaultServer;
+use crate::ALPN;
+
+fn now_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// What a peer says on a bucket topic.
+///
+/// Only ever "these subjects exist and I have them". Not who reads them, not
+/// what is in them, and nothing a listener has to trust — a peer that lies
+/// about holding something is found out by the fetch failing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BucketMessage {
+    /// Subjects this peer holds that fall in this bucket.
+    Holding { subjects: Vec<String> },
+}
+
+/// A running member of the pool.
+pub struct Swarm {
+    store: PathBuf,
+    endpoint: Endpoint,
+    book: AddressBook,
+    gossip: Gossip,
+    /// Kept alive: dropping these stops discovery.
+    _discovery: Discovery,
+    _mdns: MdnsDiscovery,
+    _presence: p2panda_net::gossip::GossipHandle,
+    /// Bucket topics this peer has joined, kept for the life of the peer.
+    ///
+    /// **NOT RE-SUBSCRIBED EACH PASS.** Gossip is ephemeral: a message reaches
+    /// whoever is listening at the time and is gone. Subscribing, publishing
+    /// and then listening for a moment each pass means two peers only ever hear
+    /// each other if their windows happen to overlap — which, tested, they do
+    /// not. The subscription has to outlive the pass.
+    joined: Arc<Mutex<HashMap<u64, p2panda_net::gossip::GossipHandle>>>,
+    /// Subjects heard about on bucket topics, accumulated by listeners.
+    heard: Arc<Mutex<HashSet<String>>>,
+}
+
+impl Swarm {
+    /// Join the pool, and start answering for what we hold.
+    ///
+    /// The signing key is the phone's existing node key, so a peer keeps the
+    /// identity it already had — everything that ranks peers ranks them by it,
+    /// and a new key would look like a departure and an arrival.
+    pub async fn join(store: impl Into<PathBuf>, signing_key: p2panda_core::SigningKey) -> Result<Self> {
+        let store = store.into();
+        std::fs::create_dir_all(&store)?;
+
+        let book = AddressBook::builder().spawn().await.context("address book")?;
+        let endpoint = Endpoint::builder(book.clone())
+            .signing_key(signing_key)
+            .spawn()
+            .await
+            .context("endpoint")?;
+
+        // ACTIVE. Spawned without a mode it does nothing at all, and the
+        // symptom is two peers on the same wifi never seeing each other —
+        // indistinguishable from the network being broken.
+        let mdns = MdnsDiscovery::builder(book.clone(), endpoint.clone())
+            .mode(MdnsDiscoveryMode::Active)
+            .spawn()
+            .await
+            .context("mdns")?;
+        let discovery =
+            Discovery::builder(book.clone(), endpoint.clone()).spawn().await.context("discovery")?;
+        let gossip =
+            Gossip::builder(book.clone(), endpoint.clone()).spawn().await.context("gossip")?;
+
+        // The vault protocol, unchanged, on p2panda's endpoint.
+        endpoint
+            .accept(ALPN, VaultServer::new(store.clone()))
+            .await
+            .context("registering the vault protocol")?;
+
+        let presence = gossip.stream(topic(pool::presence_topic())).await.context("presence")?;
+
+        Ok(Swarm {
+            store,
+            endpoint,
+            book,
+            gossip,
+            _discovery: discovery,
+            _mdns: mdns,
+            _presence: presence,
+            joined: Arc::new(Mutex::new(HashMap::new())),
+            heard: Arc::new(Mutex::new(HashSet::new())),
+        })
+    }
+
+    pub async fn node_id(&self) -> Result<String> {
+        Ok(self.endpoint.endpoint().await?.id().to_string())
+    }
+
+    /// Everyone currently in the pool, this peer included.
+    ///
+    /// Read from the presence topic rather than remembered, because pool size
+    /// decides how much every peer carries and a stale count means everyone
+    /// quietly holding the wrong amount.
+    pub async fn pool_members(&self) -> Result<Vec<String>> {
+        let me = self.node_id().await?;
+        let mut ids: Vec<String> = self
+            .book
+            .node_infos_by_topics([topic(pool::presence_topic())])
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(|n| n.node_id.to_string())
+            .collect();
+        if !ids.contains(&me) {
+            ids.push(me);
+        }
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
+    }
+
+    /// One pass: work out our share, say what we hold, take on what we should.
+    ///
+    /// Everything is recomputed from the pool as it is now. That is what makes
+    /// the repair automatic — a peer that has gone is simply not in the list,
+    /// so the share widens and the gap closes without anyone noticing a loss.
+    pub async fn tick(&self) -> Result<TickReport> {
+        let me = self.node_id().await?;
+        let members = self.pool_members().await?;
+        let depth = pool::depth_for(members.len());
+        let mine = pool::my_buckets(&me, &members, depth, pool::REPLICAS);
+
+        let held = subjects_held(&self.store);
+        let mut announced = 0usize;
+
+        for bucket in &mine {
+            // Join once and stay joined; a listener runs for as long as the
+            // subscription does and collects whatever arrives whenever it does.
+            let handle = {
+                let existing = self.joined.lock().unwrap().get(bucket).cloned();
+                match existing {
+                    Some(h) => h,
+                    None => {
+                        let h =
+                            self.gossip.stream(topic(pool::bucket_topic(depth, *bucket))).await?;
+                        self.joined.lock().unwrap().insert(*bucket, h.clone());
+                        let heard = Arc::clone(&self.heard);
+                        let mut rx = h.subscribe();
+                        let b = *bucket;
+                        tokio::spawn(async move {
+                            while let Some(Ok(bytes)) = rx.next().await {
+                                if let Ok(BucketMessage::Holding { subjects }) =
+                                    serde_json::from_slice::<BucketMessage>(&bytes)
+                                {
+                                    let mut set = heard.lock().unwrap();
+                                    for s in subjects {
+                                        if is_subject(&s) && pool::bucket_of(&s, depth) == b {
+                                            set.insert(s);
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        h
+                    }
+                }
+            };
+
+            // Say what we have here, every pass — a peer that joined since the
+            // last one has not heard it, and gossip does not repeat itself.
+            let ours: Vec<String> =
+                held.iter().filter(|s| pool::bucket_of(s, depth) == *bucket).cloned().collect();
+            if !ours.is_empty() {
+                let msg = serde_json::to_vec(&BucketMessage::Holding { subjects: ours })?;
+                let _ = handle.publish(msg).await;
+                announced += 1;
+            }
+        }
+
+        let wanted: Vec<String> = self
+            .heard
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| !held.contains(*s))
+            .filter(|s| mine.contains(&pool::bucket_of(s, depth)))
+            .cloned()
+            .collect();
+
+        Ok(TickReport {
+            pool: members.len(),
+            depth,
+            buckets: mine.len(),
+            held: held.len(),
+            announced,
+            wanted,
+        })
+    }
+
+    /// Fetch a subject we ought to be holding, from any peer that has it.
+    pub async fn adopt(&self, subject: &str, from: &str) -> Result<(usize, usize)> {
+        let node: p2panda_net::NodeId = from.parse().context("not a node id")?;
+        let conn = self.endpoint.connect(node, ALPN).await.context("connect")?;
+        let into = self.store.join(subject);
+        crate::wire::fetch_over(&conn, subject, &into).await
+    }
+
+    /// Note that a peer is alive, for the record kept on disk.
+    pub async fn remember_seen(&self) -> Result<()> {
+        for id in self.pool_members().await? {
+            let _ = pool::remember_peer(&self.store, &id, now_ms());
+        }
+        Ok(())
+    }
+}
+
+/// What one pass found.
+#[derive(Debug, Clone)]
+pub struct TickReport {
+    pub pool: usize,
+    pub depth: u8,
+    pub buckets: usize,
+    pub held: usize,
+    pub announced: usize,
+    /// Subjects in our buckets that we do not have yet.
+    pub wanted: Vec<String>,
+}
+
+fn topic(bytes: [u8; 32]) -> Topic {
+    Hash::from_bytes(bytes).into()
+}
+
+fn is_subject(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Subjects this peer has on disk, whether or not it can read them.
+fn subjects_held(store: &Path) -> Vec<String> {
+    let Ok(dir) = std::fs::read_dir(store) else { return Vec::new() };
+    dir.flatten()
+        .filter(|e| e.path().join("meta.json").exists())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|s| is_subject(s))
+        .collect()
+}
