@@ -315,3 +315,37 @@ fn a_holder_list_only_ever_records_the_speaker() {
     let known = diaswarm_net::holders(&dir);
     assert_eq!(known, vec!["aa".repeat(32)], "junk or duplicates were stored: {known:?}");
 }
+
+/// A HOME IP ADDRESS IS NOT ADVERTISED.
+///
+/// Addresses are carried so that two devices on the same wifi can find each
+/// other with no discovery service and no uplink. A public address does not
+/// help with that, is resolvable through discovery anyway, and is a place
+/// rather than a pseudonym — handed to anyone who knows the subject's key and
+/// asks who holds it.
+///
+/// The first holder entry ever recorded on real hardware contained one.
+#[test]
+fn only_local_addresses_are_advertised() {
+    use diaswarm_net::is_local_address;
+    let local = [
+        "192.168.88.213:44595",   // the phone, on the wifi
+        "10.0.0.5:1234",
+        "172.17.0.1:1234",        // docker, private
+        "127.0.0.1:1234",
+        "[fe80::1]:1234",         // link-local
+        "[fd00::1]:1234",         // unique-local
+    ];
+    let public = [
+        "219.88.168.31:44595",    // the home IP that prompted this
+        "8.8.8.8:53",
+        "172.32.0.1:1234",        // just outside 172.16/12
+        "[2001:4860::1]:1234",
+    ];
+    for a in local {
+        assert!(is_local_address(&a.parse().unwrap()), "{a} should be advertisable");
+    }
+    for a in public {
+        assert!(!is_local_address(&a.parse().unwrap()), "{a} MUST NOT be advertised");
+    }
+}

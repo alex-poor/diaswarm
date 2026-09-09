@@ -153,6 +153,31 @@ fn segments_dir(vault: &Path) -> PathBuf {
 /// needs a handful of addresses to survive one device sleeping.
 const MAX_HOLDERS: usize = 32;
 
+/// Is this an address that only means anything on a local network?
+///
+/// **PUBLIC ADDRESSES ARE NOT ADVERTISED, and this is not a detail.** The point
+/// of carrying addresses at all is the case where discovery is unavailable —
+/// two phones on the same wifi with the uplink down. A public address does not
+/// help there, and it is resolvable through discovery anyway, so announcing it
+/// buys nothing.
+///
+/// What it costs is precise: a home IP address, geolocatable, handed to anyone
+/// who knows the subject's public key and asks who holds it. On real hardware
+/// the first holder entry ever recorded contained one. An endpoint id is a
+/// pseudonym; an IP address is a place.
+pub fn is_local_address(a: &std::net::SocketAddr) -> bool {
+    use std::net::IpAddr;
+    match a.ip() {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local() || v4.is_loopback(),
+        // Unique-local (fc00::/7) and link-local (fe80::/10). Written out
+        // because the std helpers for these are still unstable.
+        IpAddr::V6(v6) => {
+            let o = v6.octets();
+            v6.is_loopback() || (o[0] & 0xfe) == 0xfc || (o[0] == 0xfe && (o[1] & 0xc0) == 0x80)
+        }
+    }
+}
+
 fn holders_path(vault: &Path) -> PathBuf {
     vault.join("holders.json")
 }
@@ -297,10 +322,15 @@ pub fn answer_from(store: &Path, req: &Request, caller: Option<&str>) -> Result<
         Request::Announce { subject, addrs } => {
             let vault = vault_of(store, subject)?;
             if let Some(id) = caller {
+                // Filtered HERE as well as at the sender, because a peer
+                // that announces a public address should not be able to get it
+                // stored and handed on to everybody else.
                 let clean: Vec<&str> = addrs
                     .iter()
                     .map(String::as_str)
-                    .filter(|a| a.parse::<std::net::SocketAddr>().is_ok())
+                    .filter(|a| {
+                        a.parse::<std::net::SocketAddr>().map(|s| is_local_address(&s)).unwrap_or(false)
+                    })
                     .take(8)
                     .collect();
                 let entry =

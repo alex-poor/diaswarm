@@ -256,7 +256,20 @@ availability not depending on one phone, and it depended on one phone.
 
 **THE COST IS THE FOLLOWER SET, and it is not small.** Anyone holding a
 subject's public key can now ask any peer who else carries that subject, and
-get back stable, dialable endpoint ids. That is a social graph: not what was
+get back stable, dialable endpoint ids.
+
+> **Amended 2026-09-10, from the first holder entry ever recorded on real
+> hardware.** It was worse than this said. Peers announce addresses as well as
+> ids so that two devices on one wifi can find each other with the uplink down,
+> and the announcement included the phone's PUBLIC address — a home IP,
+> geolocatable, handed to anyone who knows the subject key and asks. An
+> endpoint id is a pseudonym; an IP address is a place.
+>
+> Only local addresses are advertised now — RFC1918, link-local, unique-local,
+> loopback — which is the only case addresses were for. Public ones are
+> resolvable through discovery anyway, so announcing them bought nothing and
+> cost a home address. Filtered at both ends, so a peer cannot get a public
+> address stored by announcing one. That is a social graph: not what was
 said, but who is close enough to someone to be watching their glucose. It is
 the leak feasibility.md §9 already named as the price of a swarm, arriving
 through the one door that makes availability work.

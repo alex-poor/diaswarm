@@ -213,9 +213,12 @@ because on a looping phone a mismatch costs you a pump re-pairing.
   way to search for a person. Peers do find *each other* after that, which is how
   a follower survives your phone sleeping — see below.
 - **The follower set is discoverable.** Anyone holding your public key can ask any
-  peer who else carries your data and get back dialable endpoint ids. Not what was
-  said, but who is close enough to be watching. This is the price of availability
-  without a server, and it is not yet optional ([D18](docs/decisions.md)).
+  peer who else carries your data and get back their endpoint ids — pseudonyms, but
+  stable ones. Not what was said, but who is close enough to be watching. This is
+  the price of availability without a server, and it is not yet optional
+  ([D18](docs/decisions.md)). Addresses are advertised alongside those ids **only
+  when they are local** (same-wifi, no uplink); public addresses are never shared,
+  because a home IP is a place rather than a pseudonym.
 - **Metadata leaks.** The number of grants and roughly when they happened are
   visible in the log, even though who they name is not.
 - **Background sync is at Android's mercy.** Two minutes while awake; Doze stretches

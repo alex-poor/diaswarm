@@ -187,7 +187,15 @@ async fn fetch_inner(
     // followers here. Best effort: a peer that will not listen is still worth
     // fetching from.
     if announce {
-        let mine: Vec<String> = endpoint.addr().ip_addrs().map(|a| a.to_string()).collect();
+        // Local addresses only. A public one is a home address, it is
+        // resolvable through discovery anyway, and it would be handed to
+        // anyone who asks who holds this subject.
+        let mine: Vec<String> = endpoint
+            .addr()
+            .ip_addrs()
+            .filter(|a| crate::is_local_address(a))
+            .map(|a| a.to_string())
+            .collect();
         let _ = ask(
             &conn,
             &Request::Announce { subject: subject.to_string(), addrs: mine },
