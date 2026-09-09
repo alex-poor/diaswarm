@@ -24,6 +24,13 @@ fn usage() -> ExitCode {
       point, and taking only what you can open would announce what you were
       granted.
 
+  diaswarm-net follow <endpoint-id> <dir> <identity-file> [purpose] [seconds]
+      Keep a local replica in step, and say what it can see. Reports the
+      latest reading and HOW OLD IT IS, because a follower's dangerous
+      failure is not an error on screen — it is a stale number that looks
+      current. §12.3: "nothing happened" and "nothing arrived" must not
+      look alike.
+
   diaswarm-net nodekey <file>        a stable node secret, created if absent
 "#
     );
@@ -34,6 +41,18 @@ fn load_identity(path: &Path) -> Result<Identity, String> {
     let raw = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let bytes: [u8; 64] = raw.try_into().map_err(|_| "not a 64-byte identity".to_string())?;
     Ok(Identity::from_bytes(&bytes))
+}
+
+/// The most recent CGM reading this reader can open, and when it was taken.
+fn latest_reading(dir: &Path, reader: &Identity, purpose: &str) -> Option<(i64, f64)> {
+    let vault = Vault::open(dir).ok()?;
+    let opened = vault.read_as(reader, purpose).ok()?;
+    opened
+        .values()
+        .flatten()
+        .filter(|r| r.kind() == "cgm")
+        .filter_map(|r| Some((r.t(), r.get("mgdl")?.as_f64()?)))
+        .max_by_key(|(t, _)| *t)
 }
 
 fn node_secret(path: &Path) -> Result<SecretKey, String> {
@@ -135,6 +154,76 @@ async fn main() -> ExitCode {
                     eprintln!("  {e:?}");
                     return ExitCode::FAILURE;
                 }
+            }
+        }
+
+        Some("follow") => {
+            let (Some(id), Some(into), Some(ident)) = (arg(1), arg(2), arg(3)) else {
+                return usage();
+            };
+            let purpose = arg(4).unwrap_or("follow").to_string();
+            let every = arg(5).and_then(|s| s.parse::<u64>().ok()).unwrap_or(120);
+            let Ok(eid) = id.parse::<EndpointId>() else {
+                eprintln!("  not an endpoint id: {id}");
+                return ExitCode::FAILURE;
+            };
+            let dir = PathBuf::from(into);
+            let Ok(reader) = load_identity(Path::new(ident)) else {
+                eprintln!("  cannot read {ident}");
+                return ExitCode::FAILURE;
+            };
+
+            println!("  following    {} every {every}s", &id[..16]);
+            let (mut reachable, mut missed) = (0u32, 0u32);
+
+            loop {
+                let me = load_identity(Path::new(ident)).unwrap();
+                let result = fetch_as(
+                    EndpointAddr::from(eid),
+                    Who::Reader { identity: me, purpose: purpose.clone() },
+                    &dir,
+                    false,
+                )
+                .await;
+
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+
+                match result {
+                    Ok((new_segments, wraps)) => {
+                        reachable += 1;
+                        match latest_reading(&dir, &reader, &purpose) {
+                            // The age is the point. A number without one is a
+                            // number someone acts on when it is hours old.
+                            Some((t, mgdl)) => println!(
+                                "  {:>5.1} mg/dL   {:>4} min old   +{} segments, {} wraps",
+                                mgdl,
+                                (now - t) / 60_000,
+                                new_segments,
+                                wraps
+                            ),
+                            None => println!("  nothing this reader can open"),
+                        }
+                    }
+                    Err(e) => {
+                        missed += 1;
+                        // An unreachable subject is §9.7's availability problem.
+                        // Counting it is the only way to know how bad it is on
+                        // real hardware, which nothing in the docs measures.
+                        println!(
+                            "  unreachable   {missed} missed of {}   {e}",
+                            reachable + missed
+                        );
+                    }
+                }
+                // Flush explicitly: Rust block-buffers stdout when it is not a
+                // terminal, so a follower piped into anything would print
+                // nothing for minutes and look hung.
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                tokio::time::sleep(std::time::Duration::from_secs(every)).await;
             }
         }
 

@@ -107,3 +107,34 @@ async fn the_grant_log_travels_too() {
     );
     router.shutdown().await.ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_sync_fetches_only_what_changed() {
+    // A follower syncs every few minutes and almost nothing has changed.
+    // Re-fetching the whole history each time to learn that would move
+    // megabytes over a phone's connection to discover there was no news.
+    let served = tmp("incr");
+    let (subject, partner, _) = make_vault(&served);
+    let vault = Vault::open(&served).unwrap();
+
+    let router = serve_with(served.clone(), SecretKey::generate(), true).await.unwrap();
+    let addr = router.endpoint().addr();
+    let got = tmp("incr-got");
+    let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
+
+    let (first, _) = fetch_with(addr.clone(), Who::Tag(tag.clone()), &got, true).await.unwrap();
+    assert_eq!(first, 3, "the first sync should fetch everything");
+
+    let (second, _) = fetch_with(addr.clone(), Who::Tag(tag.clone()), &got, true).await.unwrap();
+    assert_eq!(second, 1, "only the open segment should be re-fetched, got {second}");
+
+    // A new day, and the follower picks it up without re-fetching the rest.
+    vault.seal(20_003, &day(20_003, 103.0)).unwrap();
+    vault.publish_wraps(&subject, &partner.enc_public(), "follow").unwrap();
+    let (third, _) = fetch_with(addr, Who::Tag(tag), &got, true).await.unwrap();
+    assert!(third <= 2, "a new day should cost one or two segments, got {third}");
+
+    let opened = Vault::open(&got).unwrap().read_as(&partner, "follow").unwrap();
+    assert!(opened.contains_key(&20_003), "the new day did not arrive");
+    router.shutdown().await.ok();
+}

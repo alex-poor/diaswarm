@@ -153,13 +153,20 @@ pub async fn fetch_with(
         }
     };
 
-    eprintln!("  manifest     {} segments", manifest.segments.len());
-    for (n, (seq, epoch)) in manifest.segments.iter().enumerate() {
+    // INCREMENTAL. A follower syncs every few minutes and almost nothing has
+    // changed; re-fetching the whole history each time would move megabytes to
+    // learn that. Only the open segment can grow, so a segment already held is
+    // re-fetched only if it is the one currently being written.
+    let open_seq = manifest.segments.last().map(|(seq, _)| *seq);
+    let mut fetched = 0usize;
+    for (seq, epoch) in &manifest.segments {
+        let path = into.join("segments").join(format!("{seq}.{epoch}.seal"));
+        if path.exists() && Some(*seq) != open_seq {
+            continue;
+        }
         let bytes = ask(&conn, &Request::Segment { seq: *seq, epoch: *epoch }).await?;
         install_segment(into, *seq, *epoch, &bytes)?;
-        if n % 10 == 0 || n + 1 == manifest.segments.len() {
-            eprintln!("  segment      {}/{} ({} bytes)", n + 1, manifest.segments.len(), bytes.len());
-        }
+        fetched += 1;
     }
 
     let wraps: Vec<WrapBlob> =
@@ -169,8 +176,9 @@ pub async fn fetch_with(
     for w in wraps {
         install_wrap(into, w.seq, &tag, &w.bytes)?;
     }
+    let _ = fetched;
 
     conn.close(0u32.into(), b"done");
     endpoint.close().await;
-    Ok((manifest.segments.len(), opened))
+    Ok((fetched, opened))
 }
