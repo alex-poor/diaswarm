@@ -42,21 +42,26 @@ use serde::{Deserialize, Serialize};
 /// failed request that a follower reported as "unreachable" — the subject
 /// looked offline when it was merely older. An ALPN mismatch refuses the
 /// connection instead, which is a thing a person can act on.
-pub const ALPN: &[u8] = b"diaswarm/1";
+pub const ALPN: &[u8] = b"diaswarm/2";
 
 /// One request. One per stream, answered with raw bytes then a clean close.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 pub enum Request {
-    /// What this vault holds: meta, and the segments that exist.
-    Manifest,
+    /// Which subjects this peer holds anything for.
+    ///
+    /// The question that turns a set of nodes into a swarm: a reader asks
+    /// whoever it can reach, rather than only the subject whose data it wants.
+    Have,
+    /// What this peer holds for one subject: meta, and the segments.
+    Manifest { subject: String },
     /// The signed grant log. Requested by everyone, readable by everyone,
     /// meaningful only to those who can compute a tag in it.
-    Grants,
+    Grants { subject: String },
     /// One sealed segment.
-    Segment { seq: u64, epoch: i64 },
+    Segment { subject: String, seq: u64, epoch: i64 },
     /// Every wrap filed under one tag.
-    Wraps { tag: String },
+    Wraps { subject: String, tag: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -87,6 +92,19 @@ fn segments_dir(vault: &Path) -> PathBuf {
     vault.join("segments")
 }
 
+/// Turn a requested subject into a path inside the store.
+///
+/// **Checked, not trusted.** A subject is 64 hex characters and nothing else,
+/// so a request cannot become a path component and a peer cannot be turned into
+/// a file server for the whole device. This is the only place a caller's bytes
+/// reach the filesystem.
+fn vault_of(store: &Path, subject: &str) -> Result<PathBuf> {
+    if subject.len() != 64 || !subject.bytes().all(|b| b.is_ascii_hexdigit()) {
+        anyhow::bail!("a subject is 64 hex characters");
+    }
+    Ok(store.join(subject.to_ascii_lowercase()))
+}
+
 /// Read the manifest straight off disk.
 pub fn manifest(vault: &Path) -> Result<Manifest> {
     let meta = std::fs::read_to_string(vault.join("meta.json")).context("meta.json")?;
@@ -113,15 +131,35 @@ pub fn manifest(vault: &Path) -> Result<Manifest> {
 /// and `tag` is checked to be hex, so nothing a caller sends can become a path
 /// component — a request is not a filename, and letting it be one would turn
 /// every peer into a file server for the whole device.
-pub fn answer(vault: &Path, req: &Request) -> Result<Vec<u8>> {
+pub fn answer(store: &Path, req: &Request) -> Result<Vec<u8>> {
     match req {
-        Request::Manifest => Ok(serde_json::to_vec(&manifest(vault)?)?),
-        Request::Grants => Ok(std::fs::read(vault.join("grants.ndjson")).unwrap_or_default()),
-        Request::Segment { seq, epoch } => {
-            let path = segments_dir(vault).join(format!("{seq}.{epoch}.seal"));
+        Request::Have => {
+            let mut subjects: Vec<String> = Vec::new();
+            if store.exists() {
+                for entry in std::fs::read_dir(store)? {
+                    let entry = entry?;
+                    if entry.path().join("meta.json").exists() {
+                        subjects.push(entry.file_name().to_string_lossy().to_string());
+                    }
+                }
+            }
+            subjects.sort();
+            Ok(serde_json::to_vec(&subjects)?)
+        }
+        Request::Manifest { subject } => {
+            Ok(serde_json::to_vec(&manifest(&vault_of(store, subject)?)?)?)
+        }
+        Request::Grants { subject } => Ok(std::fs::read(
+            vault_of(store, subject)?.join("grants.ndjson"),
+        )
+        .unwrap_or_default()),
+        Request::Segment { subject, seq, epoch } => {
+            let vault = vault_of(store, subject)?;
+            let path = segments_dir(&vault).join(format!("{seq}.{epoch}.seal"));
             Ok(std::fs::read(path).context("no such segment")?)
         }
-        Request::Wraps { tag } => {
+        Request::Wraps { subject, tag } => {
+            let vault = vault_of(store, subject)?;
             if tag.len() != 64 || !tag.bytes().all(|b| b.is_ascii_hexdigit()) {
                 anyhow::bail!("a tag is 64 hex characters");
             }

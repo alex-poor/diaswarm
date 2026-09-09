@@ -26,12 +26,12 @@ use crate::{answer, install, install_segment, install_wrap, Manifest, Request, W
 /// rather than by who holds a key.
 #[derive(Debug, Clone)]
 pub struct VaultServer {
-    vault: PathBuf,
+    store: PathBuf,
 }
 
 impl VaultServer {
-    pub fn new(vault: impl Into<PathBuf>) -> Self {
-        VaultServer { vault: vault.into() }
+    pub fn new(store: impl Into<PathBuf>) -> Self {
+        VaultServer { store: store.into() }
     }
 }
 
@@ -45,7 +45,7 @@ impl ProtocolHandler for VaultServer {
             // peer is using.
             let reply = serde_json::from_slice::<Request>(&asked)
                 .ok()
-                .and_then(|req| answer(&self.vault, &req).ok())
+                .and_then(|req| answer(&self.store, &req).ok())
                 .unwrap_or_default();
             send.write_all(&reply).await.map_err(AcceptError::from_err)?;
             send.finish().map_err(AcceptError::from_err)?;
@@ -54,8 +54,8 @@ impl ProtocolHandler for VaultServer {
 }
 
 /// Start serving. The returned router runs until it is shut down.
-pub async fn serve(vault: PathBuf, secret: SecretKey) -> Result<Router> {
-    serve_with(vault, secret, false).await
+pub async fn serve(store: PathBuf, secret: SecretKey) -> Result<Router> {
+    serve_with(store, secret, false).await
 }
 
 /// Serve, optionally without n0's discovery and relays.
@@ -68,13 +68,13 @@ pub async fn serve(vault: PathBuf, secret: SecretKey) -> Result<Router> {
 /// It is not a privacy setting. feasibility.md §9.4 is explicit that NAT
 /// traversal needs a relay and that this is unavoidable — a relay forwards
 /// ciphertext and stores nothing, which is a different thing from a server.
-pub async fn serve_with(vault: PathBuf, secret: SecretKey, local_only: bool) -> Result<Router> {
+pub async fn serve_with(store: PathBuf, secret: SecretKey, local_only: bool) -> Result<Router> {
     let endpoint = if local_only {
         Endpoint::builder(presets::Minimal).secret_key(secret).bind().await?
     } else {
         Endpoint::builder(presets::N0).secret_key(secret).bind().await?
     };
-    Ok(Router::builder(endpoint).accept(ALPN, VaultServer::new(vault)).spawn())
+    Ok(Router::builder(endpoint).accept(ALPN, VaultServer::new(store)).spawn())
 }
 
 async fn ask(conn: &Connection, req: &Request) -> Result<Vec<u8>> {
@@ -91,8 +91,27 @@ async fn ask(conn: &Connection, req: &Request) -> Result<Vec<u8>> {
 /// architecture rests on (§7.1), and fetching only what you can open would tell
 /// anyone watching exactly what you were granted — which is the leak D13 just
 /// closed in the grant log, reintroduced through traffic.
-pub async fn fetch(addr: EndpointAddr, tag: &str, into: &Path) -> Result<(usize, usize)> {
-    fetch_with(addr, Who::Tag(tag.to_string()), into, false).await
+pub async fn fetch(
+    addr: EndpointAddr,
+    subject: &str,
+    tag: &str,
+    into: &Path,
+) -> Result<(usize, usize)> {
+    fetch_with(addr, subject, Who::Tag(tag.to_string()), into, false).await
+}
+
+/// Which subjects a peer holds. The swarm question.
+pub async fn have(addr: EndpointAddr, local_only: bool) -> Result<Vec<String>> {
+    let endpoint = if local_only {
+        Endpoint::bind(presets::Minimal).await?
+    } else {
+        Endpoint::bind(presets::N0).await?
+    };
+    let conn = endpoint.connect(addr, ALPN).await.context("connect")?;
+    let subjects: Vec<String> = serde_json::from_slice(&ask(&conn, &Request::Have).await?)?;
+    conn.close(0u32.into(), b"done");
+    endpoint.close().await;
+    Ok(subjects)
 }
 
 /// Who is fetching.
@@ -114,15 +133,23 @@ pub enum Who {
 
 pub async fn fetch_as(
     addr: EndpointAddr,
+    subject: &str,
     who: Who,
     into: &Path,
     local_only: bool,
 ) -> Result<(usize, usize)> {
-    fetch_with(addr, who, into, local_only).await
+    fetch_with(addr, subject, who, into, local_only).await
 }
 
+/// Fetch one subject's vault from any peer that holds it.
+///
+/// **From any peer**, which is the whole point. The bytes are the same
+/// wherever they come from — sealed segments and wraps nobody in between can
+/// read — so availability stops depending on the subject's own phone being
+/// awake.
 pub async fn fetch_with(
     addr: EndpointAddr,
+    subject: &str,
     who: Who,
     into: &Path,
     local_only: bool,
@@ -135,8 +162,8 @@ pub async fn fetch_with(
     let conn = endpoint.connect(addr, ALPN).await.context("connect")?;
 
     let manifest: Manifest =
-        serde_json::from_slice(&ask(&conn, &Request::Manifest).await?).context("manifest")?;
-    let grants = ask(&conn, &Request::Grants).await?;
+        serde_json::from_slice(&ask(&conn, &Request::Manifest { subject: subject.to_string() }).await?).context("manifest")?;
+    let grants = ask(&conn, &Request::Grants { subject: subject.to_string() }).await?;
     install(into, &manifest, &grants)?;
 
     // The subject is in the manifest, so the tag can be derived now — one pass.
@@ -167,13 +194,13 @@ pub async fn fetch_with(
         if path.metadata().map(|m| m.len()) .ok() == Some(*len) {
             continue;
         }
-        let bytes = ask(&conn, &Request::Segment { seq: *seq, epoch: *epoch }).await?;
+        let bytes = ask(&conn, &Request::Segment { subject: subject.to_string(), seq: *seq, epoch: *epoch }).await?;
         install_segment(into, *seq, *epoch, &bytes)?;
         fetched += 1;
     }
 
     let wraps: Vec<WrapBlob> =
-        serde_json::from_slice(&ask(&conn, &Request::Wraps { tag: tag.clone() }).await?)
+        serde_json::from_slice(&ask(&conn, &Request::Wraps { subject: subject.to_string(), tag: tag.clone() }).await?)
             .unwrap_or_default();
     let opened = wraps.len();
     for w in wraps {

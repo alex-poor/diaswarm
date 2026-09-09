@@ -109,14 +109,19 @@ class SwarmPlugin @Inject constructor(
      */
     private fun startServing() {
         if (serving != 0L) return
-        val dir = java.io.File(context.filesDir, "diaswarm").also { it.mkdirs() }
-        val vault = java.io.File(dir, "vault")
+        SwarmNative.check()
+        val vault = SwarmPaths.vault(context, this::class.java)
         if (!java.io.File(vault, "meta.json").exists()) {
             aapsLogger.info(LTag.CORE, "swarm: nothing sealed yet, not serving")
             return
         }
-        SwarmNative.check()
-        serving = SwarmNative.netStart(vault.absolutePath, java.io.File(dir, "node.key").absolutePath)
+        // The STORE is served, not this vault: whatever this node has
+        // replicated from other subjects is served onward too, which is what
+        // makes it a peer rather than a personal server.
+        serving = SwarmNative.netStart(
+            SwarmPaths.store(context).absolutePath,
+            SwarmPaths.nodeKey(context).absolutePath
+        )
         if (serving == 0L) {
             aapsLogger.error(LTag.CORE, "swarm: could not start serving")
             return
@@ -124,7 +129,7 @@ class SwarmPlugin @Inject constructor(
         aapsLogger.info(LTag.CORE, "swarm: serving as ${SwarmNative.netEndpointId(serving)}")
         aapsLogger.info(
             LTag.CORE,
-            "swarm: subject ${SwarmNative.vaultSubject(java.io.File(dir, "subject.id").absolutePath)}"
+            "swarm: subject ${SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)}"
         )
     }
 

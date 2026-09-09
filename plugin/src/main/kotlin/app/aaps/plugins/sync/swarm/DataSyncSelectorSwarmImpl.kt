@@ -222,8 +222,8 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * is safe — but note nothing publishes these bytes anywhere yet.
      */
     private fun sealPending() {
-        val vault = File(storage, "vault").absolutePath
-        val identity = File(storage, "subject.id").absolutePath
+        val vault = SwarmPaths.vault(context, this::class.java).absolutePath
+        val identity = SwarmPaths.identity(context).absolutePath
         for ((epoch, body) in pending) {
             val n = SwarmNative.vaultSeal(vault, identity, epoch, offsetMs, body.toString())
             if (n < 0) {
@@ -244,8 +244,8 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * silently. The log line is the record of what happened.
      */
     private fun applyPendingGrants() {
-        val vault = File(storage, "vault").absolutePath
-        val identity = File(storage, "subject.id").absolutePath
+        val vault = SwarmPaths.vault(context, this::class.java).absolutePath
+        val identity = SwarmPaths.identity(context).absolutePath
 
         preferences.get(SwarmStringKey.GrantReader).trim().takeIf { it.isNotEmpty() }?.let { who ->
             val n = SwarmNative.vaultGrant(vault, identity, who, PURPOSE)

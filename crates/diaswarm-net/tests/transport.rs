@@ -10,7 +10,8 @@ use std::path::Path;
 use diaswarm_core::vault::{hex, Identity, Vault};
 use diaswarm_core::seal::grant_tag;
 use diaswarm_core::{Record, EPOCH_MS};
-use diaswarm_net::wire::{fetch_with, serve_with, Who};
+use diaswarm_net::wire::{fetch_with, have, serve_with, Who};
+use diaswarm_core::vault::Store;
 use iroh::SecretKey;
 
 const OFFSET: i64 = 12 * 3_600_000;
@@ -29,11 +30,14 @@ fn day(epoch: i64, marker: f64) -> Vec<Record> {
 }
 
 /// A subject with three sealed days, granting one reader from day two.
-fn make_vault(dir: &Path) -> (Identity, Identity, Identity) {
+fn make_vault(store_root: &Path) -> (Identity, Identity, Identity) {
     let subject = Identity::generate();
     let partner = Identity::generate();
     let stranger = Identity::generate();
-    let vault = Vault::create(dir, &subject, OFFSET).unwrap();
+    let store = Store::open(store_root).unwrap();
+    let dir = store.path_for(&subject.enc_public());
+    std::fs::create_dir_all(&dir).unwrap();
+    let vault = Vault::create(&dir, &subject, OFFSET).unwrap();
 
     vault.seal(20_000, &day(20_000, 100.0)).unwrap();
     // Granted only from the second segment, so "everything" and "what they were
@@ -59,7 +63,7 @@ async fn a_reader_fetches_over_the_network_and_opens_what_it_was_granted() {
     // --- the partner ------------------------------------------------------
     let got = tmp("partner");
     let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
-    let (segments, wraps) = fetch_with(addr.clone(), Who::Tag(tag), &got, true).await.expect("fetch");
+    let (segments, wraps) = fetch_with(addr.clone(), &hex(&subject.enc_public()), Who::Tag(tag), &got, true).await.expect("fetch");
 
     assert_eq!(segments, 3, "every segment should transfer, readable or not");
     assert_eq!(wraps, 2, "the partner was granted from segment 1, so two wraps");
@@ -74,7 +78,7 @@ async fn a_reader_fetches_over_the_network_and_opens_what_it_was_granted() {
     let theirs = tmp("stranger");
     let their_tag = hex(&grant_tag(&stranger.encryption, &subject.enc_public(), "follow"));
     let (segments, wraps) =
-        fetch_with(addr, Who::Tag(their_tag), &theirs, true).await.expect("stranger fetch");
+        fetch_with(addr, &hex(&subject.enc_public()), Who::Tag(their_tag), &theirs, true).await.expect("stranger fetch");
     assert_eq!(segments, 3, "a stranger gets the ciphertext, by design");
     assert_eq!(wraps, 0, "and no wraps");
     assert!(
@@ -95,7 +99,7 @@ async fn the_grant_log_travels_too() {
     let router = serve_with(served, SecretKey::generate(), true).await.unwrap();
     let got = tmp("got-log");
     let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
-    fetch_with(router.endpoint().addr(), Who::Tag(tag), &got, true).await.unwrap();
+    fetch_with(router.endpoint().addr(), &hex(&subject.enc_public()), Who::Tag(tag), &got, true).await.unwrap();
 
     let fetched = Vault::open(&got).unwrap();
     let grants = fetched.grants().unwrap();
@@ -115,26 +119,92 @@ async fn a_second_sync_fetches_only_what_changed() {
     // megabytes over a phone's connection to discover there was no news.
     let served = tmp("incr");
     let (subject, partner, _) = make_vault(&served);
-    let vault = Vault::open(&served).unwrap();
+    let vault = Store::open(&served).unwrap().vault(&subject.enc_public()).unwrap();
 
     let router = serve_with(served.clone(), SecretKey::generate(), true).await.unwrap();
     let addr = router.endpoint().addr();
     let got = tmp("incr-got");
     let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
 
-    let (first, _) = fetch_with(addr.clone(), Who::Tag(tag.clone()), &got, true).await.unwrap();
+    let (first, _) = fetch_with(addr.clone(), &hex(&subject.enc_public()), Who::Tag(tag.clone()), &got, true).await.unwrap();
     assert_eq!(first, 3, "the first sync should fetch everything");
 
-    let (second, _) = fetch_with(addr.clone(), Who::Tag(tag.clone()), &got, true).await.unwrap();
+    let (second, _) = fetch_with(addr.clone(), &hex(&subject.enc_public()), Who::Tag(tag.clone()), &got, true).await.unwrap();
     assert_eq!(second, 0, "nothing changed, so nothing should be re-fetched, got {second}");
 
     // A new day, and the follower picks it up without re-fetching the rest.
     vault.seal(20_003, &day(20_003, 103.0)).unwrap();
     vault.publish_wraps(&subject, &partner.enc_public(), "follow").unwrap();
-    let (third, _) = fetch_with(addr, Who::Tag(tag), &got, true).await.unwrap();
+    let (third, _) = fetch_with(addr, &hex(&subject.enc_public()), Who::Tag(tag), &got, true).await.unwrap();
     assert_eq!(third, 1, "a new day should cost exactly one segment, got {third}");
 
     let opened = Vault::open(&got).unwrap().read_as(&partner, "follow").unwrap();
     assert!(opened.contains_key(&20_003), "the new day did not arrive");
     router.shutdown().await.ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reader_gets_a_subject_from_a_peer_that_is_not_the_subject() {
+    // THE SWARM PROPERTY. Everything before this was a personal server: the
+    // subject served their own vault and a reader fetched from them, so
+    // availability was the subject's phone being awake. Here the subject goes
+    // away entirely and a reader still gets their history, from a peer that
+    // replicated it and cannot read a word of it.
+    let origin = tmp("origin-store");
+    let (subject, partner, _) = make_vault(&origin);
+    let subject_hex = hex(&subject.enc_public());
+
+    // The subject serves, a middle peer replicates, the subject stops.
+    let phone = serve_with(origin.clone(), SecretKey::generate(), true).await.unwrap();
+    let relay_store = tmp("relay-store");
+    let relay_vault = relay_store.join(&subject_hex);
+    let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
+    fetch_with(phone.endpoint().addr(), &subject_hex, Who::Tag(tag.clone()), &relay_vault, true)
+        .await
+        .expect("the middle peer replicates");
+    phone.shutdown().await.ok();
+
+    // The middle peer now serves what it holds.
+    let relay = serve_with(relay_store, SecretKey::generate(), true).await.unwrap();
+    let listed = have(relay.endpoint().addr(), true).await.expect("have");
+    assert_eq!(listed, vec![subject_hex.clone()], "the peer does not advertise what it holds");
+
+    // A reader that has never spoken to the subject.
+    let got = tmp("via-relay");
+    let (segments, wraps) =
+        fetch_with(relay.endpoint().addr(), &subject_hex, Who::Tag(tag), &got, true)
+            .await
+            .expect("fetch from the relay");
+    assert_eq!(segments, 3);
+    assert_eq!(wraps, 2, "the wraps travelled with the vault");
+
+    let opened = Vault::open(&got).unwrap().read_as(&partner, "follow").unwrap();
+    assert_eq!(opened.len(), 2, "the subject was offline and the reader still read");
+    assert_eq!(opened[&20_001][0].get("mgdl").and_then(|v| v.as_f64()), Some(101.0));
+
+    relay.shutdown().await.ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_relaying_peer_cannot_read_what_it_carries() {
+    // The property that makes holding other people's data acceptable: a peer
+    // that replicates a vault holds ciphertext and wraps addressed to someone
+    // else. §7.1 — a holder that cannot read is a holder anyone can be.
+    let origin = tmp("origin2");
+    let (subject, partner, _) = make_vault(&origin);
+    let subject_hex = hex(&subject.enc_public());
+    let carrier = Identity::generate();
+
+    let phone = serve_with(origin, SecretKey::generate(), true).await.unwrap();
+    let held = tmp("carried").join(&subject_hex);
+    let tag = hex(&grant_tag(&partner.encryption, &subject.enc_public(), "follow"));
+    fetch_with(phone.endpoint().addr(), &subject_hex, Who::Tag(tag), &held, true).await.unwrap();
+
+    let vault = Vault::open(&held).unwrap();
+    assert!(
+        vault.read_as(&carrier, "follow").unwrap().is_empty(),
+        "the peer carrying this vault could read it"
+    );
+    assert!(!vault.segments().unwrap().is_empty(), "it is carrying something, though");
+    phone.shutdown().await.ok();
 }

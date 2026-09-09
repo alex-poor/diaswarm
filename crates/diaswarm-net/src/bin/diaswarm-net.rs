@@ -6,25 +6,32 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use diaswarm_core::vault::{Identity, Vault};
-use diaswarm_net::wire::{fetch_as, serve, Who};
+use diaswarm_net::wire::{fetch_as, have, serve, Who};
 use iroh::{EndpointAddr, EndpointId, SecretKey};
 
 fn usage() -> ExitCode {
     eprintln!(
         r#"diaswarm-net — move a vault between peers
 
-  diaswarm-net serve <vault> <node-secret-file>
-      Serve this vault. Prints the endpoint id others dial. Serves to anyone
-      who asks: a vault is ciphertext, wraps nobody else can open, and a grant
-      log that names nobody. Access is who holds a key, not who we serve.
+  diaswarm-net serve <store> <node-secret-file>
+      Serve EVERY vault in the store — your own and the ones you have
+      replicated. That is what makes this a swarm rather than a personal
+      server: a reader can get a subject's history from anyone holding it,
+      so availability stops depending on that subject's phone being awake.
+      Serves to anyone who asks; the bytes are ciphertext and a grant log
+      that names nobody.
 
-  diaswarm-net fetch <endpoint-id> <into-dir> <identity-file> [purpose]
-      Fetch a vault and the wraps for this identity. Fetches EVERY segment,
-      not only the openable ones — holding ciphertext you cannot read is the
-      point, and taking only what you can open would announce what you were
-      granted.
+  diaswarm-net have <endpoint-id>
+      Which subjects a peer holds.
 
-  diaswarm-net follow <endpoint-id> <dir> <identity-file> [purpose] [seconds]
+  diaswarm-net fetch <endpoint-id> <subject-hex> <store> <identity> [purpose]
+      Fetch one subject's vault from a peer into the store — and by landing
+      in the store, it is then served onward by this node too. Fetches EVERY
+      segment, not only the openable ones: holding ciphertext you cannot read
+      is the point, and taking only what you can open would announce what you
+      were granted.
+
+  diaswarm-net follow <endpoint-id> <subject-hex> <store> <identity> [purpose] [seconds]
       Keep a local replica in step, and say what it can see. Reports the
       latest reading and HOW OLD IT IS, because a follower's dangerous
       failure is not an error on screen — it is a stale number that looks
@@ -96,7 +103,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            println!("  serving      {vault}");
+            println!("  serving      {vault}  (every vault in the store)");
             println!("  endpoint id  {}", secret.public());
             println!("  fetch with:  diaswarm-net fetch {} <dir> <identity>", secret.public());
             match serve(PathBuf::from(vault), secret).await {
@@ -112,11 +119,33 @@ async fn main() -> ExitCode {
             }
         }
 
+        Some("have") => {
+            let Some(id) = arg(1) else { return usage() };
+            let Ok(eid) = id.parse::<EndpointId>() else {
+                eprintln!("  not an endpoint id: {id}");
+                return ExitCode::FAILURE;
+            };
+            match have(EndpointAddr::from(eid), false).await {
+                Ok(subjects) if subjects.is_empty() => println!("  holds nothing"),
+                Ok(subjects) => {
+                    for s in subjects {
+                        println!("  {s}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  {e:?}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+
         Some("fetch") => {
-            let (Some(id), Some(into), Some(ident)) = (arg(1), arg(2), arg(3)) else {
+            let (Some(id), Some(subject), Some(into), Some(ident)) =
+                (arg(1), arg(2), arg(3), arg(4))
+            else {
                 return usage();
             };
-            let purpose = arg(4).unwrap_or("follow");
+            let purpose = arg(5).unwrap_or("follow");
             let reader = match load_identity(Path::new(ident)) {
                 Ok(r) => r,
                 Err(e) => {
@@ -129,9 +158,10 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             };
 
-            let dir = PathBuf::from(into);
+            let dir = PathBuf::from(into).join(subject.to_ascii_lowercase());
             match fetch_as(
                 EndpointAddr::from(eid),
+                subject,
                 Who::Reader { identity: reader, purpose: purpose.to_string() },
                 &dir,
                 false,
@@ -158,16 +188,19 @@ async fn main() -> ExitCode {
         }
 
         Some("follow") => {
-            let (Some(id), Some(into), Some(ident)) = (arg(1), arg(2), arg(3)) else {
+            let (Some(id), Some(subject), Some(into), Some(ident)) =
+                (arg(1), arg(2), arg(3), arg(4))
+            else {
                 return usage();
             };
-            let purpose = arg(4).unwrap_or("follow").to_string();
-            let every = arg(5).and_then(|s| s.parse::<u64>().ok()).unwrap_or(120);
+            let subject = subject.to_ascii_lowercase();
+            let purpose = arg(5).unwrap_or("follow").to_string();
+            let every = arg(6).and_then(|s| s.parse::<u64>().ok()).unwrap_or(120);
             let Ok(eid) = id.parse::<EndpointId>() else {
                 eprintln!("  not an endpoint id: {id}");
                 return ExitCode::FAILURE;
             };
-            let dir = PathBuf::from(into);
+            let dir = PathBuf::from(into).join(&subject);
             let Ok(reader) = load_identity(Path::new(ident)) else {
                 eprintln!("  cannot read {ident}");
                 return ExitCode::FAILURE;
@@ -180,6 +213,7 @@ async fn main() -> ExitCode {
                 let me = load_identity(Path::new(ident)).unwrap();
                 let result = fetch_as(
                     EndpointAddr::from(eid),
+                    &subject,
                     Who::Reader { identity: me, purpose: purpose.clone() },
                     &dir,
                     false,

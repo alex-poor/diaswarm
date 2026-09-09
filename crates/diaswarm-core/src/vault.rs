@@ -616,3 +616,88 @@ pub fn by_epoch(records: &[Record], offset: i64) -> BTreeMap<i64, Vec<Record>> {
     }
     out
 }
+
+/// Many vaults, one per subject, in one directory.
+///
+/// **This is what makes a swarm out of a set of peers.** A node that serves
+/// only its own vault is a personal server: reachable when its owner's phone is
+/// awake and not otherwise. A node that also serves the vaults it has
+/// replicated is a peer, and a reader can get a subject's history from anyone
+/// who holds it.
+///
+/// feasibility.md §9.2: who *holds* the bytes should be as many peers as
+/// possible, because holders learn nothing — they hold ciphertext. Who can
+/// *read* is decided entirely by key distribution, and that does not change
+/// when the bytes move.
+///
+/// ```text
+/// store/
+///   552f688a…/    a subject's vault: meta.json, segments/, wraps/, grants
+///   29daa5bf…/    another's, replicated because someone here follows them
+/// ```
+pub struct Store {
+    root: PathBuf,
+}
+
+impl Store {
+    pub fn open(root: impl Into<PathBuf>) -> Result<Self, VaultError> {
+        let root = root.into();
+        fs::create_dir_all(&root)?;
+        Ok(Store { root })
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Where one subject's vault lives.
+    ///
+    /// The subject's public key is the name, so two peers independently
+    /// replicating the same subject agree on the path without coordinating.
+    pub fn path_for(&self, subject_pub: &[u8; 32]) -> PathBuf {
+        self.root.join(hex(subject_pub))
+    }
+
+    /// Every subject this node holds anything for.
+    pub fn subjects(&self) -> Result<Vec<[u8; 32]>, VaultError> {
+        let mut out = Vec::new();
+        if !self.root.exists() {
+            return Ok(out);
+        }
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            if !entry.path().join("meta.json").exists() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Ok(bytes) = unhex(&name) {
+                if let Ok(k) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                    out.push(k);
+                }
+            }
+        }
+        out.sort();
+        Ok(out)
+    }
+
+    pub fn vault(&self, subject_pub: &[u8; 32]) -> Result<Vault, VaultError> {
+        Vault::open(&self.path_for(subject_pub))
+    }
+
+    /// Adopt a vault that already exists elsewhere, once.
+    ///
+    /// For a node whose own vault predates the store. Moves rather than copies,
+    /// because two vaults for one subject diverging is worse than either.
+    pub fn adopt(&self, existing: &Path) -> Result<Option<[u8; 32]>, VaultError> {
+        if !existing.join("meta.json").exists() {
+            return Ok(None);
+        }
+        let subject = Vault::open(existing)?.subject_pub();
+        let dest = self.path_for(&subject);
+        if dest.exists() {
+            return Ok(Some(subject));
+        }
+        fs::rename(existing, &dest)?;
+        Ok(Some(subject))
+    }
+}
