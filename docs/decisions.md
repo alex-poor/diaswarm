@@ -91,10 +91,39 @@ in one language and opening in the other in both directions.
 record path, the plugin, or the file format. What changes is that it is no longer
 on the critical path, and the project no longer waits on someone else's 0.x.
 
-*Reopens if:* multi-device (§12.5) or a care team with several writers turns out
-to need real group agreement, which is what a CGKA is actually for and what
-per-recipient wrapping does badly. That is the case to watch, and it is not the
-flagship.
+**When to go back to p2panda — three questions, not one.** D2 chose p2panda for
+*all three* layers. D2a defers only the middle one, and the other two are
+untouched and arrive on different schedules.
+
+| Layer | Status | The trigger that brings p2panda back |
+|---|---|---|
+| **Storage / transport** | **Untouched, and next.** Nothing replicates anything yet | **The moment two devices must sync.** The file-based demo is the last stage that avoids this. D2's reasoning here never depended on the key layer, and `p2panda-net` over iroh 1.0 is still the answer |
+| **Keys** | Deferred (this decision) | Any of the four below |
+| **Grants** | Signed Ed25519 records in `seal.rs`; `p2panda-auth` is the alternative | Comes with the transport, since a grant record has to replicate like anything else |
+
+**The four things that would reopen the key layer**, in the order they are likely
+to bite:
+
+1. **Multi-device (§12.5).** A phone and a spare is a group with two writers, and
+   keeping key material in step between them is what a CGKA is actually for.
+   Per-recipient wrapping does this badly. **Not optional — loop phones get
+   replaced**, so this is a when, not an if.
+2. **Cohort scale.** Wraps are O(readers × epochs). At five readers, 164 KB/year
+   — nothing. At a thousand, 92 KB *per epoch*, about 33 MB/year, and every
+   enrolment rewraps history. A commons at scale is where this construction stops
+   being obviously right.
+3. **Revocation granularity.** p2panda's `remove()` rotates immediately; this
+   rotates at the epoch boundary. If asking real people shows *"they keep the
+   rest of the day"* is unacceptable (D4's open question), p2panda is already
+   better on the axis the design cares most about.
+4. **The review gate (10.6).** If a reviewer's answer is "use something audited",
+   that is the answer, and it was D2's own argument.
+
+**And a standing recheck:** `p2panda-spaces` is actively released — 0.7.1 was
+three weeks old when measured. The gap that caused this deferral is a missing
+subset argument on `add()`, which is a small thing to fix upstream and might
+simply close. **Re-measure before starting transport work**, because that is the
+moment the two decisions have to agree anyway.
 
 ⚠️ **Still not reviewed cryptography.** X25519 + HKDF-SHA256 +
 ChaCha20-Poly1305, Ed25519 for grants, composed by hand. D2's fallback argument
