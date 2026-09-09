@@ -107,6 +107,13 @@ class SwarmPlugin @Inject constructor(
             repairWraps()
             startServing()
             schedulePeriodicSync()
+            // SYNC ONCE, NOW. The two-minute poll re-arms itself at the end of
+            // a sync pass, so until one has run there is nothing to re-arm and
+            // the only thing that will start the chain is the fifteen-minute
+            // periodic job. Watched on a follower after an update: serving,
+            // enabled, following somebody, and silent for a quarter of an hour
+            // — which looks exactly like the person it follows having no data.
+            enqueue()
         }
         disposable += rxBus.toObservable(EventNewBG::class.java)
             .observeOn(aapsSchedulers.io)
