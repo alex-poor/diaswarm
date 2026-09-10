@@ -290,6 +290,51 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D23 · Peers meet through a relay, not only on the same wifi
+
+**Settled 2026-09-11.** `Swarm::join_via` configures an iroh relay on the
+endpoint and seeds every followed subject into the address book as a bootstrap
+node carrying that relay.
+
+**WHAT WAS ACTUALLY SHIPPED BEFORE THIS.** No relay was configured at all —
+`Endpoint::builder` starts with an empty relay map and nothing ever added to it.
+Discovery was mDNS (same LAN) plus p2panda's random walk, which needs a peer it
+can already reach to walk from. So every demonstration this project had given
+was three phones on one wifi, and a follower that left the building could not
+connect to anything. That is not a swarm; it is a LAN party, and the README
+implied otherwise.
+
+The fix is not clever, it is p2panda's own `chat.rs` example: `.relay_url(...)`
+on the endpoint, and `NodeInfo::from(addr.with_relay_url(url)).bootstrap()` for
+the one node id the user already has. A follower scans exactly one thing — the
+subject's node id — and that is enough to reach them anywhere, but only once
+something says where to look.
+
+**A RELAY IS NOT A SERVER THE DATA LIVES ON.** It is STUN plus a fallback path:
+it helps two phones behind NAT find a direct route, and carries packets only
+until they do. It holds nothing, and what passes through it is ciphertext it
+cannot open — epoch keys never leave the phones. What it *can* see is that two
+node ids exchanged bytes and from which addresses. That is a metadata observer,
+and it belongs beside the social-graph leak this design already accepts
+(feasibility §9) rather than being waved through.
+
+**IT IS MEANT TO BE REPLACED.** `n0` runs the default relays publicly, which is
+what makes the app work when installed rather than after somebody stands up
+infrastructure. Anyone who would rather not give a third party that metadata
+runs `iroh-relay` and points the phones at their own; nothing else changes.
+Asia-Pacific by default because that is where these phones are.
+
+**What is proven and what is not.** `bin/relaycheck` shows a peer reaching
+`Connected` with the relay in about 4 seconds, where before there was no relay
+to reach. What has NOT been demonstrated is two peers on genuinely different
+networks exchanging a vault — the hardware to hand is one wifi, and the test
+phone's SIM is out of service. That test is the remote follower, and it needs
+this build on both ends.
+
+**Still open:** the invite carries a node id but not a relay, so both sides must
+agree on one out of band. Putting the relay in the invite is a version bump of
+the invite format and the honest fix.
+
 ### D22 · A follower is a separate app, and the build flavour is the fence
 
 **Settled 2026-09-10.** The thing this project is trying to beat shows somebody

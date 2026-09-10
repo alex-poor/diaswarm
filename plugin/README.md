@@ -48,6 +48,17 @@ copies the `.so` into `src/main/jniLibs`, where the library packages it from.
 The `.so` is **not committed**: a checked-in binary is a second, opaque copy of
 the frozen spec that nobody can diff and everybody trusts.
 
+## Reaching each other
+
+Peers meet through an iroh relay (decision D23), so a follower works from
+anywhere rather than only on the subject's wifi. The relay never sees anything
+it can open; it exists so two phones behind NAT can find a direct route, and
+drops out of the path once they have. It defaults to `n0`'s public
+Asia-Pacific relay and is meant to be replaced with your own.
+
+Before 2026-09-11 no relay was configured and discovery was mDNS only, which
+meant the whole thing worked on one wifi and nowhere else.
+
 ## Following somebody: the follower is a different app
 
 **Install `aapsclient`, not `full`.** Putting a followed person's glucose on the

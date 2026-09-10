@@ -87,7 +87,39 @@ pub struct Swarm {
     /// remembering. Keeping every announcer means the fallback has somewhere
     /// else to try.
     heard: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    /// Kept so a subject followed AFTER startup can be seeded too — a scan
+    /// happens while this is running, and restarting the app to make a new
+    /// follow reachable is not something to ask of anybody.
+    relay: Option<iroh::RelayUrl>,
 }
+
+/// The relay that makes this a swarm rather than a LAN party.
+///
+/// **WITHOUT ONE, PEERS ONLY EVER MEET ON THE SAME WIFI**, and that was true of
+/// every demonstration this project had given: mDNS found phones on one network
+/// and nothing found anything anywhere else. p2panda's headline is "establish
+/// and manage direct connections to any device over the Internet"; its own
+/// `chat.rs` example is how — a relay on the endpoint, and the peer you already
+/// know seeded into the address book carrying that relay.
+///
+/// WHAT A RELAY IS AND IS NOT. It is STUN plus a fallback path: it helps two
+/// phones behind NAT find a direct route to each other, and carries their
+/// packets only until they do. It is not a server the data lives on. It sees
+/// ciphertext and cannot open it — the epoch keys never leave the phones — and
+/// once hole-punching succeeds it is out of the path entirely. What it can see
+/// is that two node ids exchanged bytes, and from which addresses; that is a
+/// metadata observer, and it belongs in the same paragraph as the social-graph
+/// leak this design already accepts (feasibility §9).
+///
+/// **THIS IS MEANT TO BE REPLACED WITH YOUR OWN.** `n0` runs these for public
+/// use, which is what makes the app work the moment it is installed rather than
+/// after somebody stands up infrastructure. Anyone who would rather not hand a
+/// third party that metadata can run `iroh-relay` on a VPS and point every
+/// phone at it; nothing else changes.
+///
+/// Asia-Pacific because that is where these phones are, and a relay on the far
+/// side of the planet adds a round trip to every hole-punch.
+pub const DEFAULT_RELAY: &str = "https://aps1-1.relay.n0.iroh.link.";
 
 impl Swarm {
     /// Join the pool, and start answering for what we hold.
@@ -99,22 +131,65 @@ impl Swarm {
         Self::join_network(store, signing_key, default_network()).await
     }
 
-    /// Join a named pool. Used by tests, so a test run is alone in its own.
+    /// Join a named pool, reachable through a named relay.
     pub async fn join_network(
         store: impl Into<PathBuf>,
         signing_key: p2panda_core::SigningKey,
         network: p2panda_net::NetworkId,
     ) -> Result<Self> {
+        Self::join_via(store, signing_key, network, DEFAULT_RELAY).await
+    }
+
+    /// Join a named pool through a named relay. Tests pass their own of both,
+    /// so a test run is alone in its pool.
+    pub async fn join_via(
+        store: impl Into<PathBuf>,
+        signing_key: p2panda_core::SigningKey,
+        network: p2panda_net::NetworkId,
+        relay: &str,
+    ) -> Result<Self> {
         let store = store.into();
         std::fs::create_dir_all(&store)?;
 
         let book = AddressBook::builder().spawn().await.context("address book")?;
-        let endpoint = Endpoint::builder(book.clone())
-            .signing_key(signing_key)
-            .network_id(network)
-            .spawn()
-            .await
-            .context("endpoint")?;
+
+        // SEED WHOEVER WE ALREADY KNOW, BEFORE THE ENDPOINT STARTS. A follower
+        // scanned exactly one thing: the subject's node id. That is enough to
+        // reach them anywhere, but only if something says where to look —
+        // `Discovery` is a random walk and needs somewhere to walk FROM, and
+        // mDNS is the same room. Marking them `bootstrap()` is what p2panda's
+        // own example does with the one node id a user pastes in.
+        let relay_url: Option<iroh::RelayUrl> = match relay.parse() {
+            Ok(u) => Some(u),
+            Err(e) => {
+                // Not fatal: a phone with an unusable relay is exactly the
+                // LAN-only phone we had before, which still works at home.
+                eprintln!("diaswarm: relay url {relay:?} is not usable ({e}) — local network only");
+                None
+            }
+        };
+        if let Some(url) = &relay_url {
+            for f in crate::peer::load_follows(&store).unwrap_or_default() {
+                for from in &f.from {
+                    // parse_upstream already yields the address, keeping any IP
+                    // hints the invite carried; the relay is what makes it
+                    // dialable from a different network.
+                    let Ok(addr) = crate::peer::parse_upstream(from) else { continue };
+                    let _ = book
+                        .insert_node_info(
+                            p2panda_net::addrs::NodeInfo::from(addr.with_relay_url(url.clone()))
+                                .bootstrap(),
+                        )
+                        .await;
+                }
+            }
+        }
+
+        let mut builder = Endpoint::builder(book.clone()).signing_key(signing_key).network_id(network);
+        if let Some(url) = relay_url.clone() {
+            builder = builder.relay_url(url);
+        }
+        let endpoint = builder.spawn().await.context("endpoint")?;
 
         // ACTIVE. Spawned without a mode it does nothing at all, and the
         // symptom is two peers on the same wifi never seeing each other —
@@ -147,6 +222,7 @@ impl Swarm {
             _presence: presence,
             joined: Arc::new(Mutex::new(HashMap::new())),
             heard: Arc::new(Mutex::new(HashMap::new())),
+            relay: relay_url,
         })
     }
 
@@ -336,7 +412,30 @@ impl Swarm {
     /// subject falls into means hearing its holders announce themselves, and
     /// dialling one is a node id and p2panda's problem — no address is written
     /// down here, and none is passed to anybody.
+    /// Tell the address book where a followed subject can be reached.
+    ///
+    /// Idempotent and cheap, and run on every pass rather than only at startup:
+    /// following somebody happens by scanning a code while the app is running,
+    /// and a follow that only became dialable after a restart would look like
+    /// the network being broken.
+    async fn seed_follows(&self) {
+        let Some(url) = &self.relay else { return };
+        for f in crate::peer::load_follows(&self.store).unwrap_or_default() {
+            for from in &f.from {
+                let Ok(addr) = crate::peer::parse_upstream(from) else { continue };
+                let _ = self
+                    .book
+                    .insert_node_info(
+                        p2panda_net::addrs::NodeInfo::from(addr.with_relay_url(url.clone()))
+                            .bootstrap(),
+                    )
+                    .await;
+            }
+        }
+    }
+
     pub async fn refresh_follows(&self) -> Result<Vec<crate::peer::Refreshed>> {
+        self.seed_follows().await;
         let me = self.node_id().await?;
         let members = self.pool_members().await?;
         let depth = pool::depth_for(members.len());
