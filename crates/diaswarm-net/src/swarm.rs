@@ -110,7 +110,12 @@ impl Swarm {
     /// identity it already had — everything that ranks peers ranks them by it,
     /// and a new key would look like a departure and an arrival.
     pub async fn join(store: impl Into<PathBuf>, signing_key: p2panda_core::SigningKey) -> Result<Self> {
-        Self::join_network(store, signing_key, default_network()).await
+        // THE RELAY, EXPLICITLY, and not by way of `join_network`. This is what
+        // a phone calls, and going through the test-facing constructor once
+        // silently took every phone off the relay while every test stayed
+        // green — the sort of regression that looks exactly like the network
+        // being quiet. `bin/relaycheck` is what caught it and is the guard.
+        Self::join_via(store, signing_key, default_network(), DEFAULT_RELAY).await
     }
 
     /// Join a named pool, on the local network only.
