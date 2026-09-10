@@ -332,6 +332,35 @@ gets its data when discovery gets round to it**, which is a worse first
 impression than the current fetch-on-demand and has no workaround inside the
 library.
 
+**AND IT HOLDS A REAL HISTORY, SEALED BY AAPS ITSELF.** Shadow mode
+(`SwarmBooleanKey.ShadowSpacesVault`) seals every record into both vaults and
+logs whether they agree; a re-drain button resets the plugin's high-water marks
+so the whole database is read again. On the loop phone, mid-loop:
+
+```
+15:55:00  high-water marks reset — re-reading everything
+15:57:37  shadow sealed 35,897 of 35,897 — 1 windows, 0 readers
+          74 epochs 20630..20706, 4 grants
+```
+
+**Two and a half minutes for 74 days**, every record into both vaults, zero
+errors and no native crash. 3.2 MB on disk against the old vault's 8.3 MB — the
+new one holds ciphertext in operation bodies rather than segments plus per-reader
+wraps, though the two are not like for like while the old vault carries four
+grants and the shadow carries none.
+
+Shadow mode also survived an app upgrade mid-flight: passes either side of the
+swarm29→30 install agree, under different pids. That is the first evidence the
+identity and state survive a restart *inside AAPS* rather than in a self-test
+binary, which is the failure that would invalidate every grant ever made.
+
+**A discrepancy worth chasing, and not yet chased:** the device emitted 35,897
+records where `tools/canon.py` produced 31,341 from a snapshot of the same
+database taken three hours earlier. The gap is roughly the 3,694 CGM duplicates
+canon.py drops per five-minute bucket, so the likely answer is that the two
+debounce differently — but "likely" is not measured, and D3's whole point is
+that two implementations agreeing is evidence while one is an assertion.
+
 **IT RUNS ON THE PHONE.** `crates/diaswarm-spaces/src/bin/selftest.rs` is a
 binary rather than a JNI call on purpose: pushed to `/data/local/tmp` and run
 over adb, it touches AAPS not at all — no install, no plugin, nothing near a
