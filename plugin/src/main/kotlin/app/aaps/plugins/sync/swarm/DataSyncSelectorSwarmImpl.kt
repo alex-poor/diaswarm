@@ -185,6 +185,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         emitter = SwarmNative.emitterNew(preferences.get(SwarmLongKey.CgmBucketHighWater))
         try {
             drained.clear()
+            drainedThisPass = 0
             sources.forEach { drain(it) }
             if (drained.isNotEmpty()) {
                 val by = drained.entries.sortedByDescending { it.value }
@@ -192,6 +193,10 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 aapsLogger.info(LTag.CORE, "swarm: drained ${drained.values.sum()} — $by")
             }
             sealPending()
+            // MORE TO DO, SO COME BACK. A bounded pass leaves the rest for the
+            // next one, and without this nothing asks for a next one — a
+            // re-drain would stop after 4,000 records and look finished.
+            val more = drainedThisPass >= maxRecordsPerPass
             applyPendingGrants()
             refreshFollowed()
             poolPass()
@@ -203,6 +208,10 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                     preferences.get(SwarmLongKey.AmendmentsSeen) + amendments
                 )
                 aapsLogger.info(LTag.CORE, "swarm: $amendments post-emit edits this run")
+            }
+            if (more) {
+                aapsLogger.info(LTag.CORE, "swarm: pass full at $drainedThisPass, continuing")
+                continuePass()
             }
         } finally {
             run {
@@ -246,8 +255,26 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      */
     private var shadowSealed = 0L
 
+    /**
+     * The most a single pass will drain before stopping and coming back.
+     *
+     * **A BOUND, NOT A TUNING KNOB.** A full re-drain of 74 days is 31,000
+     * records and about 2.7 MB of canonical text, and holding all of it —
+     * `pending`, plus whatever AAPS allocates walking 80,000 rows — ran the app
+     * out of its 268 MB heap and killed it. On this phone that stops the loop.
+     *
+     * Nothing about the drain needs to be atomic: the high-water marks advance
+     * per row, so a pass that stops early resumes exactly where it left off.
+     * Bounding it means no amount of history can make a pass too big, whatever
+     * the phone is doing at the time.
+     */
+    private val maxRecordsPerPass = 4_000
+
+    private var drainedThisPass = 0
+
     private fun drain(source: Source) {
         while (true) {
+            if (drainedThisPass >= maxRecordsPerPass) return
             val lastDbId = source.lastId() ?: 0L
             var startId = preferences.get(source.key)
             if (startId > lastDbId) {
@@ -266,6 +293,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                     if (line.isNotEmpty()) {
                         publish(line)
                         drained[source.name] = (drained[source.name] ?: 0) + 1
+                        drainedThisPass++
                     }
                 }
             }
@@ -449,6 +477,25 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * and it is why every reading is shown with its age rather than as a number
      * that implies it is current.
      */
+    /**
+     * Ask for another pass, shortly, because this one filled up.
+     *
+     * A short delay rather than none: the pass that queues this is still
+     * holding its own records, and stacking the next one immediately puts two
+     * passes' worth of history in the heap at the same time — which is what
+     * this bound exists to prevent. `REPLACE` because only one continuation is
+     * ever wanted.
+     */
+    private fun continuePass() {
+        WorkManager.getInstance(context).beginUniqueWork(
+            SwarmPlugin.JOB_NAME,
+            ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequest.Builder(SwarmDataSyncWorker::class.java)
+                .setInitialDelay(5, TimeUnit.SECONDS)
+                .build()
+        ).enqueue()
+    }
+
     private fun scheduleNextPoll() {
         WorkManager.getInstance(context).beginUniqueWork(
             SwarmPlugin.FOLLOW_JOB_NAME,
