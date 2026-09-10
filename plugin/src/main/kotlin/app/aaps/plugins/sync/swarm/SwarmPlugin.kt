@@ -477,6 +477,14 @@ class SwarmPlugin @Inject constructor(
     companion object {
 
         const val JOB_NAME = "SwarmDataSync"
+
+        /**
+         * Continuations of a bounded drain, under their own unique name.
+         *
+         * Never `JOB_NAME`: a pass that enqueues its continuation there with
+         * `REPLACE` cancels itself, and the drain never finishes.
+         */
+        const val CONTINUE_JOB_NAME = "SwarmDataSyncContinue"
         const val PERIODIC_JOB_NAME = "SwarmDataSyncPeriodic"
 
         /**

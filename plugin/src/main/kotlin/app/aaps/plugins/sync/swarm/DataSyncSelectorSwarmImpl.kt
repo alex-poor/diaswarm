@@ -78,6 +78,8 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
          * segments and no wraps. Two minutes keeps the worst case comfortably
          * under the data's own cadence without polling into the gaps.
          */
+        const val STUCK_PASS_MS = 15 * 60 * 1000L
+
         const val FOLLOW_POLL_SECONDS = 120L
     }
 
@@ -167,16 +169,42 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         // Skipping rather than queueing, because the work is idempotent: the
         // high-water marks mean the next pass picks up whatever this one would
         // have done.
+        // A STUCK PASS MUST NOT SILENCE THE PLUGIN FOR EVER.
+        //
+        // The flag is cleared in a `finally`, which covers a pass that throws
+        // and not one that hangs — and one did: sealing opened a tokio runtime
+        // per epoch, and a runtime that will not shut down blocks the pass
+        // holding this flag. Every later pass then returned here immediately
+        // and the plugin went quiet with nothing in the log to say why.
+        //
+        // So the flag has an age. A pass still "in flight" after fifteen
+        // minutes is not in flight, it is lost, and the next one takes over.
+        // The work is idempotent and the high-water marks make a repeat
+        // harmless, so taking over is safer than waiting for ever.
+        val startedAt = passStartedAt
+        val stale = startedAt != 0L && System.currentTimeMillis() - startedAt > STUCK_PASS_MS
+        if (stale) {
+            aapsLogger.error(
+                LTag.CORE,
+                "swarm: previous pass has been running ${(System.currentTimeMillis() - startedAt) / 1000}s — taking over"
+            )
+            passInFlight.set(false)
+        }
         if (!passInFlight.compareAndSet(false, true)) {
             aapsLogger.debug(LTag.CORE, "swarm: a pass is already running, skipping this one")
             return
         }
+        passStartedAt = System.currentTimeMillis()
         try {
             uploadOnce()
         } finally {
+            passStartedAt = 0L
             passInFlight.set(false)
         }
     }
+
+    @Volatile
+    private var passStartedAt = 0L
 
     private val passInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -342,15 +370,20 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private fun sealPending() {
         val vault = SwarmPaths.vault(context, this::class.java).absolutePath
         val identity = SwarmPaths.identity(context).absolutePath
+        val shadow = openShadow()
+        try {
         for ((epoch, body) in pending) {
             val text = body.toString()
-            shadowSeal(text)
+            shadowSeal(shadow, text)
             val n = SwarmNative.vaultSeal(vault, identity, epoch, offsetMs, text)
             if (n < 0) {
                 aapsLogger.error(LTag.CORE, "swarm: sealing epoch $epoch failed with $n")
             } else {
                 aapsLogger.info(LTag.CORE, "swarm: sealed epoch $epoch, $n records")
             }
+        }
+        } finally {
+            if (shadow != 0L) SwarmNative.spacesClose(shadow)
         }
         pending.clear()
         aapsLogger.info(LTag.CORE, "swarm: ${SwarmNative.vaultStatus(vault)}")
@@ -371,18 +404,43 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      *
      * Off by default. See [SwarmBooleanKey.ShadowSpacesVault].
      */
-    private fun shadowSeal(ndjson: String) {
-        if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return
-        if (ndjson.isBlank()) return
-
-        var handle = 0L
-        try {
+    /**
+     * Open the shadow vault once, for the whole pass.
+     *
+     * **ONCE, NOT PER EPOCH, AND THE DIFFERENCE WEDGED THE PLUGIN.** Opening it
+     * inside the epoch loop — which is how the fix for the out-of-memory crash
+     * left it — builds a fresh tokio runtime, SQLite connection and p2panda
+     * manager for every day, and tears each one down again. A full drain is 74
+     * of those. `Runtime::drop` blocks until its tasks finish, so one that does
+     * not terminate promptly hangs `sealPending`, which hangs the pass, which
+     * leaves `passInFlight` set for ever and makes every later pass return
+     * immediately. The symptom is a plugin that has silently stopped.
+     */
+    private fun openShadow(): Long {
+        if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return 0L
+        return try {
             val dir = File(SwarmPaths.base(context), "spaces").absolutePath
-            handle = SwarmNative.spacesOpen(dir, offsetMs)
-            if (handle == 0L) {
-                aapsLogger.error(LTag.CORE, "swarm: shadow vault would not open")
-                return
+            SwarmNative.spacesOpen(dir, offsetMs).also {
+                if (it == 0L) aapsLogger.error(LTag.CORE, "swarm: shadow vault would not open")
             }
+        } catch (e: Throwable) {
+            aapsLogger.error(LTag.CORE, "swarm: shadow vault threw on open: $e")
+            0L
+        }
+    }
+
+    /**
+     * Seal one day into the shadow vault too, and say whether it agrees.
+     *
+     * **NOTHING DEPENDS ON THE RESULT.** The real vault stays authoritative;
+     * this writes to a separate directory, is read by no screen, and its worst
+     * failure is a log line.
+     *
+     * Off by default. See [SwarmBooleanKey.ShadowSpacesVault].
+     */
+    private fun shadowSeal(handle: Long, ndjson: String) {
+        if (handle == 0L || ndjson.isBlank()) return
+        try {
             val n = SwarmNative.spacesSeal(handle, ndjson)
             if (n < 0) {
                 aapsLogger.error(LTag.CORE, "swarm: shadow seal failed with $n")
@@ -394,8 +452,6 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             // pump and is worth precisely nothing; an UnsatisfiedLinkError from
             // a stale .so must not take the sync worker down with it.
             aapsLogger.error(LTag.CORE, "swarm: shadow seal threw: $e")
-        } finally {
-            if (handle != 0L) SwarmNative.spacesClose(handle)
         }
     }
 
@@ -480,15 +536,22 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     /**
      * Ask for another pass, shortly, because this one filled up.
      *
-     * A short delay rather than none: the pass that queues this is still
-     * holding its own records, and stacking the next one immediately puts two
-     * passes' worth of history in the heap at the same time — which is what
-     * this bound exists to prevent. `REPLACE` because only one continuation is
-     * ever wanted.
+     * **UNDER ITS OWN NAME.** The first version of this enqueued with `REPLACE`
+     * against `SwarmPlugin.JOB_NAME` — the unique name of the work it is
+     * running *inside*. So a pass cancelled itself to schedule its own
+     * replacement, which cancelled itself in turn: no drain ever finished, and
+     * the only trace was `JobScheduler: Job didn't exist in JobStore` three
+     * times a minute. A continuation must never be able to cancel the pass
+     * that asked for it.
+     *
+     * A short delay rather than none: the pass queueing this is still holding
+     * its own records, and stacking the next one immediately puts two passes'
+     * worth of history in the heap at the same time — which is what the bound
+     * exists to prevent.
      */
     private fun continuePass() {
         WorkManager.getInstance(context).beginUniqueWork(
-            SwarmPlugin.JOB_NAME,
+            SwarmPlugin.CONTINUE_JOB_NAME,
             ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequest.Builder(SwarmDataSyncWorker::class.java)
                 .setInitialDelay(5, TimeUnit.SECONDS)
