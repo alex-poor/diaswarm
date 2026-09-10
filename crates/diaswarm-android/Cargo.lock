@@ -830,6 +830,7 @@ version = "0.1.0"
 dependencies = [
  "diaswarm-core",
  "diaswarm-net",
+ "diaswarm-spaces",
  "iroh",
  "jni 0.21.1",
  "p2panda-core",

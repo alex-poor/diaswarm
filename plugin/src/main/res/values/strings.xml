@@ -40,4 +40,6 @@
     <string name="swarm_following_reading">%1$.1f mg/dL, %2$d min ago</string>
     <string name="swarm_following_unreadable">Held, but not readable — they have not shared with you yet.</string>
     <string name="swarm_following_nothing">Nothing has arrived from them yet.</string>
+    <string name="swarm_shadow_spaces">Shadow the new vault (experimental)</string>
+    <string name="swarm_shadow_spaces_summary">Also seal into the p2panda-spaces vault and log whether it agrees. Nothing reads it; the existing vault stays in charge.</string>
 </resources>

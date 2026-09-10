@@ -23,7 +23,9 @@ import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.validators.preferences.AdaptiveClickPreference
+import app.aaps.core.validators.preferences.AdaptiveSwitchPreference
 import app.aaps.core.validators.preferences.AdaptiveStringPreference
+import app.aaps.plugins.sync.swarm.keys.SwarmBooleanKey
 import app.aaps.plugins.sync.swarm.keys.SwarmLongKey
 import app.aaps.plugins.sync.swarm.keys.SwarmStringKey
 import androidx.preference.PreferenceCategory
@@ -80,7 +82,11 @@ class SwarmPlugin @Inject constructor(
     // and in this fork — where the preference list is rendered by Compose off
     // the typed key — render as a dead row. The high-water marks are here too
     // so that a settings export actually carries them.
-    ownPreferences = listOf(SwarmLongKey::class.java, SwarmStringKey::class.java),
+    ownPreferences = listOf(
+        SwarmLongKey::class.java,
+        SwarmStringKey::class.java,
+        SwarmBooleanKey::class.java
+    ),
     aapsLogger, rh, preferences
 ) {
 
@@ -209,6 +215,14 @@ class SwarmPlugin @Inject constructor(
                         )
                         true
                     }
+                )
+            )
+            addPreference(
+                AdaptiveSwitchPreference(
+                    ctx = context,
+                    booleanKey = SwarmBooleanKey.ShadowSpacesVault,
+                    title = R.string.swarm_shadow_spaces,
+                    summary = R.string.swarm_shadow_spaces_summary
                 )
             )
             addPreference(

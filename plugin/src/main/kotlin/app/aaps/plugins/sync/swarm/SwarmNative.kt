@@ -201,6 +201,34 @@ object SwarmNative {
     // whoever passes the wrong one.
 
 
+    // -----------------------------------------------------------------------
+    // The spaces vault (D20/D21) — shadow only, see SwarmBooleanKey
+    // -----------------------------------------------------------------------
+
+    /** Open or create the spaces vault under [dir]. Returns a handle, or 0. */
+    external fun spacesOpen(dir: String, offsetMs: Long): Long
+
+    /** Close it. Safe with 0. */
+    external fun spacesClose(handle: Long)
+
+    /** The subject's public key, hex. Empty on failure. */
+    external fun spacesSubject(handle: Long): String
+
+    /** Seal canonical records. Returns how many, or < 0. */
+    external fun spacesSeal(handle: Long, ndjson: String): Long
+
+    /**
+     * Grant a reader. [history] decides whether the grant reaches backwards:
+     * true gives them everything ever sealed, false only what comes next.
+     */
+    external fun spacesGrant(handle: Long, readerHex: String, history: Boolean): Long
+
+    /** Withdraw a reader, from the next thing sealed onward. */
+    external fun spacesRevoke(handle: Long, readerHex: String): Long
+
+    /** One line: windows and readers. */
+    external fun spacesStatus(handle: Long): String
+
     /** The spec version this Kotlin was written against. */
     const val EXPECTED_SPEC_VERSION = 3
 

@@ -11,6 +11,7 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sync.DataSyncSelector
 import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.plugins.sync.swarm.keys.SwarmBooleanKey
 import app.aaps.plugins.sync.swarm.keys.SwarmLongKey
 import app.aaps.plugins.sync.swarm.keys.SwarmStringKey
 import org.json.JSONObject
@@ -242,7 +243,9 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private fun sealPending() {
         val vault = SwarmPaths.vault(context, this::class.java).absolutePath
         val identity = SwarmPaths.identity(context).absolutePath
+        val sealedThisPass = mutableListOf<String>()
         for ((epoch, body) in pending) {
+            sealedThisPass.addAll(body.toString().lines().filter { it.isNotBlank() })
             val n = SwarmNative.vaultSeal(vault, identity, epoch, offsetMs, body.toString())
             if (n < 0) {
                 aapsLogger.error(LTag.CORE, "swarm: sealing epoch $epoch failed with $n")
@@ -252,6 +255,49 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         }
         pending.clear()
         aapsLogger.info(LTag.CORE, "swarm: ${SwarmNative.vaultStatus(vault)}")
+        shadowSeal(sealedThisPass)
+    }
+
+    /**
+     * Seal the same records into the spaces vault too, and say whether it agrees.
+     *
+     * **NOTHING DEPENDS ON THE RESULT.** The vault above stays authoritative;
+     * this writes to a separate directory, is read by no screen, and its worst
+     * failure is a log line. That is the whole point: D20 and D21 agree with
+     * the old vault over 74 days of real history and run on this hardware, and
+     * neither of those is the same as having run inside AAPS for a week.
+     *
+     * Off by default. See [SwarmBooleanKey.ShadowSpacesVault].
+     */
+    private fun shadowSeal(records: List<String>) {
+        if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return
+        if (records.isEmpty()) return
+
+        var handle = 0L
+        try {
+            val dir = File(SwarmPaths.base(context), "spaces").absolutePath
+            handle = SwarmNative.spacesOpen(dir, offsetMs)
+            if (handle == 0L) {
+                aapsLogger.error(LTag.CORE, "swarm: shadow vault would not open")
+                return
+            }
+            val n = SwarmNative.spacesSeal(handle, records.joinToString("\n"))
+            if (n < 0) {
+                aapsLogger.error(LTag.CORE, "swarm: shadow seal failed with $n")
+            } else {
+                aapsLogger.info(
+                    LTag.CORE,
+                    "swarm: shadow sealed $n of ${records.size} — ${SwarmNative.spacesStatus(handle)}"
+                )
+            }
+        } catch (e: Throwable) {
+            // CAUGHT, INCLUDING ERRORS. This runs on a phone driving an insulin
+            // pump and is worth precisely nothing; an UnsatisfiedLinkError from
+            // a stale .so must not take the sync worker down with it.
+            aapsLogger.error(LTag.CORE, "swarm: shadow seal threw: $e")
+        } finally {
+            if (handle != 0L) SwarmNative.spacesClose(handle)
+        }
     }
 
     /**

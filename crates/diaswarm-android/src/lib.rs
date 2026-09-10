@@ -12,7 +12,7 @@
 //! does either), and keeping its own high-water marks.
 
 use jni::objects::{JClass, JString};
-use jni::sys::{jint, jlong};
+use jni::sys::{jint, jlong, jboolean};
 use jni::JNIEnv;
 
 use std::path::{Path, PathBuf};
@@ -746,4 +746,191 @@ mod identity_tests {
              change every phone's identity"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The spaces vault
+// ---------------------------------------------------------------------------
+//
+// A SECOND VAULT, ALONGSIDE THE FIRST, AND NOT WIRED TO ANYTHING YET.
+//
+// `diaswarm-spaces` replaces the hand-composed sealing construction above with
+// p2panda's own key layer (D20), and `diaswarm-net::replicate` replaces the
+// vault protocol with log sync (D21). Both are measured — on this subject's
+// real history, and on this phone — and neither has ever run inside AAPS.
+//
+// So they ship switched off, behind their own JNI entry points, next to the
+// ones that work. The plugin decides which to call; nothing here changes what
+// a phone does until it does. That is the same posture the plugin itself takes
+// (SECURITY.md: it ships disabled and cannot dose), for the same reason: the
+// failure mode being guarded against is not a bad reading, it is an app that
+// will not start on a phone driving an insulin pump.
+//
+// The old vault stays until the differential test has been run against a
+// migrated device, not merely against a copy of its database.
+
+/// An open spaces vault and the runtime it needs.
+///
+/// The runtime is owned here because `diaswarm-spaces` is async and JNI is not.
+/// One per vault rather than one shared: a handle that outlives its runtime is
+/// a use-after-free, and the lifetimes are easier to see when they are the same
+/// object.
+struct SpacesVault {
+    runtime: tokio::runtime::Runtime,
+    vault: diaswarm_spaces::Vault,
+}
+
+/// Open, or create, the spaces vault under a directory. Returns a handle, or 0.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesOpen<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    dir: JString<'a>,
+    offset_ms: jlong,
+) -> jlong {
+    let Ok(dir) = env.get_string(&dir) else { return 0 };
+    let dir = PathBuf::from(String::from(dir));
+
+    let Ok(runtime) = tokio::runtime::Runtime::new() else { return 0 };
+    let Ok(vault) = runtime.block_on(diaswarm_spaces::Vault::open(dir, offset_ms)) else {
+        return 0;
+    };
+    Box::into_raw(Box::new(SpacesVault { runtime, vault })) as jlong
+}
+
+/// Close it. Safe to call with 0.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesClose<'a>(
+    _env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+) {
+    if handle == 0 {
+        return;
+    }
+    // Dropping the runtime stops its threads; dropping the vault closes the
+    // store. Order matters only in that both must happen, which `Box` does.
+    drop(unsafe { Box::from_raw(handle as *mut SpacesVault) });
+}
+
+/// The subject's public key, hex. Empty on failure.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesSubject<'a>(
+    env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+) -> JString<'a> {
+    if handle == 0 {
+        return to_jstring(env, String::new());
+    }
+    let v = unsafe { &*(handle as *const SpacesVault) };
+    to_jstring(env, v.vault.subject().to_hex())
+}
+
+/// Seal a batch of canonical records. Returns how many were sealed, or < 0.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesSeal<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    ndjson: JString<'a>,
+) -> jlong {
+    if handle == 0 {
+        return -1;
+    }
+    let Ok(body) = env.get_string(&ndjson) else { return -2 };
+    let body = String::from(body);
+    let v = unsafe { &mut *(handle as *mut SpacesVault) };
+
+    let records: Vec<Record> = body
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| Record::from_json(l).ok())
+        .map(Record::normalise)
+        .collect();
+
+    match v.runtime.block_on(v.vault.seal(&records)) {
+        Ok(_) => records.len() as jlong,
+        Err(_) => -3,
+    }
+}
+
+/// Grant a reader. `history` decides whether it reaches back (D20).
+///
+/// Returns 0, or < 0. The reader must already be known to this vault — on a
+/// phone that is what scanning an invite does.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesGrant<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    reader_hex: JString<'a>,
+    history: jboolean,
+) -> jlong {
+    if handle == 0 {
+        return -1;
+    }
+    let Ok(who) = env.get_string(&reader_hex) else { return -2 };
+    let Some(reader) = verifying_key(&String::from(who)) else { return -3 };
+    let v = unsafe { &mut *(handle as *mut SpacesVault) };
+
+    let reach = if history != 0 {
+        diaswarm_spaces::Reach::Everything
+    } else {
+        diaswarm_spaces::Reach::FromNow
+    };
+    match v.runtime.block_on(v.vault.grant(reader, reach)) {
+        Ok(_) => 0,
+        Err(_) => -4,
+    }
+}
+
+/// Withdraw a reader's access, from the next thing sealed onward.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesRevoke<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    reader_hex: JString<'a>,
+) -> jlong {
+    if handle == 0 {
+        return -1;
+    }
+    let Ok(who) = env.get_string(&reader_hex) else { return -2 };
+    let Some(reader) = verifying_key(&String::from(who)) else { return -3 };
+    let v = unsafe { &mut *(handle as *mut SpacesVault) };
+    match v.runtime.block_on(v.vault.revoke(reader)) {
+        Ok(_) => 0,
+        Err(_) => -4,
+    }
+}
+
+/// A one-line summary, for a log line or a status row.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesStatus<'a>(
+    env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+) -> JString<'a> {
+    if handle == 0 {
+        return to_jstring(env, String::from("no vault"));
+    }
+    let v = unsafe { &*(handle as *const SpacesVault) };
+    let readers = v.runtime.block_on(v.vault.reader_ids()).map(|r| r.len()).unwrap_or(0);
+    let summary = format!("{} windows, {readers} readers", v.vault.windows());
+    to_jstring(env, summary)
+}
+
+/// Parse a hex public key. `None` rather than a panic on anything unexpected:
+/// this comes from a QR code somebody photographed.
+fn verifying_key(hex: &str) -> Option<p2panda_core::VerifyingKey> {
+    let hex = hex.trim();
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    for (i, b) in bytes.iter_mut().enumerate() {
+        *b = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    p2panda_core::VerifyingKey::from_bytes(&bytes).ok()
 }
