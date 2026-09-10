@@ -659,11 +659,42 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         val vault = SwarmPaths.vault(context, this::class.java).absolutePath
         val identity = SwarmPaths.identity(context).absolutePath
 
-        preferences.get(SwarmStringKey.GrantReader).trim().takeIf { it.isNotEmpty() }?.let { who ->
+        preferences.get(SwarmStringKey.GrantReader).trim().takeIf { it.isNotEmpty() }?.let { asked ->
+            // Either a bare 64-hex reader key, as this field has always taken,
+            // or a whole invite scanned from their screen. An invite carries
+            // where they are as well as who they are, which is what lets this
+            // finish the job without them scanning anything back.
+            val fields = SwarmNative.inviteParse(asked).split('\t')
+            val who = fields.getOrNull(0)?.takeIf { it.isNotEmpty() } ?: asked
+
             val n = SwarmNative.vaultGrant(vault, identity, who, PURPOSE)
             preferences.put(SwarmStringKey.GrantReader, "")
-            if (n < 0) aapsLogger.error(LTag.CORE, "swarm: grant refused ($n) for ${who.take(16)}…")
-            else aapsLogger.info(LTag.CORE, "swarm: granted ${who.take(16)}… — $n wraps published")
+            if (n < 0) {
+                aapsLogger.error(LTag.CORE, "swarm: grant refused ($n) for ${who.take(16)}…")
+                return@let
+            }
+            aapsLogger.info(LTag.CORE, "swarm: granted ${who.take(16)}… — $n wraps published")
+
+            // AND TELL THEM WHERE TO LOOK. Granting somebody who cannot find
+            // you is half a share; they would otherwise have to scan a second
+            // code to learn an address we already know.
+            val theirEndpoint = fields.getOrNull(1).orEmpty()
+            if (theirEndpoint.isEmpty()) return@let
+            val ours = ownInvite()
+            if (ours.isEmpty()) {
+                aapsLogger.info(LTag.CORE, "swarm: granted, but this phone has no invite to offer yet")
+                return@let
+            }
+            when (val sent = SwarmNative.swarmOffer(
+                SwarmEndpoint.handle, theirEndpoint, fields.getOrNull(3).orEmpty(), ours
+            )) {
+                1L   -> aapsLogger.info(LTag.CORE, "swarm: handed them our invite — they are following now")
+                0L   -> aapsLogger.info(
+                    LTag.CORE,
+                    "swarm: they were not expecting an invite — they can scan ours instead"
+                )
+                else -> aapsLogger.info(LTag.CORE, "swarm: could not reach them to hand our invite over ($sent)")
+            }
         }
 
         // FOLLOWING IS NOT GRANTING, and it does not touch this phone's vault —
@@ -690,6 +721,21 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 "swarm: withdrew ${who.take(16)}… from segment $from — immediate"
             )
         }
+    }
+
+    /**
+     * This phone's own invite, or empty when it has nothing to offer yet.
+     *
+     * Needs both halves: a subject key, which exists once anything is sealed,
+     * and an endpoint id, which exists only while serving.
+     */
+    private fun ownInvite(): String {
+        val handle = SwarmEndpoint.handle
+        if (handle == 0L) return ""
+        val subject = SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)
+        val endpoint = SwarmNative.swarmNodeId(handle)
+        if (subject.isEmpty() || endpoint.isEmpty()) return ""
+        return SwarmNative.inviteFor(subject, endpoint, PURPOSE)
     }
 
     /**

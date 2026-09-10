@@ -179,6 +179,13 @@ class SwarmPlugin @Inject constructor(
                     title = R.string.swarm_show_invite,
                     summary = R.string.swarm_show_invite_summary,
                     onPreferenceClickListener = {
+                        // SHOWING THE CODE IS THE CONSENT. From here until the
+                        // window lapses this phone will accept an invite pushed
+                        // back at it, which is what lets the other person's
+                        // single scan finish the job in both directions. Outside
+                        // this moment an uninvited offer is refused — see
+                        // [SwarmNative.swarmExpectOffer].
+                        if (serving != 0L) SwarmNative.swarmExpectOffer(serving, OFFER_WINDOW_SECONDS)
                         SwarmSharing.showInvite(context, currentInvite(), inviteBlockedBecause())
                         true
                     }
@@ -549,6 +556,17 @@ class SwarmPlugin @Inject constructor(
     companion object {
 
         const val JOB_NAME = "SwarmDataSync"
+
+        /**
+         * How long after showing your code this phone will accept an invite
+         * pushed back at it.
+         *
+         * Long enough for somebody to pick up their phone, open the scanner and
+         * line the code up; short enough that a code shown once in a cafe is not
+         * an open door for the afternoon. The dialog usually outlives it, which
+         * is fine — reopening it opens the window again.
+         */
+        const val OFFER_WINDOW_SECONDS = 180L
 
         /**
          * Continuations of a bounded drain, under their own unique name.

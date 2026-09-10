@@ -379,6 +379,58 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmNodeId<
     to_jstring(env, pooled.node_id.clone())
 }
 
+/// Accept a pushed invite for the next `seconds`, because the person holding
+/// this phone just put their code on screen for somebody to scan.
+///
+/// See `Request::Offer`: this is the window that stops a stranger who knows
+/// this node id from making the phone carry their ciphertext.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmExpectOffer(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    seconds: jlong,
+) {
+    if handle == 0 {
+        return;
+    }
+    let pooled = unsafe { &*(handle as *const Pooled) };
+    pooled.swarm.expect_offer(seconds);
+}
+
+/// Hand our invite to somebody whose invite we just scanned, so they do not
+/// have to scan one back. 1 taken, 0 declined, <0 could not be delivered.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmOffer<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    their_endpoint: JString<'a>,
+    their_relay: JString<'a>,
+    our_invite: JString<'a>,
+) -> jlong {
+    if handle == 0 {
+        return -1;
+    }
+    let (Ok(e), Ok(r), Ok(o)) = (
+        env.get_string(&their_endpoint),
+        env.get_string(&their_relay),
+        env.get_string(&our_invite),
+    ) else {
+        return -2;
+    };
+    let pooled = unsafe { &*(handle as *const Pooled) };
+    match pooled.runtime.block_on(pooled.swarm.offer_to(
+        &String::from(e),
+        &String::from(r),
+        &String::from(o),
+    )) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(_) => -3,
+    }
+}
+
 /// One pass: say what we hold, hear what we should, take on a few of them.
 ///
 /// Returns `pool<TAB>buckets<TAB>held<TAB>wanted<TAB>adopted`, or empty.
@@ -792,7 +844,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_inviteParse<
 ) -> JString<'a> {
     let Ok(t) = env.get_string(&text) else { return to_jstring(env, String::new()) };
     match diaswarm_core::invite::Invite::parse(&String::from(t)) {
-        Ok(i) => to_jstring(env, format!("{}\t{}\t{}", i.subject, i.endpoint, i.purpose)),
+        Ok(i) => to_jstring(env, format!("{}\t{}\t{}\t{}", i.subject, i.endpoint, i.purpose, i.relay)),
         Err(_) => to_jstring(env, String::new()),
     }
 }

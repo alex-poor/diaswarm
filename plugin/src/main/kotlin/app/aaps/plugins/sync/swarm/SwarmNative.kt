@@ -182,6 +182,27 @@ object SwarmNative {
      */
     external fun netRefresh(servingHandle: Long, storePath: String): Long
 
+    /**
+     * Accept a pushed invite for [seconds], because this phone just put its own
+     * code on screen for somebody to scan.
+     *
+     * Without this window, anyone who knows this node id could make the phone
+     * carry their ciphertext — and node ids are announced in the pool.
+     */
+    external fun swarmExpectOffer(handle: Long, seconds: Long)
+
+    /**
+     * Hand our invite to somebody whose code we just scanned, so they never
+     * have to scan one back. 1 taken, 0 declined (their window was shut), <0
+     * could not be delivered.
+     */
+    external fun swarmOffer(
+        handle: Long,
+        theirEndpoint: String,
+        theirRelay: String,
+        ourInvite: String
+    ): Long
+
     /** What this phone follows: `subject<TAB>purpose<TAB>reached` per line. */
     external fun netFollowing(storePath: String): String
 

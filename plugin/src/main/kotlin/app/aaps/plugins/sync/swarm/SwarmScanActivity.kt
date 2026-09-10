@@ -107,7 +107,7 @@ class SwarmScanActivity : DaggerAppCompatActivity() {
             .setTitle(R.string.swarm_scanned)
             .setMessage(getString(R.string.swarm_scanned_body, subject, purpose))
             .setPositiveButton(R.string.swarm_scan_follow) { _, _ -> follow(text) }
-            .setNeutralButton(R.string.swarm_scan_share) { _, _ -> share(subject) }
+            .setNeutralButton(R.string.swarm_scan_share) { _, _ -> share(text) }
             .setNegativeButton(android.R.string.cancel) { _, _ -> finish() }
             .setOnCancelListener { finish() }
             .show()
@@ -138,9 +138,13 @@ class SwarmScanActivity : DaggerAppCompatActivity() {
      * Writes the preference the sync pass acts on rather than touching the
      * vault here. One code path changes access, and it is not on this thread.
      */
-    private fun share(readerKey: String) {
-        preferences.put(SwarmStringKey.GrantReader, readerKey)
-        aapsLogger.info(LTag.CORE, "swarm: scanned ${readerKey.take(16)}… to share with")
+    private fun share(theirInvite: String) {
+        // THE WHOLE INVITE, NOT JUST THE KEY. Granting needs the key; handing
+        // our own invite back needs their endpoint and relay, and those are in
+        // the same string they just showed us. Storing only the key is what
+        // made the other person scan a second code.
+        preferences.put(SwarmStringKey.GrantReader, theirInvite)
+        aapsLogger.info(LTag.CORE, "swarm: scanned an invite to share with")
         // The pass is what acts on the preference, so ask for one rather than
         // leaving the other person waiting on whenever this phone next syncs.
         swarmPlugin.syncNow()
