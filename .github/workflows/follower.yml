@@ -63,12 +63,23 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: NDK ${{ env.NDK_VERSION }}
+      - name: NDK
         run: |
           set -euo pipefail
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" >/dev/null
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          # Prefer whatever the runner already ships: an NDK is ~1 GB and the
+          # version matters only to cargo-ndk, which is not fussy.
+          NDK="${ANDROID_NDK_LATEST_HOME:-}"
+          if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
+            SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+            # `yes |` dies of SIGPIPE the moment sdkmanager stops reading, and
+            # under `pipefail` that fails the step even though the licences were
+            # accepted. Feed it a fixed number of yeses instead.
+            printf 'y\n%.0s' {1..50} | "$SDKM" --licenses >/dev/null 2>&1 || true
+            "$SDKM" "ndk;${NDK_VERSION}" >/dev/null
+            NDK="$ANDROID_HOME/ndk/${NDK_VERSION}"
+          fi
+          echo "using NDK at $NDK"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
 
       # Pinned by rust-toolchain.toml in the diaswarm repo; the targets and
       # cargo-ndk are what turn the record core into the .so the plugin packages.

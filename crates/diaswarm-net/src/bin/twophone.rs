@@ -73,7 +73,8 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&root)?;
 
     let net = network_id(POOL);
-    let swarm = Swarm::join_network(root.join("pool"), SigningKey::generate(), net)
+    // The real relay: two phones on one wifi is not what this checks.
+    let swarm = Swarm::join_via(root.join("pool"), SigningKey::generate(), net, diaswarm_net::swarm::DEFAULT_RELAY)
         .await
         .context("joining the pool")?;
     let (endpoint, gossip) = swarm.parts();

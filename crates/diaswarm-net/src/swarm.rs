@@ -87,6 +87,8 @@ pub struct Swarm {
     /// remembering. Keeping every announcer means the fallback has somewhere
     /// else to try.
     heard: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    /// Until when this peer accepts an invite pushed at it. See `Request::Offer`.
+    offers: Arc<std::sync::atomic::AtomicI64>,
     /// Kept so a subject followed AFTER startup can be seeded too — a scan
     /// happens while this is running, and restarting the app to make a new
     /// follow reachable is not something to ask of anybody.
@@ -111,13 +113,22 @@ impl Swarm {
         Self::join_network(store, signing_key, default_network()).await
     }
 
-    /// Join a named pool, reachable through a named relay.
+    /// Join a named pool, on the local network only.
+    ///
+    /// **NO RELAY, BECAUSE THIS IS WHAT THE TESTS USE.** A test that dials
+    /// n0's relay is measuring somebody else's uptime — `serve_with` says the
+    /// same thing about the same trap — and a suite of them contends for the
+    /// same network setup and goes flaky. Observed: adding the relay made a
+    /// passing swarm test fail under parallel load and pass alone.
+    ///
+    /// Anything that wants to be reachable from another network names its relay:
+    /// [`Swarm::join`] for the default, [`Swarm::join_via`] for a specific one.
     pub async fn join_network(
         store: impl Into<PathBuf>,
         signing_key: p2panda_core::SigningKey,
         network: p2panda_net::NetworkId,
     ) -> Result<Self> {
-        Self::join_via(store, signing_key, network, DEFAULT_RELAY).await
+        Self::join_via(store, signing_key, network, "").await
     }
 
     /// Join a named pool through a named relay. Tests pass their own of both,
@@ -168,9 +179,13 @@ impl Swarm {
         let gossip =
             Gossip::builder(book.clone(), endpoint.clone()).spawn().await.context("gossip")?;
 
-        // The vault protocol, unchanged, on p2panda's endpoint.
+        // The vault protocol on p2panda's endpoint. Built before it is handed
+        // over so the offer window stays reachable from here.
+        let vault_server = VaultServer::new(store.clone());
+        let offers = vault_server.window();
+
         endpoint
-            .accept(ALPN, VaultServer::new(store.clone()))
+            .accept(ALPN, vault_server.clone())
             .await
             .context("registering the vault protocol")?;
 
@@ -187,6 +202,7 @@ impl Swarm {
             joined: Arc::new(Mutex::new(HashMap::new())),
             heard: Arc::new(Mutex::new(HashMap::new())),
             relay: relay_url,
+            offers,
         };
         // Tell the address book where everybody we already follow lives, before
         // anything asks. One implementation of that rule, not two.
@@ -380,6 +396,38 @@ impl Swarm {
     /// subject falls into means hearing its holders announce themselves, and
     /// dialling one is a node id and p2panda's problem — no address is written
     /// down here, and none is passed to anybody.
+    /// Accept a pushed invite for the next `seconds`, because the user just put
+    /// their code on screen and is expecting somebody to scan it.
+    pub fn expect_offer(&self, seconds: i64) {
+        let until = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+            + seconds.max(0) * 1000;
+        self.offers.store(until, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Hand our own invite to somebody whose invite we just scanned.
+    ///
+    /// `their_endpoint` is the endpoint field out of the invite they showed —
+    /// a node id, optionally with addresses — and `their_relay` is the relay it
+    /// named, so a peer reachable only through somebody else's relay can still
+    /// be dialled.
+    pub async fn offer_to(
+        &self,
+        their_endpoint: &str,
+        their_relay: &str,
+        ours: &str,
+    ) -> Result<bool> {
+        let mut addr = crate::peer::parse_upstream(their_endpoint)?;
+        if let Ok(url) = their_relay.parse::<iroh::RelayUrl>() {
+            addr = addr.with_relay_url(url);
+        }
+        let endpoint = self.iroh_endpoint().await?;
+        let alpn = wire_alpn(self.endpoint.network_id());
+        crate::wire::offer_on(&endpoint, &alpn, addr, ours).await
+    }
+
     /// Tell the address book where a followed subject can be reached.
     ///
     /// Idempotent and cheap, and run on every pass rather than only at startup:

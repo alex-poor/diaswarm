@@ -13,6 +13,9 @@ use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, SecretKey};
 
 
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
+
 use crate::{answer, install, install_segment, install_wrap, Manifest, Request, WrapBlob};
 
 /// Serves one vault to whoever asks.
@@ -25,12 +28,32 @@ use crate::{answer, install, install_segment, install_wrap, Manifest, Request, W
 #[derive(Debug, Clone)]
 pub struct VaultServer {
     store: PathBuf,
+    /// Epoch millis until which a `Request::Offer` is accepted; 0 for never.
+    ///
+    /// Shared with whoever owns the endpoint, so the UI can open the window
+    /// when somebody puts their invite on screen and let it lapse on its own.
+    /// A deadline rather than a flag: a window that has to be closed is a
+    /// window somebody forgets to close.
+    accepting_until: Arc<AtomicI64>,
 }
 
 impl VaultServer {
     pub fn new(store: impl Into<PathBuf>) -> Self {
-        VaultServer { store: store.into() }
+        VaultServer { store: store.into(), accepting_until: Arc::new(AtomicI64::new(0)) }
     }
+
+    /// The handle the UI holds to open the window. See [`Request::Offer`].
+    pub fn window(&self) -> Arc<AtomicI64> {
+        self.accepting_until.clone()
+    }
+}
+
+/// Now, in epoch milliseconds.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 impl ProtocolHandler for VaultServer {
@@ -43,13 +66,55 @@ impl ProtocolHandler for VaultServer {
             // peer is using.
             // The caller is deliberately not looked at. Every peer gets the
             // same answer, and nothing on disk changes because somebody asked.
-            let reply = serde_json::from_slice::<Request>(&asked)
-                .ok()
-                .and_then(|req| answer(&self.store, &req).ok())
-                .unwrap_or_default();
+            let reply = match serde_json::from_slice::<Request>(&asked) {
+                // THE ONLY REQUEST THAT WRITES, and only while invited to.
+                Ok(Request::Offer { invite }) => {
+                    let open = self.accepting_until.load(Ordering::Relaxed) > now_ms();
+                    if open { take_offer(&self.store, &invite) } else { Vec::new() }
+                }
+                Ok(req) => answer(&self.store, &req).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
             send.write_all(&reply).await.map_err(AcceptError::from_err)?;
             send.finish().map_err(AcceptError::from_err)?;
         }
+    }
+}
+
+/// Hand our invite to somebody who just showed us theirs.
+///
+/// Sent on the same endpoint and ALPN as a fetch, so a peer that shares and a
+/// peer that reads are indistinguishable on the wire — the same property D15
+/// gives relays. Returns whether they took it; a peer whose window has closed
+/// replies empty, and that is not an error worth shouting about.
+pub async fn offer_on(
+    endpoint: &iroh::Endpoint,
+    alpn: &[u8],
+    addr: iroh::EndpointAddr,
+    invite: &str,
+) -> Result<bool> {
+    let conn = endpoint.connect(addr, alpn).await?;
+    let reply = ask(&conn, &Request::Offer { invite: invite.to_string() }).await?;
+    conn.close(0u32.into(), b"done");
+    Ok(!reply.is_empty())
+}
+
+/// Record an invite somebody handed us, and say whose it was.
+///
+/// Deliberately quiet about failure: a malformed invite and a closed window
+/// both produce an empty reply, because the sender is not owed a distinction
+/// they could probe with. The person watching their own screen is.
+fn take_offer(store: &Path, invite: &str) -> Vec<u8> {
+    let Ok(inv) = diaswarm_core::invite::Invite::parse(invite) else { return Vec::new() };
+    match crate::peer::add_follow_via(
+        store,
+        &inv.subject,
+        &inv.endpoint,
+        Some(&inv.purpose),
+        Some(inv.relay.as_str()),
+    ) {
+        Ok(_) => serde_json::to_vec(&inv.subject).unwrap_or_default(),
+        Err(_) => Vec::new(),
     }
 }
 

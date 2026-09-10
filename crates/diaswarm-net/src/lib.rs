@@ -83,6 +83,30 @@ pub enum Request {
     /// reader, and the manifest's count means it is skipped when nothing has
     /// changed.
     Wraps { subject: String },
+    /// "Here is my invite" — the one request that writes, and the reason the
+    /// sharing dance is one scan instead of two.
+    ///
+    /// **THE PERSON DECIDING ACCESS SHOULD BE THE PERSON ACTING.** Sharing used
+    /// to need two scans in opposite directions: the follower scanned to learn
+    /// where to fetch, and the subject scanned to learn whose key to grant. The
+    /// follower — who has no authority in the exchange at all — had to
+    /// understand the direction question twice. But an invite already carries an
+    /// endpoint, so the subject can simply dial the follower and hand its own
+    /// invite over after granting them. One scan, by the one who owns the data.
+    ///
+    /// **IT IS REFUSED UNLESS THE RECEIVER IS EXPECTING IT.** Every other
+    /// request is read-only, which is what makes serving to anyone safe (§9.2);
+    /// this one adds a subject to what the receiver replicates, so an
+    /// unsolicited one is a stranger making your phone carry their ciphertext.
+    /// A peer accepts offers only while its owner has the invite screen open,
+    /// which is precisely the moment they are holding up a code expecting
+    /// somebody to scan it. Outside that window it is declined like any request
+    /// the peer cannot service.
+    ///
+    /// Accepting is not reading and grants nothing. It means "I will hold this
+    /// person's ciphertext and try to open it", and whether anything opens is
+    /// decided by the grant the subject just made, not by this message.
+    Offer { invite: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -181,6 +205,9 @@ fn count_wraps(vault: &Path) -> usize {
 /// than the one that argument bought.
 pub fn answer(store: &Path, req: &Request) -> Result<Vec<u8>> {
     match req {
+        // Handled by the server, which owns the acceptance window this needs;
+        // `answer` is the read-only half and stays that way.
+        Request::Offer { .. } => Ok(Vec::new()),
         Request::Have => {
             let mut subjects: Vec<String> = Vec::new();
             if store.exists() {
