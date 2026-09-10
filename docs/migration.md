@@ -42,46 +42,32 @@ the JNI surface and the Kotlin plugin.
 
 ## What is not yet true
 
-**1. ~~A backfill has never completed cleanly.~~ It completes, and the result
-does not match.** On the loop phone, triggered by enabling shadow mode:
+**1. ~~A backfill has never completed cleanly.~~ It does now, and the vaults
+agree.** With thinning withdrawn, a full re-drain on the loop phone ran in
+bounded passes with no crash, and **the shadow vault sealed exactly what it was
+handed on every pass**. The two implementations have never once disagreed about
+a record.
+
+**2. The device drains more than the snapshot tool sees — and it is not a
+migration question.** Per kind, over a complete backfill:
 
 | kind | device | `canon.py` | |
 |---|---|---|---|
-| cgm | **4,729** | **19,349** | 14,620 missing |
-| tbr | **12,858** | **10,757** | 2,101 extra |
-| bolus / carb | 920 / 262 | 919 / 261 | +1 each, new data |
-| event / target / profile | 91 / 40 / 19 | 91 / 40 / 19 | exact |
+| cgm | 30,188 | 23,247 | **+6,941** |
+| tbr | 11,400 | 10,757 | +643 |
+| bolus / carb | 920 / 263 | 919 / 261 | +1 / +2 |
+| event / target / profile | 91 / 40 / 19 | identical | 0 |
 
-**The CGM shortfall is a defect in the thinning, not in the vault.** 10,521
-readings were thinned where `canon.py` thins 3,898. Each bounded pass builds an
-emitter whose `resume_mark` is the previous pass's highest bucket and thins
-anything at or below it. That is safe only if rows arrive in time order — and a
-drain walks rows by **rowId**, so one late row moves the mark and every earlier
-reading in the next pass is discarded as "already published". Bounding the drain
-into six passes gave that six opportunities.
+`canon.py` reads a snapshot and takes the rows that survive §3.1 and §3.2 —
+current, valid. The device drains AAPS's sync queue, which walks **every** row
+including version history and resolves each to the record it belongs to. Most of
+those resolve to bytes already emitted and are deduplicated; some evidently do
+not.
 
-Order-dependence *within* a run was fixed with a bucket set. Between runs it was
-left as a high-water mark, and bounding the passes turned a theoretical problem
-into 14,600 lost readings.
-
-**The tbr excess is unexplained** and is now the more interesting number, since
-2,101 extra records cannot be a thinning bug.
-
-**Neither is a reason to distrust `diaswarm-spaces`**: the shadow vault sealed
-exactly what it was given, 18,921 of 18,921. What it was given was wrong.
-
-**Old wording:** The first re-drain crashed AAPS
-with an `OutOfMemoryError` — caused by shadow-mode code holding a second copy
-of the whole history — and the second was interrupted by that crash's fallout.
-Both causes are fixed and the drain is now bounded at 4,000 records a pass, but
-**no full backfill has run start to finish**, so the on-device differential is
-still unproven at full volume.
-
-**2. 563 records are unexplained.** The device emitted 35,897 where `canon.py`
-produced 31,341 from the same database. 3,898 was CGM thinning, 1 was a
-post-emit edit. Ruled out: extra filtering, superseded versions, retracted rows,
-a profile-table mismatch. The per-kind counters that would settle it have never
-run over a complete drain.
+**Both vaults get the same input**, so this changes nothing about whether
+`diaswarm-spaces` is a faithful replacement — it is the same question spec §7
+reserves `amend` for, and it applies to the vault running today. It should be
+chased, and it does not gate a cutover.
 
 **3. Two phones replicate, partially.** Run on the real devices with
 `crates/diaswarm-net/src/bin/twophone.rs` — a binary in `/data/local/tmp`, no
@@ -171,3 +157,28 @@ In order, none of them yet done:
 
 Only then is deleting `vault.rs`, `seal.rs` and `wire.rs` a decision rather than
 a leap.
+
+## Where it stands, 2026-09-10
+
+**The vault migration is sound on its own terms.** `diaswarm-spaces` reproduces
+exactly what it is given — 74 days of this subject's real history, on the phone
+that produced it, sealed inside AAPS across app upgrades and restarts. Two real
+phones replicate a subject over log sync and the carrier reads none of it. First
+contact costs three seconds. Every remaining doubt is about something else:
+
+* the drain emitting more than the snapshot tool sees (2 above), which affects
+  the current vault identically;
+* shadow mode not yet having run for days, across a reboot, a Doze window and a
+  sensor change;
+* two-phone replication proven to start, not to complete.
+
+**What it would cost, now that nothing is thinned:** 54.9 MB a year per subject
+and 329 MB for a peer carrying six, against 13.1 and 78 before. That is the
+price of not losing readings, and it is the largest single consequence of this
+work.
+
+**Recommendation: do not cut over yet, and not because of anything measured
+here.** Let shadow mode run for a week. If it still agrees pass for pass after a
+reboot and a sensor change, delete `vault.rs`, `seal.rs` and `wire.rs` — the
+evidence for doing so is stronger than the evidence that ever existed for the
+code they replace.

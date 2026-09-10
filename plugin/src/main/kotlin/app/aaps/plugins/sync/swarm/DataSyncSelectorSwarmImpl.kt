@@ -80,6 +80,14 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
          */
         const val STUCK_PASS_MS = 15 * 60 * 1000L
 
+        /**
+         * What gets published. Bump it and every shadow vault refills itself.
+         *
+         * 1 — CGM thinned to one reading per five minutes.
+         * 2 — nothing thinned; spec §3.3 withdrawn.
+         */
+        const val SHADOW_GENERATION = 2L
+
         const val FOLLOW_POLL_SECONDS = 120L
     }
 
@@ -319,15 +327,26 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * in the backfill.
      */
     private fun backfillIfShadowJustEnabled() {
-        val on = preferences.get(SwarmBooleanKey.ShadowSpacesVault)
-        val filled = preferences.get(SwarmLongKey.ShadowFilled) == 1L
-        if (!on) {
-            if (filled) preferences.put(SwarmLongKey.ShadowFilled, 0L)
-            return
-        }
-        if (filled) return
+        if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return
+        if (preferences.get(SwarmLongKey.ShadowFilled) == SHADOW_GENERATION) return
 
-        aapsLogger.info(LTag.CORE, "swarm: shadow mode is on and unfilled — re-reading everything")
+        // A GENERATION, NOT A FLAG, AND NOT A TRANSITION.
+        //
+        // The first version watched for the switch going off and then on, and
+        // cleared its flag during a pass while off — so switching it off and
+        // straight back on, which is what a person does, never cleared
+        // anything and never triggered. A generation needs no timing at all:
+        // it is bumped in the source whenever what gets published changes, and
+        // any vault filled under an older one is refilled without being asked.
+        //
+        // Generation 2 is "nothing is thinned" (spec §3.3 withdrawn). A vault
+        // filled at generation 1 is missing 14,620 CGM readings.
+        aapsLogger.info(
+            LTag.CORE,
+            "swarm: shadow vault is generation " +
+                "${preferences.get(SwarmLongKey.ShadowFilled)}, wanted $SHADOW_GENERATION " +
+                "— re-reading everything"
+        )
         for (key in SwarmLongKey.entries) {
             when (key) {
                 SwarmLongKey.AmendmentsSeen, SwarmLongKey.ShadowFilled -> continue
@@ -335,7 +354,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 else -> preferences.put(key, 0L)
             }
         }
-        preferences.put(SwarmLongKey.ShadowFilled, 1L)
+        preferences.put(SwarmLongKey.ShadowFilled, SHADOW_GENERATION)
     }
 
     private fun drain(source: Source) {
