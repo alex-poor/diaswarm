@@ -118,6 +118,25 @@ fn take_offer(store: &Path, invite: &str) -> Vec<u8> {
     }
 }
 
+/// Hand an invite over on a throwaway endpoint. The peer-owned equivalent is
+/// [`offer_on`], and a phone should use that.
+pub async fn offer_with(addr: EndpointAddr, invite: &str, local_only: bool) -> Result<bool> {
+    let endpoint = if local_only {
+        Endpoint::bind(presets::Minimal).await?
+    } else {
+        Endpoint::bind(presets::N0).await?
+    };
+    // THE MIXED ALPN, ALWAYS, because that is what `serve_offering` accepts —
+    // `local_only` chooses whether to use n0's discovery, not which dialect to
+    // speak. Getting this wrong produces "peer doesn't support any known
+    // protocol" from two peers that are otherwise perfectly configured, which
+    // is the same mistake this file already warns about twice.
+    let alpn = crate::swarm::default_wire_alpn();
+    let out = offer_on(&endpoint, &alpn, addr, invite).await;
+    endpoint.close().await;
+    out
+}
+
 /// Start serving. The returned router runs until it is shut down.
 pub async fn serve(store: PathBuf, secret: SecretKey) -> Result<Router> {
     serve_with(store, secret, false).await
@@ -134,6 +153,18 @@ pub async fn serve(store: PathBuf, secret: SecretKey) -> Result<Router> {
 /// traversal needs a relay and that this is unavoidable — a relay forwards
 /// ciphertext and stores nothing, which is a different thing from a server.
 pub async fn serve_with(store: PathBuf, secret: SecretKey, local_only: bool) -> Result<Router> {
+    Ok(serve_offering(store, secret, local_only).await?.0)
+}
+
+/// The same, handing back the offer window so a caller can open it.
+///
+/// Plain [`serve_with`] drops the handle, which means it never accepts a pushed
+/// invite — the right default for something serving to whoever asks.
+pub async fn serve_offering(
+    store: PathBuf,
+    secret: SecretKey,
+    local_only: bool,
+) -> Result<(Router, Arc<AtomicI64>)> {
     let endpoint = if local_only {
         Endpoint::builder(presets::Minimal).secret_key(secret).bind().await?
     } else {
@@ -143,9 +174,9 @@ pub async fn serve_with(store: PathBuf, secret: SecretKey, local_only: bool) -> 
     // two dialects: a peer that joined through `swarm.rs` answers on the mixed
     // id and a peer started by the CLI answers on the raw one, and neither can
     // reach the other while both look perfectly healthy.
-    Ok(Router::builder(endpoint)
-        .accept(crate::swarm::default_wire_alpn(), VaultServer::new(store))
-        .spawn())
+    let server = VaultServer::new(store);
+    let window = server.window();
+    Ok((Router::builder(endpoint).accept(crate::swarm::default_wire_alpn(), server).spawn(), window))
 }
 
 async fn ask(conn: &Connection, req: &Request) -> Result<Vec<u8>> {

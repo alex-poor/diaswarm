@@ -259,3 +259,70 @@ async fn a_follower_keeps_reading_days_sealed_after_the_grant() {
     );
     router.shutdown().await.unwrap();
 }
+
+/// An invite pushed at a peer is taken only while that peer is expecting one.
+///
+/// **THE ONE REQUEST THAT WRITES.** Every other message leaves the receiver's
+/// disk alone, which is what makes serving to whoever asks safe. `Offer` adds a
+/// subject to what the receiver replicates, so without a window a stranger who
+/// knows your node id can make your phone carry their ciphertext — and node ids
+/// are announced in the pool, so that is not a stretch.
+///
+/// The window is open exactly while somebody is holding their invite on screen
+/// waiting for it to be scanned, which is the only moment an offer is expected.
+#[tokio::test]
+async fn an_offer_is_refused_unless_the_peer_is_expecting_one() {
+    let served = tmp("offer-served");
+    let (router, window) = diaswarm_net::wire::serve_offering(served.clone(), SecretKey::generate(), true)
+        .await
+        .unwrap();
+    let addr = router.endpoint().addr();
+
+    // Somebody else's invite, well-formed and completely uninvited.
+    let stranger = Identity::generate();
+    let invite = diaswarm_core::invite::Invite::new_via(
+        &hex(&stranger.enc_public()),
+        &hex(router.endpoint().id().as_bytes()),
+        "follow",
+        "",
+    )
+    .unwrap()
+    .encode();
+
+    // Closed: refused, and nothing recorded.
+    let took = diaswarm_net::wire::offer_with(addr.clone(), &invite, true).await.unwrap();
+    assert!(!took, "a peer expecting nothing accepted a pushed invite");
+    assert!(
+        diaswarm_net::peer::load_follows(&served).unwrap_or_default().is_empty(),
+        "a refused offer still wrote a follow"
+    );
+
+    // Open: taken, and recorded against the subject who sent it.
+    window.store(
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+            as i64
+            + 60_000,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let took = diaswarm_net::wire::offer_with(addr.clone(), &invite, true).await.unwrap();
+    assert!(took, "a peer expecting an invite refused one");
+    let follows = diaswarm_net::peer::load_follows(&served).unwrap();
+    assert_eq!(follows.len(), 1, "expected exactly one follow, got {follows:?}");
+    assert_eq!(follows[0].subject, hex(&stranger.enc_public()));
+
+    // Lapsed: refused again, WITHOUT anyone closing it. A window that has to be
+    // closed by hand is a window somebody forgets to close.
+    window.store(1, std::sync::atomic::Ordering::Relaxed);
+    let other = Identity::generate();
+    let second = diaswarm_core::invite::Invite::new_via(
+        &hex(&other.enc_public()),
+        &hex(router.endpoint().id().as_bytes()),
+        "follow",
+        "",
+    )
+    .unwrap()
+    .encode();
+    let took = diaswarm_net::wire::offer_with(addr, &second, true).await.unwrap();
+    assert!(!took, "the window did not lapse");
+    assert_eq!(diaswarm_net::peer::load_follows(&served).unwrap().len(), 1, "a lapsed window still wrote");
+}
