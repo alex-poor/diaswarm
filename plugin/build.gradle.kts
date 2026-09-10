@@ -31,10 +31,6 @@ dependencies {
     // theme. Without it a dialog built from the activity's dark context renders
     // its own text white on a white Material background: invisible, not absent.
     implementation(project(":core:ui"))
-    // QR for the invite. Already in libs.versions.toml and in the gradle cache
-    // (it came in for the removed SmsCommunicator), and jitpack is enabled for
-    // every module, so this resolves offline.
-    implementation(libs.com.github.kenglxn.qrgen.android)
     // Scanning. Declared with a literal coordinate ON PURPOSE: adding it to
     // AAPS's gradle/libs.versions.toml would be a change to the loop app's own
     // build for the sake of an add-on, and the standing constraint on this work

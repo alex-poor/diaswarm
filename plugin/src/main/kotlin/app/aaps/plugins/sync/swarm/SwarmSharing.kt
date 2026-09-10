@@ -4,6 +4,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.MultiFormatWriter
 import android.util.TypedValue
 import android.view.Gravity
 import android.widget.ImageView
@@ -12,7 +15,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
-import net.glxn.qrgen.android.QRCode
 
 /**
  * The two dialogs that make sharing a thing a person can do.
@@ -60,10 +62,27 @@ object SwarmSharing {
      */
     private fun qr(context: Context, text: String): Bitmap {
         val side = (context.resources.displayMetrics.widthPixels * 0.55f).toInt()
-        return QRCode.from(text)
-            .withErrorCorrection(ErrorCorrectionLevel.H)
-            .withSize(side, side)
-            .bitmap()
+        // ZXING'S OWN ENCODER, NOT A WRAPPER AROUND IT. `zxing-android-embedded`
+        // is already here for the scanner and brings `com.google.zxing:core`
+        // with it, which is what any QR wrapper would have called anyway.
+        //
+        // The wrapper it replaces came from jitpack, and F-Droid will not build
+        // against jitpack — it builds arbitrary source at an arbitrary commit,
+        // so the dependency is not reproducible. One line of encoding is a
+        // cheaper price than being unpublishable.
+        val hints = mapOf(
+            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.H,
+            EncodeHintType.MARGIN to 1
+        )
+        val matrix = MultiFormatWriter().encode(text, BarcodeFormat.QR_CODE, side, side, hints)
+        val on = android.graphics.Color.BLACK
+        val off = android.graphics.Color.WHITE
+        val pixels = IntArray(matrix.width * matrix.height)
+        for (y in 0 until matrix.height) {
+            val row = y * matrix.width
+            for (x in 0 until matrix.width) pixels[row + x] = if (matrix.get(x, y)) on else off
+        }
+        return Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.ARGB_8888)
     }
 
     /**
