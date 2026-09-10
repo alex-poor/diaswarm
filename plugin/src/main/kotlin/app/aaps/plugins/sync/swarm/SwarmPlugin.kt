@@ -72,8 +72,17 @@ class SwarmPlugin @Inject constructor(
         .pluginName(R.string.swarm)
         .shortName(R.string.swarm_shortname)
         .description(R.string.description_swarm)
-        // Off. Deliberately. See the class comment.
-        .enableByDefault(false)
+        // OFF IN THE APP THAT DRIVES A PUMP. Deliberately, and that is the
+        // whole safety argument — see the class comment.
+        //
+        // ON IN THE FOLLOWER, for the opposite reason: the aapsclient build
+        // exists to follow somebody and does nothing else (AppModule.asFollower
+        // strips it to the graph and this plugin). Its Config Builder is gone,
+        // so a plugin that shipped off there could not be turned on at all —
+        // and asking a follower to find a settings screen and enable "Swarm
+        // sharing" before their friend's glucose appears is exactly the
+        // configuration this build is supposed to have none of.
+        .enableByDefault(config.AAPSCLIENT)
         .visibleByDefault(false)
         // The screen is built in [addPreferenceScreen], not in XML — the XML
         // path in this tree is dead code. Setting this is also what makes the
