@@ -304,6 +304,17 @@ was three phones on one wifi, and a follower that left the building could not
 connect to anything. That is not a swarm; it is a LAN party, and the README
 implied otherwise.
 
+**THE DESIGN DOCUMENT HAD THIS RIGHT AND THE CODE DID NOT.** feasibility §9.1
+says it plainly, and said it before any of this was built: *"Holochain has
+bootstrap nodes, libp2p has rendezvous points. Two phones on mobile data cannot
+find each other, or reach each other through carrier NAT, without something in
+the middle that is on"*, and it settles on the claim *"no seeders, no accounts,
+no operator, and nobody holding your data — not 'no servers'"*. The relay was
+never a discovery; it was a requirement written down, not implemented, and then
+papered over by a README that claimed a two-phone test had run "over the open
+internet" when it had run on one wifi. The lesson is not about relays. It is
+that a capability nobody tested got described as if it worked.
+
 The fix is not clever, it is p2panda's own `chat.rs` example: `.relay_url(...)`
 on the endpoint, and `NodeInfo::from(addr.with_relay_url(url)).bootstrap()` for
 the one node id the user already has. A follower scans exactly one thing — the
@@ -779,8 +790,10 @@ subscribe for the foreground case rather than polling harder.
 
 ### D16 · An invite is one string, and it works in both directions
 
-**Settled 2026-09-09.** Sharing is bootstrapped by
-`diaswarm:1:<subject>:<endpoint>:<purpose>:<check>`, shown as a QR code.
+**Settled 2026-09-09; the format grew a relay field on 2026-09-11 (D23).**
+Sharing is bootstrapped by
+`diaswarm:2:<subject>:<endpoint>:<purpose>:<relay>:<check>`, shown as a QR code
+or pasted as text. `v1` invites are still read and mean the default relay.
 
 It replaced moving two 64-character hex strings between two devices by hand,
 where a single transposed character produces a key that is structurally perfect

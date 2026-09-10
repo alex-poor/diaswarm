@@ -365,9 +365,21 @@ nothing to bite on, which is a pass by absence rather than by design.
 diabetes data.
 
 **Removing the custodian removes the accountable party.** That is the flip side
-of *"no server, no hosting bill, no operator to trust"* in the README's trade
-table, and it should appear in that table's right-hand column. There is no
-operator to hold to account because there is no operator.
+of the README's trade table, and it appears in that table's right-hand column.
+There is no operator to hold to account because there is no operator holding the
+data.
+
+**Amended 2026-09-11: there is now one party in the picture, and it is not
+nothing.** Reaching a peer off the local network needs a relay (D23). It holds
+no data and can read none — traffic is sealed before it is sent and encrypted
+again in transit — but it sees which node ids exchange bytes, from which
+addresses, and how often. The default is operated by a third party in Singapore.
+That is a custodian of *metadata*, accountable to nobody here, and the Charter's
+question applies to it: a subject cannot ask them anything, cannot see their
+logs, and did not choose them. The mitigation is that the relay travels in the
+invite, so moving to one you run yourself costs a new invite rather than a new
+release — which converts "trust a stranger" into "trust yourself", at the cost
+of being the only traffic on it.
 
 What exists instead: AGPL, a `SECURITY.md`, an explicit disclaimer of AAPS
 affiliation, no APK distributed and none ever, and the Limits section. What does

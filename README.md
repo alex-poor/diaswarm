@@ -1,7 +1,8 @@
 # diaswarm
 
 Share the data your insulin pump loop is already writing — with your partner, your
-parent, your clinician — **revocably, and with nobody in the middle**.
+parent, your clinician — **revocably, and with nobody who can read it in the
+middle**.
 
 > Your phone keeps looping exactly as it does now. What is added is the ability to
 > hand someone a key to your record, and to take it back.
@@ -10,19 +11,28 @@ parent, your clinician — **revocably, and with nobody in the middle**.
 seals its own history and serves it; other devices replicate it and serve it onward;
 a granted reader opens it from any of them.
 
-Two things have been done end to end on real hardware, with real data:
+Done end to end on real hardware, with real data:
 
-* **Two phones.** A factory-reset Android phone, set up from nothing, scanned a QR
-  code and showed the subject's live glucose — 117 mg/dL, one minute old, matching
-  the number on the subject's own screen — over the open internet, with no server,
-  no account and nothing typed. Two scans: one to follow, one to grant.
-* **A relay.** A stranger peer, granted nothing, replicated 146 segments and all 219
-  wraps, could open none of it, and served the complete history to a granted reader
-  while the originating phone was switched off. 33,800 records over 73 days.
-* **A pool.** Two phones on a wifi network, with nothing configured between them,
-  found each other, agreed independently on the size of the pool, and each worked
-  out the same share of the subject space to carry. Turning the feature on is the
-  whole instruction — there is no address to exchange and nobody to ask.
+* **A follower's graph.** A second phone, set up from nothing, scanned a QR code and
+  drew the subject's own trend line on its AAPS glucose graph — 5.0 mmol/L, 82
+  seconds old, against the subject's own 7.0 target band, which arrived in the
+  shared record rather than being typed in. 1,631 readings on first contact, then
+  two per sync pass. That is the Nightscout job, done with no Nightscout.
+* **A carrier that cannot read.** A stranger peer, granted nothing, replicated 146
+  segments and all 219 wraps, could open none of it, and served the complete
+  history to a granted reader while the originating phone was switched off. 33,800
+  records over 73 days.
+* **A pool.** Phones on a network, with nothing configured between them, found each
+  other, agreed independently on the size of the pool, and each worked out the same
+  share of the subject space to carry. Turning the feature on is the whole
+  instruction — there is no address to exchange and nobody to ask.
+
+**What has NOT been done on hardware: two phones on different networks.** Every
+demonstration above was devices on one wifi finding each other by mDNS, because
+until 2026-09-11 no relay was configured and there was no other way for them to
+meet ([D23](docs/decisions.md)). An earlier version of this file claimed the
+two-phone test ran "over the open internet". It did not, and that claim is the
+reason this paragraph exists.
 
 Not reviewed cryptography. See [Limits](#limits) before trusting it with anything.
 
@@ -119,27 +129,77 @@ Membership, discovery and gossip are [p2panda-net](https://p2panda.org) over iro
 the decision recorded in [D2](docs/decisions.md), and the reason this repository
 does not contain a hand-written DHT.
 
+## How two phones meet
+
+On the same network, mDNS. Anywhere else, an **iroh relay**: both phones hold a
+connection to one, it introduces them, they hole-punch to a direct connection,
+and it drops out of the path. If hole-punching fails it stays as a fallback.
+
+**A relay cannot read anything.** Traffic reaching it is encrypted twice: your
+records are sealed under epoch keys before they touch the network, and that
+ciphertext travels inside a QUIC/TLS connection keyed to the two endpoints. In
+iroh's words, relays *"can not decode any traffic for other iroh endpoints and
+only forward it"*.
+
+**What a relay does see**, and this is the honest cost:
+
+* the two **node ids** exchanging bytes — stable, so correlatable over time;
+* both **IP addresses**, hence rough location and ISP;
+* **timing and volume** — that a phone syncs every two minutes, that 80 KB moved
+  at 07:30, that a device went quiet.
+
+The default is `aps1-1.relay.n0.iroh.link`, run by [n0](https://n0.computer) and
+open to anyone without an account. Verified 2026-09-11: it resolves into
+`2a01:4ff:2f0::/48`, registered to Hetzner Online GmbH, netname `CLOUD-SIN`,
+country **SG**. If that jurisdiction or that operator is not acceptable to you —
+and for health data it reasonably might not be — run `iroh-relay` yourself and
+put your own URL in the invite. Note that it defaults to `AccessConfig::Everyone`;
+a relay of your own carries anybody's traffic until you give it an allowlist of
+node ids or a shared token.
+
+Nothing else leaves the phones. p2panda builds its endpoint with iroh's
+`Minimal` preset, so there is no DNS or DHT publishing of your address, and
+address lookups come only from the peers you already know. **The relay is the
+single third party in the design.**
+
 ## Sharing, from the phone
 
 An invite is one string, checksummed, that also fits in a QR code:
 
 ```
-diaswarm:1:<subject-key>:<endpoint>:<purpose>:<check>
+diaswarm:2:<subject-key>:<endpoint>:<purpose>:<relay>:<check>
 ```
+
+The relay travels **in the invite** rather than being compiled in, so moving off
+the default costs a new invite and not a rebuild of every phone. It is per
+subject: two people you follow may be reachable through different relays. `v1`
+invites, which predate the field, are still read and mean the default.
 
 Its subject field is exactly the key someone would grant, so **one code works in
 both directions**:
 
-| | Phone A | Phone B |
+| | Subject's phone | Follower's phone |
 |---|---|---|
-| 1 | *Your invite* → show the code | |
-| 2 | | *Scan a code* → **Follow them** |
-| 3 | | *Your invite* → show the code |
-| 4 | *Scan a code* → **Share with them** | |
-| 5 | | *People you follow* → reading, and how old |
+| 1 | | *Your invite* → show the code |
+| 2 | *Scan a code* → **Share with them** | |
+| 3 | *Your invite* → show the code | |
+| 4 | | *Scan a code* → **Follow them** |
+| 5 | | the trend line appears on the glucose graph |
 
 Scanning never guesses which direction was meant — following someone and sharing
 with them are opposites, and both are ordinary — so it names the key and asks.
+The phone doing the scanning is the one taking the action.
+
+A camera is not always in the room, so an invite can also be **pasted as text**:
+it is short enough to send in a message, and *Your invite* offers to copy it.
+
+**The follower is a different app.** Drawing somebody else's glucose means
+writing into AAPS's own database, and in the app that drives a pump that is not a
+display bug — a new glucose row triggers the loop. So it runs only in the
+`aapsclient` build, which has its own `applicationId`, installs *alongside* the
+loop app, and has no pump driver compiled into it ([D22](docs/decisions.md)). That
+build is stripped to one job: no profile editing, no CGM or pump setup, no
+Actions tab, no carbs or bolus. One screen, one instruction.
 
 An invite is **not a secret and not a grant**. Anyone holding it can download your
 ciphertext and open none of it.
@@ -170,8 +230,9 @@ The whole design is one bargain, and it is worth reading before anything else.
 | Data available to your people when your phone is off | Any record of someone *reading* — reads are invisible |
 | Revocation enforced by key, not by a server's goodwill | Deletion. Publication is permanent |
 | A signed, tamper-evident record of every grant | A leaked key never expires |
-| No server, no hosting bill, no operator to trust | Discovery: you still have to exchange a code |
+| No server holds your data, and no operator can read or withhold it | A **relay** operator sees which node ids talk, and when. Run your own to change who that is |
 | Peers find each other, so one phone sleeping is survivable | **Membership is visible.** Being in the pool is not private, though what you hold is unreadable |
+| Works off your own network, not just on your wifi | Which needs a relay, and so a rendezvous point somebody runs |
 | Three copies of everything, for ~1.6 MB a month | You carry strangers' ciphertext too — the deal runs both ways |
 
 Language that must never be used about this — and the true version of each claim —
@@ -180,13 +241,24 @@ may make a 3 a.m. decision based on what this says.
 
 ## Safety
 
-The AAPS add-on **ships disabled** and is structurally incapable of dosing. It is a
+The AAPS add-on **ships disabled** in the app that drives a pump, and is
+structurally incapable of dosing there. It is a
 `DataSyncSelector`: it drains a queue outward. It holds no pump reference,
 implements no constraint, and has no path into the loop. The residual risk is not
 dosing — it is that a plugin which fails to construct takes the app with it, and an
 app that will not start is a loop that has stopped. That is why it is off by
 default, why the constructor does nothing, and why the native library is not loaded
 until something is actually shared.
+
+**The one write into an AAPS database is fenced by the build flavour.** A
+follower puts the person it follows onto its own glucose graph, which means
+inserting rows — and a glucose row landing in a looping phone fires `EventNewBG`,
+which extends `EventLoop`, which runs the loop. That would not be a wrong line on
+a graph; it would be dosing on somebody else's blood. So it refuses unless
+`Config.AAPSCLIENT`, and a build flavour cannot be turned on by a setting, a
+settings import, or a bug in this add-on. Two further barriers: mirrored rows are
+tagged so the drain can never re-publish them as the follower's own, and nothing
+is mirrored until somebody says whose line it is.
 
 ## Try it without a phone
 
@@ -218,7 +290,7 @@ cargo run --bin diaswarm-net -- peer  /tmp/store2 /tmp/n2.key /tmp/friend.id
 ```
 spec/records.md          The wire contract. Versioned in-band
 docs/feasibility.md      The assessment: architecture, costs, what must not be claimed
-docs/decisions.md        What is settled (D1–D21), and what would reopen each
+docs/decisions.md        What is settled (D1–D23), and what would reopen each
 docs/migration.md        Moving onto p2panda: what is proven, and what a cutover still needs
 docs/rights.md           The Diabetes Data Rights Charter, and where this fails it
 
@@ -227,7 +299,8 @@ crates/diaswarm-net      The pool: membership and buckets (pool.rs, swarm.rs) ov
                          p2panda-net, and the vault protocol they carry
 crates/diaswarm-android  The JNI surface the phone calls
 plugin/                  The AAPS add-on: settings screen, QR scanner, sync worker,
-                         and the follower that keeps other people's history current
+                         and the follower that draws someone else's glucose on the
+                         graph (aapsclient builds only)
 
 tools/canon.py           AAPS SQLite → canonical records, with a dropped-and-why report
 tools/seal.py            The sealing construction in Python, byte-identical to Rust
@@ -254,6 +327,15 @@ CAMAPS=/path/to/your/aaps-checkout ./plugin/build-apk.sh --install
 It refuses to install if the signing certificate no longer matches the device,
 because on a looping phone a mismatch costs you a pump re-pairing.
 
+**The follower is a separate APK**, and a separate package, so it installs
+alongside the loop app rather than over it:
+
+```sh
+cd /path/to/your/aaps-checkout
+./gradlew :app:assembleAapsclientLoop -PappVersionSuffix=follower
+adb install -r app/build/outputs/apk/aapsclient/loop/app-aapsclient-loop.apk
+```
+
 ## Limits
 
 - **The cryptography has not been reviewed.** Standard primitives, composed by
@@ -267,7 +349,15 @@ because on a looping phone a mismatch costs you a pump re-pairing.
   and so are the bucket topics where peers announce what they hold — so who
   participates, and roughly what they carry, is not secret, even though every byte
   of it is unreadable ciphertext ([D19](docs/decisions.md)).
-- **The pool has only ever been two phones.** Peers carrying genuinely disjoint
+- **Off-network is unproven on hardware.** A relay is configured and a peer
+  reaches it in about four seconds, but two phones on genuinely different networks
+  exchanging a vault has not been demonstrated — every hardware test so far was one
+  wifi. Until that runs, treat remote following as untested ([D23](docs/decisions.md)).
+- **The relay is a metadata observer.** It cannot read a byte, but it sees which
+  node ids talk, from which addresses, and how often. The default is operated by a
+  third party in Singapore. Running your own moves that to you — and shrinks the
+  crowd you were hiding in to exactly your own family.
+- **The pool has only ever been three phones.** Peers carrying genuinely disjoint
   shares, and one adopting a stranger's subject unasked, are tested on a laptop and
   unproven on hardware — that needs four or more devices.
 - **Metadata leaks.** The number of grants and roughly when they happened are

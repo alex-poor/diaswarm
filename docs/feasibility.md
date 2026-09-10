@@ -405,7 +405,7 @@ something rather than against taste.
 | **RQ4** | Named recipients, each with their own scope — a partner, a clinician, a cohort |
 | **RQ5** | Revocation is prospective and enforced by key, not by policy: after T, nothing new |
 | **RQ6** | Grants, withdrawals and egress are visible to the subject. Reads, only where the recipient must fetch (§6) |
-| **RQ7** | No operator and no server anyone must fund forever |
+| **RQ7** | No operator and no server anyone must fund forever — **amended 2026-09-11**: a relay is needed to meet off the local network (D23). It stores nothing and can read nothing, but somebody runs it |
 | **RQ8** | The wire protocol survives a **release season**, not forever. See the correction below — this started as whanau_voice R6 and does not survive contact with AAPS |
 | **RQ9** | Battery and data are safety properties on a loop phone, not preferences |
 | **RQ10** | Hard isolation from dosing. Nothing here may write back into the loop |
