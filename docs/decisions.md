@@ -332,6 +332,27 @@ gets its data when discovery gets round to it**, which is a worse first
 impression than the current fetch-on-demand and has no workaround inside the
 library.
 
+**IT RUNS ON THE PHONE.** `crates/diaswarm-spaces/src/bin/selftest.rs` is a
+binary rather than a JNI call on purpose: pushed to `/data/local/tmp` and run
+over adb, it touches AAPS not at all — no install, no plugin, nothing near a
+pump — and answers the question "it cross-compiles" does not.
+
+On the loop phone, a Pixel 7 running a closed loop at the time:
+
+```
+opens two vaults              44 ms
+seals five days               31 ms   (1,440 records, 8 operations)
+grants a reader               21 ms
+reader opens every record    181 ms   (2,016 of 2,016, 0 panicked)
+revocation stops the next day  ok
+identity survives a restart    ok
+on disk                      2.4 MB
+```
+
+Bundled SQLite in app storage, a tokio runtime and p2panda's state machinery
+all work there. Phone B, idle, was three to four times slower — worth
+remembering before reading anything into a single timing.
+
 *Reopens if:* first-contact latency turns out to matter more than having one
 transport, or upstream makes session initiation public.
 
