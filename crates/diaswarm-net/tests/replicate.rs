@@ -66,8 +66,11 @@ async fn held(store: &SqliteStore, author: &VerifyingKey) -> u32 {
     >>::get_log_size(store, author, &diaswarm_spaces::LOG_ID, None, None)
     .await
     .unwrap();
-    // (bytes, operations)
-    size.map(|(_, ops)| ops).unwrap_or(0)
+    // (OPERATIONS, BYTES) — in that order, whatever the trait's doc comment
+    // says. Taking the second element and calling it a count compares bytes
+    // against a number of operations: always far larger, so every assertion
+    // built on it passed without testing anything.
+    size.map(|(ops, _bytes)| ops).unwrap_or(0)
 }
 
 #[tokio::test(flavor = "multi_thread")]

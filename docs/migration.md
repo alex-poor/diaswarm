@@ -55,10 +55,28 @@ post-emit edit. Ruled out: extra filtering, superseded versions, retracted rows,
 a profile-table mismatch. The per-kind counters that would settle it have never
 run over a complete drain.
 
-**3. Nothing has replicated between two real phones.** The full chain now works
-end to end — a granted reader opens a subject's history taken from a stranger's
-store, and the stranger opens none of it — but in one process. The pool has only
-ever been two phones on the old transport.
+**3. Two phones replicate, partially.** Run on the real devices with
+`crates/diaswarm-net/src/bin/twophone.rs` — a binary in `/data/local/tmp`, no
+app involved:
+
+```
+carrying bucket for e9be07cbd8172011…
+  +   4s  holding 1 operations
+carried 1 operations from a phone it was never introduced to
+opened  0 records — as it should: it was granted nothing
+```
+
+The claim holds: two devices on a real network found each other through the
+pool, moved a subject neither was introduced about, and the carrier could open
+none of it. What is *not* established is completeness — one of six operations
+arrived inside the twenty-second window the binary waits. Whether the rest
+follow, and how quickly, is unmeasured.
+
+⚠️ **mDNS does not work from a bare binary on Android**: `ndk-context` panics
+with "android context was not initialized", because local discovery needs a JNI
+context the plugin has and a command-line process does not. These two phones
+found each other anyway, but this harness is measuring a *worse* case than the
+plugin would.
 
 **4. There is no migration path for an existing vault.** A phone with 74 days
 sealed the old way has to re-seal from the AAPS database, which is what the
