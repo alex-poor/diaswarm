@@ -35,6 +35,7 @@ the JNI surface and the Kotlin plugin.
 | Revocation is prospective and immediate | `revoking_stops_what_comes_next`, and on-device | Long-run behaviour after many rotations |
 | Grants can reach back, or not | `a_grant_reaches_back_only_when_it_is_asked_to` | Only after the fan-out rebuild; see D20 §5c |
 | A peer carries a stranger's data knowing only a topic | `tests/replicate.rs`, on log sync | More than two peers |
+| **The whole chain composes** — subject seals, stranger carries, granted reader reads *from the stranger* | `a_granted_reader_gets_a_subject_from_a_peer_that_is_not_the_subject`, reading out of the carrier's own store | Two processes, not two phones |
 | It runs on the phone | Self-test binary on the loop phone: five days sealed in 31 ms, 2,016 records read in 181 ms | Anything inside AAPS |
 | It runs *inside* AAPS | Shadow mode, hundreds of live passes, agreeing pass for pass | A full backfill without incident — see below |
 | Identity survives a restart | Shadow passes either side of an app upgrade, different pids | A device reboot, a factory reset, a restore from backup |
@@ -54,9 +55,10 @@ post-emit edit. Ruled out: extra filtering, superseded versions, retracted rows,
 a profile-table mismatch. The per-kind counters that would settle it have never
 run over a complete drain.
 
-**3. Nothing has replicated between two real phones.** Log sync is proven
-between two peers in one process. The pool has only ever been two phones on the
-old transport.
+**3. Nothing has replicated between two real phones.** The full chain now works
+end to end — a granted reader opens a subject's history taken from a stranger's
+store, and the stranger opens none of it — but in one process. The pool has only
+ever been two phones on the old transport.
 
 **4. There is no migration path for an existing vault.** A phone with 74 days
 sealed the old way has to re-seal from the AAPS database, which is what the
