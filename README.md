@@ -27,12 +27,15 @@ Done end to end on real hardware, with real data:
   share of the subject space to carry. Turning the feature on is the whole
   instruction — there is no address to exchange and nobody to ask.
 
-**What has NOT been done on hardware: two phones on different networks.** Every
-demonstration above was devices on one wifi finding each other by mDNS, because
-until 2026-09-11 no relay was configured and there was no other way for them to
-meet ([D23](docs/decisions.md)). An earlier version of this file claimed the
-two-phone test ran "over the open internet". It did not, and that claim is the
-reason this paragraph exists.
+* **Two networks.** The sharer was the live loop phone on a mobile carrier with
+  wifi off, behind CGNAT; the follower was on home wifi. No shared network and
+  no mDNS. Readings kept arriving every two minutes, `0m old`, and the graph ran
+  unbroken through the moment the wifi was cut ([D23](docs/decisions.md)).
+
+Until 2026-09-11 that last one was impossible: no relay was configured, so
+devices could only ever meet on one wifi by mDNS. An earlier version of this file
+nevertheless claimed the two-phone test ran "over the open internet". It did not,
+and that claim is the reason this paragraph exists.
 
 Not reviewed cryptography. See [Limits](#limits) before trusting it with anything.
 
@@ -349,10 +352,6 @@ adb install -r app/build/outputs/apk/aapsclient/loop/app-aapsclient-loop.apk
   and so are the bucket topics where peers announce what they hold — so who
   participates, and roughly what they carry, is not secret, even though every byte
   of it is unreadable ciphertext ([D19](docs/decisions.md)).
-- **Off-network is unproven on hardware.** A relay is configured and a peer
-  reaches it in about four seconds, but two phones on genuinely different networks
-  exchanging a vault has not been demonstrated — every hardware test so far was one
-  wifi. Until that runs, treat remote following as untested ([D23](docs/decisions.md)).
 - **The relay is a metadata observer.** It cannot read a byte, but it sees which
   node ids talk, from which addresses, and how often. The default is operated by a
   third party in Singapore. Running your own moves that to you — and shrinks the

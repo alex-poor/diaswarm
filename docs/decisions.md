@@ -335,12 +335,21 @@ infrastructure. Anyone who would rather not give a third party that metadata
 runs `iroh-relay` and points the phones at their own; nothing else changes.
 Asia-Pacific by default because that is where these phones are.
 
-**What is proven and what is not.** `bin/relaycheck` shows a peer reaching
-`Connected` with the relay in about 4 seconds, where before there was no relay
-to reach. What has NOT been demonstrated is two peers on genuinely different
-networks exchanging a vault — the hardware to hand is one wifi, and the test
-phone's SIM is out of service. That test is the remote follower, and it needs
-this build on both ends.
+**DEMONSTRATED ON HARDWARE, 2026-09-11.** The subject was the live loop phone
+on a mobile carrier with wifi switched off — address `10.238.221.41`, behind
+Vodafone NZ's CGNAT — and the follower was a second phone on home wifi at
+`192.168.88.213`. Two networks, no shared LAN, no mDNS possible. The follower
+kept mirroring every two minutes with `newest 0m old`: 09:56:25, 09:58:27,
+10:00:29, and the trend line ran unbroken through the 09:55 cut. Its screen read
+9.4 mmol/L, 63 seconds old.
+
+The relay connection is directly observable rather than inferred: on the rooted
+loop phone, `ss -tnp` showed the AAPS process holding an ESTABLISHED socket to
+`5.223.65.62:443` — and it re-established from the carrier address within
+seconds of the wifi going down.
+
+`bin/relaycheck` covers the same ground on a desktop, reporting `Connected` in
+about four seconds.
 
 **THE RELAY TRAVELS IN THE INVITE**, as of the same day. `diaswarm:2:` adds a
 relay field, and `peer::Follow` stores it per subject. A relay compiled into the
