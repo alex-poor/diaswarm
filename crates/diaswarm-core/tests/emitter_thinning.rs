@@ -91,3 +91,43 @@ fn a_fresh_emitter_keeps_the_first_reading_it_sees() {
     assert!(e.accept(&cgm(1_788_000_000_000, 120.0)));
     assert_eq!(e.thinned, 0);
 }
+
+/// OUT-OF-ORDER ROWS MUST NOT BE THINNED AWAY.
+///
+/// The sync queue walks rows by id, not by time, so a record can arrive with a
+/// timestamp older than one already seen. A high-water mark alone drops it —
+/// which is not thinning, it is losing a reading the loop acted on. Measured on
+/// a real re-drain as roughly 1,100 readings.
+#[test]
+fn a_late_arriving_older_reading_survives() {
+    let mut e = Emitted::new();
+    let base = 1_788_000_000_000i64;
+
+    // Three buckets, arriving newest first.
+    assert!(e.accept(&cgm(base + 2 * CGM_BUCKET_MS, 120.0)), "the newest was refused");
+    assert!(
+        e.accept(&cgm(base + CGM_BUCKET_MS, 121.0)),
+        "a reading from an earlier bucket was thinned away by a high-water mark"
+    );
+    assert!(
+        e.accept(&cgm(base, 122.0)),
+        "the earliest bucket was thinned away by a high-water mark"
+    );
+    assert_eq!(e.thinned, 0, "nothing shared a bucket, so nothing should have been thinned");
+}
+
+/// A record re-delivered by a version row is a duplicate, not a thinning.
+///
+/// The sync queue resolves every version row to the current record, so the same
+/// canonical bytes arrive many times — 22,003 for CGM on one real database.
+/// Counting those as thinned reported 27,036 where 3,898 were genuinely thinned.
+#[test]
+fn re_delivery_is_not_counted_as_thinning() {
+    let mut e = Emitted::new();
+    let r = cgm(1_788_000_000_000, 120.0);
+
+    assert!(e.accept(&r));
+    assert!(!e.accept(&r), "the same record was emitted twice");
+    assert!(!e.accept(&r));
+    assert_eq!(e.thinned, 0, "re-delivery was counted as thinning: {}", e.thinned);
+}

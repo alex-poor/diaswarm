@@ -327,6 +327,17 @@ pub struct Emitted {
     last_cgm_bucket: Option<i64>,
     /// CGM readings dropped for sharing a bucket with an earlier one.
     pub thinned: usize,
+    /// Buckets published during THIS run, so the run is order-independent.
+    cgm_buckets: std::collections::HashSet<i64>,
+    /// The mark this run STARTED from, which never moves.
+    ///
+    /// Separate from `last_cgm_bucket`, which does. Comparing against a moving
+    /// mark reintroduces exactly the bug the set exists to fix: the mark
+    /// advances to the newest bucket seen, and every older row arriving after
+    /// it is thinned away. The frozen one answers a different question —
+    /// "was this already published *before this run began*" — which is the only
+    /// question the set cannot answer.
+    resume_mark: Option<i64>,
 }
 
 impl Emitted {
@@ -339,7 +350,7 @@ impl Emitted {
     /// Pass `None` on a first run or after a reset; anything else and the first
     /// reading of each bucket since is what gets through.
     pub fn resuming(last_cgm_bucket: Option<i64>) -> Self {
-        Self { last_cgm_bucket, ..Self::default() }
+        Self { last_cgm_bucket, resume_mark: last_cgm_bucket, ..Self::default() }
     }
 
     /// The newest CGM bucket emitted so far, for the caller to persist.
@@ -349,6 +360,19 @@ impl Emitted {
 
     /// Returns true if this record is new and should be emitted.
     pub fn accept(&mut self, record: &Record) -> bool {
+        // CONTENT FIRST, THINNING SECOND, and the order is not cosmetic. The
+        // sync queue walks version rows and resolves each to the current
+        // record, so the same canonical bytes arrive many times — 22,003 of
+        // them for CGM on one real database. Checking the bucket first counted
+        // every one of those as "thinned", reporting 27,036 against the 3,898
+        // that were genuinely thinned. The records dropped were the right ones;
+        // the number describing them was not, and a number nobody can trust is
+        // worse than no number.
+        let json = record.to_canonical_json();
+        if !self.seen.insert(json) {
+            return false;
+        }
+
         // ONE CGM READING PER FIVE MINUTES, KEEPING THE FIRST (spec §3.3).
         //
         // Not a duplicate filter. This subject's Libre 3 reports every 59
@@ -359,21 +383,35 @@ impl Emitted {
         // the pool 51.5 MB a year of CGM instead of 8.3.
         //
         // The loop is unaffected: it reads the database, not this stream.
+        //
+        // A SET FOR THIS RUN, A MARK ACROSS RUNS, because the two cases fail
+        // differently. `tools/canon.py` sorts the whole history before thinning
+        // and so is order-independent; a streaming emitter cannot look ahead.
+        // With only a high-water mark, any row arriving with an older timestamp
+        // than one already seen is dropped — and the sync queue walks rows by
+        // id, not by time. That is not thinning, it is losing readings, and a
+        // re-drain of real history lost about 1,100 of them that way.
+        //
+        // The set makes a run order-independent. The mark covers what the set
+        // cannot: live, readings arrive one per pass and the set is empty every
+        // time, so without it nothing is ever thinned at all.
         if record.kind() == kind::CGM {
             let bucket = record.t().div_euclid(CGM_BUCKET_MS);
-            match self.last_cgm_bucket {
-                Some(last) if bucket <= last => {
-                    self.thinned += 1;
-                    return false;
-                }
-                _ => self.last_cgm_bucket = Some(bucket),
+            let already_published = self.resume_mark.is_some_and(|start| bucket <= start);
+            if already_published || !self.cgm_buckets.insert(bucket) {
+                self.thinned += 1;
+                // Not emitted, so it must not count as seen content either —
+                // otherwise a later, genuinely new record with the same bytes
+                // would be dropped as a duplicate of something never published.
+                self.seen.remove(&record.to_canonical_json());
+                return false;
             }
+            self.last_cgm_bucket = Some(match self.last_cgm_bucket {
+                Some(last) => last.max(bucket),
+                None => bucket,
+            });
         }
 
-        let json = record.to_canonical_json();
-        if !self.seen.insert(json) {
-            return false;
-        }
         // A second, different record at the same instant and kind is an edit,
         // not a duplicate. Count it; spec §7 says do not guess a mechanism yet.
         let key = format!("{}\u{1}{}", record.t(), record.kind());
