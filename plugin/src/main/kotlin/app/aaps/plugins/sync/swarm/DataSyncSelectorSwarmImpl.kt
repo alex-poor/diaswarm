@@ -158,7 +158,13 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         SwarmNative.check()
         emitter = SwarmNative.emitterNew(preferences.get(SwarmLongKey.CgmBucketHighWater))
         try {
+            drained.clear()
             sources.forEach { drain(it) }
+            if (drained.isNotEmpty()) {
+                val by = drained.entries.sortedByDescending { it.value }
+                    .joinToString(" ") { "${it.key}=${it.value}" }
+                aapsLogger.info(LTag.CORE, "swarm: drained ${drained.values.sum()} — $by")
+            }
             sealPending()
             applyPendingGrants()
             refreshFollowed()
@@ -189,6 +195,18 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         }
     }
 
+    /**
+     * How many records each source contributed this pass.
+     *
+     * **A TOTAL CANNOT BE RECONCILED WITH ANOTHER TOTAL.** The device emitted
+     * 35,897 records where `tools/canon.py` produced 31,341 from the same
+     * database; 3,898 of the gap was CGM thinning and 1 was a post-emit edit,
+     * and 563 could not be attributed to anything because neither side could
+     * say which *kind* of record it disagreed about. Counting per kind is what
+     * turns "563 somewhere" into a table.
+     */
+    private val drained = mutableMapOf<String, Int>()
+
     private fun drain(source: Source) {
         while (true) {
             val lastDbId = source.lastId() ?: 0L
@@ -206,7 +224,10 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             if (source.valid(value)) {
                 SwarmRecords.from(value)?.let { raw ->
                     val line = SwarmNative.emitterAccept(emitter, raw)
-                    if (line.isNotEmpty()) publish(line)
+                    if (line.isNotEmpty()) {
+                        publish(line)
+                        drained[source.name] = (drained[source.name] ?: 0) + 1
+                    }
                 }
             }
 

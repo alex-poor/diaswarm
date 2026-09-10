@@ -289,15 +289,32 @@ fn an_unrecognised_unit_is_admitted_rather_than_guessed() {
 #[test]
 fn the_emitter_thins_cgm_exactly_as_python_does() {
     let root = repo_root();
-    let db = std::env::temp_dir().join("diaswarm-thinning.db");
-    let _ = std::fs::remove_file(&db);
 
-    if Command::new("python3")
-        .arg(root.join("tools/mkfixture.py"))
-        .arg(&db)
-        .output()
-        .map(|o| !o.status.success())
-        .unwrap_or(true)
+    // A REAL DATABASE IF ONE IS OFFERED. The fixture proves the two agree on a
+    // case built to make them disagree; a real snapshot proves it on 45 MB of
+    // whatever a loop actually produces, including the sensor changes and
+    // version history nobody would think to synthesise:
+    //
+    //     DIASWARM_DB=/path/to/androidaps.db cargo test --test differential
+    //
+    // Never committed and never copied anywhere: it is somebody's glucose
+    // history, and the test only reads it.
+    let real = std::env::var("DIASWARM_DB").ok().map(PathBuf::from);
+    let db = match &real {
+        Some(p) => p.clone(),
+        None => std::env::temp_dir().join("diaswarm-thinning.db"),
+    };
+    if real.is_none() {
+        let _ = std::fs::remove_file(&db);
+    }
+
+    if real.is_none()
+        && Command::new("python3")
+            .arg(root.join("tools/mkfixture.py"))
+            .arg(&db)
+            .output()
+            .map(|o| !o.status.success())
+            .unwrap_or(true)
     {
         eprintln!("skipping: python3 or the fixture tool is unavailable");
         return;
@@ -344,8 +361,21 @@ fn the_emitter_thins_cgm_exactly_as_python_does() {
         .collect();
 
     assert_eq!(
+        got.len(),
+        expected.len(),
+        "the emitter kept {} records where canon.py kept {} — §3.3 disagrees",
+        got.len(),
+        expected.len()
+    );
+    assert_eq!(
         got, expected,
         "the emitter and canon.py disagree about which records reach a reader"
     );
     assert!(emitter.thinned > 0, "nothing was thinned, so §3.3 did not run");
+    eprintln!(
+        "  §3.3 agreed on {} records, {} thinned{}",
+        got.len(),
+        emitter.thinned,
+        if real.is_some() { " (real database)" } else { " (fixture)" }
+    );
 }
