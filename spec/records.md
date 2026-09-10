@@ -196,36 +196,41 @@ only in `version`, `referenceId` and that id.
 
 The user or the loop withdrew it. It stays in the table.
 
-### 3.3 CGM outside its bucket
+### 3.3 CGM outside its bucket — ~~one per five minutes~~ WITHDRAWN
 
-One reading per five minutes, **keeping the first**. Not the last, and not the
-mean: the first is the reading the loop actually saw and acted on, and averaging
-would invent a value no device reported and no dose was based on.
+**Every reading is published. Nothing is thinned.**
 
-> **Amended 2026-09-10, and the reason changed rather than the rule.** Measured
-> on the running loop:
->
-> | source | readings/day | median gap | period |
-> |---|---|---|---|
-> | `LIBRE_3` | **1,586** | **59 s** | from 2026-09-07, currently the only live source |
-> | `DEXCOM_G6_NATIVE_XDRIP` | 255 | 300 s | until 2026-09-07 |
->
-> This paragraph used to say the rule drops nothing, and that it was kept as
-> defence against a double-broadcasting source. Both are now wrong. It drops
-> **four readings in five** — 3,898 on one snapshot — and they are not a
-> broadcasting fault, they are a one-minute sensor working correctly.
->
-> **The rule stays, as deliberate thinning rather than as a filter.** A follower
-> is not meaningfully disadvantaged by one reading in five; one minute matters
-> for dosing and state estimation, and **the loop does not read this stream** —
-> it reads the database directly. What thinning buys is every peer in the pool
-> carrying 8.3 MB a year of CGM instead of 51.5.
->
-> It was the *emitter* that was wrong, not the rule: `tools/canon.py` applied
-> §3.3 and the on-device emitter did not, so the two disagreed by 3,898 records
-> and each was internally consistent. `Emitted::accept` now applies it, carrying
-> the newest emitted bucket across runs — without that a live emitter starting
-> fresh each pass never sees two readings from one bucket and thins nothing.
+The rule was: one reading per five-minute bucket, keeping the first. It was
+written when the only source was a five-minute Dexcom, where it dropped nothing
+and cost nothing. It is withdrawn for two reasons, in that order.
+
+**It could not be implemented safely.** Thinning needs to know which buckets
+have already been published. A batch tool can sort the history and answer that
+exactly; a streaming emitter on a phone cannot, and can only carry a high-water
+mark. The drain walks rows by **id, not by time**, so one row out of order moves
+the mark and every earlier reading after it is discarded as already-published.
+Bounding the drain into passes — necessary, because an unbounded one exhausted
+the app's heap — made that the common case rather than an edge. Measured on 74
+days of real history: **14,620 readings lost**, in fortnight-sized holes.
+
+Two fixes made it order-independent within a pass and neither fixed it between
+passes. The conclusion is that this is the wrong layer to thin at: a consumer
+that wants five-minute data can bucket it whenever it likes, and a consumer that
+was handed four readings in five is missing them for ever.
+
+**And the premise had already gone.** The rule was described as defence against
+a double-broadcasting source. That doubling turned out to be version history,
+removed by §3.1 alone. What §3.3 actually dropped, once the sensor changed, was
+a one-minute sensor working correctly.
+
+`tools/canon.py --thin` still applies it, for measuring what it would save.
+
+**What it costs**, measured rather than estimated:
+
+| | per subject | a pool peer carrying ~6 |
+|---|---|---|
+| thinned to 5 minutes | 13.1 MB/yr | 78 MB/yr |
+| **every reading, Libre 3 at 1,586/day** | **54.9 MB/yr** | **329 MB/yr** |
 
 ## 4. What is excluded
 

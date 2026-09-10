@@ -1,12 +1,15 @@
-//! Does the emitter thin CGM the way `spec/records.md` §3.3 says?
+//! Does the emitter pass every reading through?
 //!
-//! This is the rule that was measured broken on real hardware. The on-device
-//! emitter kept every reading while `tools/canon.py` dropped four in five, so
-//! the two implementations disagreed by 3,898 records over 74 days — and
-//! nothing noticed, because each was self-consistent.
+//! It used to thin CGM to one reading per five minutes — spec §3.3 — and these
+//! tests asserted that. The rule is gone: a streaming emitter can only remember
+//! which buckets it has published as a high-water mark, a drain walks rows by
+//! id rather than by time, and one row out of order made it discard every
+//! earlier reading that followed. Measured on real history, 14,620 readings
+//! lost.
 //!
-//! The subject's Libre 3 reports every 59 seconds. These tests use that shape
-//! rather than a convenient one.
+//! So the tests are inverted. What matters now is that nothing is dropped —
+//! the failure this file exists to catch is a reading the loop saw and a
+//! follower never will.
 
 use diaswarm_core::{CGM_BUCKET_MS, Emitted, Record};
 
@@ -14,120 +17,51 @@ fn cgm(t: i64, mgdl: f64) -> Record {
     Record::new(t, "cgm").set("mgdl", Some(mgdl.into()))
 }
 
-/// A one-minute sensor should reach a follower as a five-minute one.
+/// A one-minute sensor reaches a follower as a one-minute sensor.
 #[test]
-fn a_one_minute_sensor_is_thinned_to_one_in_five() {
+fn every_reading_of_a_one_minute_sensor_is_published() {
     let mut e = Emitted::new();
     let base = 1_788_000_000_000i64;
-    // 30 minutes of Libre 3: a reading every 59 seconds.
-    let kept: Vec<i64> =
-        (0..30).map(|i| base + i * 59_000).filter(|t| e.accept(&cgm(*t, 120.0))).collect();
+    // Thirty minutes of Libre 3: a reading every 59 seconds, six to a bucket.
+    let kept = (0..30).filter(|i| e.accept(&cgm(base + i * 59_000, 120.0 + *i as f64))).count();
 
-    assert_eq!(
-        kept.len(),
-        6,
-        "30 minutes should reach a follower as 6 readings, not {}",
-        kept.len()
-    );
-    // KEEPING THE FIRST, not the last and not a mean: the first is the reading
-    // the loop actually saw and dosed on.
-    assert_eq!(kept[0], base, "the first reading of the run was not the one kept");
-    for pair in kept.windows(2) {
+    assert_eq!(kept, 30, "{} of 30 readings were dropped", 30 - kept);
+}
+
+/// Including across the pass boundaries that broke the old rule.
+///
+/// A bounded drain splits history into passes, each with a fresh emitter. The
+/// thinning mark was carried between them, and that is precisely where it lost
+/// data: a pass would treat everything up to the previous pass's newest bucket
+/// as already published. Nothing is carried now, so nothing can be lost.
+#[test]
+fn a_new_pass_drops_nothing_it_inherited() {
+    let base = 1_788_000_000_000i64;
+
+    let mut first = Emitted::new();
+    assert!(first.accept(&cgm(base + 10 * CGM_BUCKET_MS, 120.0)), "the first reading was refused");
+
+    // A later pass, handed rows from EARLIER in the history — which is what a
+    // drain walking by row id does.
+    let mut second = Emitted::resuming(first.last_cgm_bucket());
+    for i in 0..10 {
         assert!(
-            pair[1].div_euclid(CGM_BUCKET_MS) > pair[0].div_euclid(CGM_BUCKET_MS),
-            "two readings escaped from the same bucket"
+            second.accept(&cgm(base + i * CGM_BUCKET_MS, 130.0 + i as f64)),
+            "a reading from an earlier bucket was dropped by a later pass"
         );
     }
 }
 
-/// Nothing else is thinned. A bolus a second after another is two boluses.
-#[test]
-fn only_cgm_is_thinned() {
-    let mut e = Emitted::new();
-    let base = 1_788_000_000_000i64;
-    let mut kept = 0;
-    for i in 0..10 {
-        let r = Record::new(base + i * 1_000, "bolus").set("units", Some((1.0 + i as f64).into()));
-        if e.accept(&r) {
-            kept += 1;
-        }
-    }
-    assert_eq!(kept, 10, "boluses were thinned as though they were readings");
-}
-
-/// THE PART THAT ONLY MATTERS LIVE.
+/// An identical record delivered twice is still one record.
 ///
-/// Readings arrive one per minute, one pass at a time, so an emitter that
-/// starts empty every pass never sees two readings from one bucket together
-/// and thins nothing at all. The mark has to survive the run.
-#[test]
-fn thinning_survives_a_restart() {
-    let base = 1_788_000_000_000i64;
-
-    let mut first = Emitted::new();
-    assert!(first.accept(&cgm(base, 120.0)));
-    let carried = first.last_cgm_bucket();
-    assert!(carried.is_some());
-
-    // A new pass, a minute later, in the same bucket.
-    let mut second = Emitted::resuming(carried);
-    assert!(
-        !second.accept(&cgm(base + 60_000, 121.0)),
-        "a reading in an already-emitted bucket got through after a restart"
-    );
-
-    // And the next bucket is let through.
-    let mut third = Emitted::resuming(second.last_cgm_bucket());
-    assert!(
-        third.accept(&cgm(base + CGM_BUCKET_MS, 122.0)),
-        "the next bucket was refused, so the stream would stop"
-    );
-}
-
-/// An emitter that was never told a mark must not silently drop history.
-#[test]
-fn a_fresh_emitter_keeps_the_first_reading_it_sees() {
-    let mut e = Emitted::resuming(None);
-    assert!(e.accept(&cgm(1_788_000_000_000, 120.0)));
-    assert_eq!(e.thinned, 0);
-}
-
-/// OUT-OF-ORDER ROWS MUST NOT BE THINNED AWAY.
-///
-/// The sync queue walks rows by id, not by time, so a record can arrive with a
-/// timestamp older than one already seen. A high-water mark alone drops it —
-/// which is not thinning, it is losing a reading the loop acted on. Measured on
-/// a real re-drain as roughly 1,100 readings.
-#[test]
-fn a_late_arriving_older_reading_survives() {
-    let mut e = Emitted::new();
-    let base = 1_788_000_000_000i64;
-
-    // Three buckets, arriving newest first.
-    assert!(e.accept(&cgm(base + 2 * CGM_BUCKET_MS, 120.0)), "the newest was refused");
-    assert!(
-        e.accept(&cgm(base + CGM_BUCKET_MS, 121.0)),
-        "a reading from an earlier bucket was thinned away by a high-water mark"
-    );
-    assert!(
-        e.accept(&cgm(base, 122.0)),
-        "the earliest bucket was thinned away by a high-water mark"
-    );
-    assert_eq!(e.thinned, 0, "nothing shared a bucket, so nothing should have been thinned");
-}
-
-/// A record re-delivered by a version row is a duplicate, not a thinning.
-///
-/// The sync queue resolves every version row to the current record, so the same
+/// The sync queue resolves every version row to its current record, so the same
 /// canonical bytes arrive many times — 22,003 for CGM on one real database.
-/// Counting those as thinned reported 27,036 where 3,898 were genuinely thinned.
+/// Dropping those is deduplication, not thinning, and it stays.
 #[test]
-fn re_delivery_is_not_counted_as_thinning() {
+fn a_re_delivered_record_is_still_dropped() {
     let mut e = Emitted::new();
     let r = cgm(1_788_000_000_000, 120.0);
-
     assert!(e.accept(&r));
-    assert!(!e.accept(&r), "the same record was emitted twice");
+    assert!(!e.accept(&r), "the same record was published twice");
     assert!(!e.accept(&r));
-    assert_eq!(e.thinned, 0, "re-delivery was counted as thinning: {}", e.thinned);
 }

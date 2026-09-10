@@ -102,14 +102,13 @@ Redundancy is simply how many peers share a bucket.
 depth tracks the number of peers, so a peer's share does not grow as the pool
 does — being an early member is not a tax.
 
-> **That figure depends on thinning CGM, and the dependency is load-bearing.**
-> A subject's stream is 13.1 MB a year measured on 75 days of real data, of which
-> CGM is 8.3 MB. [`spec/records.md`](spec/records.md) §3.3 publishes one reading
-> per five minutes; the sensor behind these numbers reports every **59 seconds**,
-> so without that rule CGM alone would be 51.5 MB a year and every number in this
-> table would be roughly five times larger. One minute matters for dosing and the
-> loop reads the database directly, not this stream — a follower is not
-> disadvantaged by one reading in five.
+> **These figures assume a five-minute sensor, and are the floor rather than the
+> number.** A subject's stream is 13.1 MB a year at 288 readings a day. The
+> sensor behind these measurements reports every **59 seconds** — 1,586 a day —
+> and every reading is published, because thinning them could not be done on a
+> phone without losing data ([`spec/records.md`](spec/records.md) §3.3). On that
+> sensor a subject is **54.9 MB a year** and a peer carrying six of them is
+> **329 MB**, not 78. Cheap sensors are cheap to carry and fast ones are not.
 
 **Self-healing is arithmetic, not a process.** A peer disappears, the pool is
 smaller, depth and share adjust, and the survivors cover the gap on their next

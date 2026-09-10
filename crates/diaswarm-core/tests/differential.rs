@@ -274,26 +274,20 @@ fn an_unrecognised_unit_is_admitted_rather_than_guessed() {
     assert_eq!(r.get("isf").unwrap()[0]["amount"].as_f64(), Some(2.0), "scaled a unit it did not know");
 }
 
-/// DOES THE SHIPPED PATH THIN CGM THE WAY `canon.py` DOES?
+/// DOES THE SHIPPED PATH PUBLISH EXACTLY WHAT `canon.py` DOES?
 ///
-/// The other tests here compare `debounce_cgm` — the batch function — against
-/// Python, and they passed for months while the bug was live. Nothing on a
-/// phone calls that function. The emitter does the thinning, and it did not do
-/// it at all, so the two implementations disagreed by 3,898 records over 74
-/// days of real history with each internally consistent.
+/// It used to ask whether both thinned CGM the same way. Neither thins now —
+/// the rule could not be implemented safely on a streaming emitter and cost
+/// 14,620 readings on real history — so the question is simply whether the two
+/// implementations still produce the same stream from the same database.
 ///
-/// So this drives `Emitted`, which is what the device actually runs, and
-/// compares its output to Python's over the same fixture. The fixture carries a
-/// one-minute sensor for the same reason: without sub-five-minute CGM in it,
-/// there is nothing for the two to disagree about.
+/// The other tests here compare `debounce_cgm`, which nothing on a phone calls.
+/// This drives `Emitted`, which is what the device runs.
 #[test]
-fn the_emitter_thins_cgm_exactly_as_python_does() {
+fn the_emitter_publishes_exactly_what_python_does() {
     let root = repo_root();
 
-    // A REAL DATABASE IF ONE IS OFFERED. The fixture proves the two agree on a
-    // case built to make them disagree; a real snapshot proves it on 45 MB of
-    // whatever a loop actually produces, including the sensor changes and
-    // version history nobody would think to synthesise:
+    // A REAL DATABASE IF ONE IS OFFERED:
     //
     //     DIASWARM_DB=/path/to/androidaps.db cargo test --test differential
     //
@@ -306,31 +300,30 @@ fn the_emitter_thins_cgm_exactly_as_python_does() {
     };
     if real.is_none() {
         let _ = std::fs::remove_file(&db);
-    }
-
-    if real.is_none()
-        && Command::new("python3")
+        if Command::new("python3")
             .arg(root.join("tools/mkfixture.py"))
             .arg(&db)
             .output()
             .map(|o| !o.status.success())
             .unwrap_or(true)
-    {
-        eprintln!("skipping: python3 or the fixture tool is unavailable");
-        return;
+        {
+            eprintln!("skipping: python3 or the fixture tool is unavailable");
+            return;
+        }
     }
 
-    let canon = |extra: &[&str]| -> Option<String> {
-        let mut c = Command::new("python3");
-        c.arg(root.join("tools/canon.py")).arg(&db).arg("--offset").arg("12");
-        for a in extra {
-            c.arg(a);
-        }
-        let out = c.output().ok()?;
+    let canon = || -> Option<String> {
+        let out = Command::new("python3")
+            .arg(root.join("tools/canon.py"))
+            .arg(&db)
+            .arg("--offset")
+            .arg("12")
+            .output()
+            .ok()?;
         out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string())
     };
 
-    let (Some(thinned), Some(raw)) = (canon(&[]), canon(&["--no-thin"])) else {
+    let Some(stream) = canon() else {
         eprintln!("skipping: canon.py would not run");
         return;
     };
@@ -343,18 +336,13 @@ fn the_emitter_thins_cgm_exactly_as_python_does() {
             .collect()
     };
 
-    // Python's answer, and the raw stream both implementations start from.
-    let expected: Vec<String> =
-        parse(&thinned).iter().map(Record::to_canonical_json).collect();
-    let source = parse(&raw);
-    assert!(
-        source.len() > expected.len(),
-        "the fixture has no sub-five-minute CGM, so this test proves nothing"
-    );
+    let expected: Vec<String> = parse(&stream).iter().map(Record::to_canonical_json).collect();
 
-    // The device's answer.
+    // Everything Python emitted, back through the emitter the device runs. It
+    // must pass all of it: the only thing it may drop is an exact duplicate,
+    // and Python emits none.
     let mut emitter = Emitted::new();
-    let got: Vec<String> = source
+    let got: Vec<String> = parse(&stream)
         .iter()
         .filter(|r| emitter.accept(r))
         .map(Record::to_canonical_json)
@@ -363,19 +351,14 @@ fn the_emitter_thins_cgm_exactly_as_python_does() {
     assert_eq!(
         got.len(),
         expected.len(),
-        "the emitter kept {} records where canon.py kept {} — §3.3 disagrees",
+        "the emitter kept {} records where canon.py emitted {} — one of them is dropping data",
         got.len(),
         expected.len()
     );
-    assert_eq!(
-        got, expected,
-        "the emitter and canon.py disagree about which records reach a reader"
-    );
-    assert!(emitter.thinned > 0, "nothing was thinned, so §3.3 did not run");
+    assert_eq!(got, expected, "the emitter and canon.py disagree about what reaches a reader");
     eprintln!(
-        "  §3.3 agreed on {} records, {} thinned{}",
+        "  {} records agreed{}",
         got.len(),
-        emitter.thinned,
         if real.is_some() { " (real database)" } else { " (fixture)" }
     );
 }

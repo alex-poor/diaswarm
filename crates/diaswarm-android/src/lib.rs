@@ -111,18 +111,19 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterLastC
     emitter.last_cgm_bucket().unwrap_or(-1)
 }
 
-/// How many CGM readings were thinned this run (spec §3.3).
+/// Always 0. Nothing is thinned any more — see `Emitted::accept` and the
+/// withdrawal of spec §3.3.
+///
+/// Kept so the Kotlin side keeps linking while the preference and the call that
+/// carried the thinning mark are retired deliberately, rather than in the same
+/// change that stopped losing readings.
 #[no_mangle]
 pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterThinned(
     _env: JNIEnv,
     _class: JClass,
-    handle: jlong,
+    _handle: jlong,
 ) -> jlong {
-    if handle == 0 {
-        return 0;
-    }
-    let emitter = unsafe { &*(handle as *const Emitted) };
-    emitter.thinned as jlong
+    0
 }
 
 #[no_mangle]
