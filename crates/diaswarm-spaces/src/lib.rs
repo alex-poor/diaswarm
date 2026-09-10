@@ -104,7 +104,7 @@ pub enum Error {
 /// dependencies are carried in it too. A day of CGM is roughly 23 KB, so a day
 /// is about two dozen operations rather than one. That is the shape p2panda
 /// expects; it is not a workaround.
-const MAX_PAYLOAD: usize = 256;
+const MAX_PAYLOAD: usize = 64 * 1024;
 
 /// Split a window's records into publishable payloads.
 ///
@@ -554,6 +554,8 @@ impl Vault {
         let mut streams: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         let mut refused = 0usize;
         let mut panicked = 0usize;
+        let mut processing = std::time::Duration::ZERO;
+        let mut persisting = std::time::Duration::ZERO;
         for op in ops {
             if self.store_operation(op).await.is_err() {
                 refused += 1;
@@ -575,9 +577,11 @@ impl Vault {
                 let _ = self.repair().await;
             }
 
+            let t = std::time::Instant::now();
             let processed = std::panic::AssertUnwindSafe(self.manager.process(op))
                 .catch_unwind()
                 .await;
+            processing += t.elapsed();
             let (groups_y, space_y, events) = match processed {
                 Ok(Ok(out)) => out,
                 Ok(Err(_)) => {
@@ -589,19 +593,27 @@ impl Vault {
                     continue;
                 }
             };
+            let t = std::time::Instant::now();
             if let Some(y) = groups_y {
                 let _ = self.persist_group(&y).await;
             }
             if let Some(y) = space_y {
                 let _ = self.persist_space(y).await;
             }
+            persisting += t.elapsed();
             for e in events {
                 if let Event::Application { space_id, data } = e {
                     streams.entry(space_id.to_hex()).or_default().extend_from_slice(&data);
                 }
             }
         }
-        Ok(Ingested { records: decode_records(&streams), refused, panicked })
+        Ok(Ingested {
+            records: decode_records(&streams),
+            refused,
+            panicked,
+            processing,
+            persisting,
+        })
     }
 
     async fn store_operation(&self, op: &Operation) -> Result<(), Error> {
@@ -630,6 +642,14 @@ impl Vault {
 #[derive(Debug, Clone, Default)]
 pub struct Ingested {
     pub records: Vec<Record>,
+    /// Time inside `p2panda-spaces` deciding what an operation means.
+    pub processing: std::time::Duration,
+    /// Time writing the resulting state back to SQLite.
+    ///
+    /// Kept apart from `processing` because the two have very different
+    /// remedies: the second is scheduling and ours to change, the first is
+    /// the library's.
+    pub persisting: std::time::Duration,
     /// Operations the library declined, with an error.
     pub refused: usize,
     /// Operations that panicked p2panda-auth. See [`Vault::ingest`].

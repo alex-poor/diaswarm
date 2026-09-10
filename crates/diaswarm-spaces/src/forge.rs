@@ -51,6 +51,30 @@ impl Forge<Conditions> for SwarmForge {
     }
 
     async fn forge(&self, args: SpacesArgs<Conditions>) -> Result<Self::Message, Self::Error> {
+        // THE PAYLOAD GOES IN THE BODY. See `operation.rs` for why: the header
+        // is size-limited and an application payload does not belong there.
+        // `Builder::body` puts its hash and size into the signed header, so
+        // nothing is left unauthenticated by the move.
+        let (args, payload) = match args {
+            SpacesArgs::Application {
+                space_id,
+                space_dependencies,
+                group_secret_id,
+                nonce,
+                ciphertext,
+            } => (
+                SpacesArgs::Application {
+                    space_id,
+                    space_dependencies,
+                    group_secret_id,
+                    nonce,
+                    ciphertext: Vec::new(),
+                },
+                Some(ciphertext),
+            ),
+            other => (other, None),
+        };
+
         // ONE TRANSACTION for read-then-append. Two concurrent forges that both
         // read the same latest entry would build two operations claiming the
         // same seq_num and backlink, which is a forked log — and a forked log
@@ -66,17 +90,16 @@ impl Forge<Conditions> for SwarmForge {
                 .map(|op| (op.header.seq_num + 1, Some(op.hash)))
                 .unwrap_or((0, None));
 
-            let header = Header::builder()
-                .seq_num(seq_num)
-                .backlink(backlink)
-                .build(&self.signing_key, args);
+            let mut builder = Header::builder().seq_num(seq_num).backlink(backlink);
+            if let Some(bytes) = &payload {
+                builder = builder.body(bytes);
+            }
+            let header = builder.build(&self.signing_key, args);
 
-            // No body: the payload a space publishes travels in the extensions,
-            // already encrypted by the space. There is nothing left to put in a
-            // body that a holder should be able to see.
-            let operation = Inner::from_parts(header, None);
+            let operation =
+                Inner::from_parts(header, payload.clone().map(p2panda_core::Body::from_bytes));
             self.store.insert_operation(&operation.hash, &operation, &LOG_ID).await?;
-            Operation(operation)
+            Operation::wrap(operation)
         });
 
         Ok(operation)

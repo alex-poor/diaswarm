@@ -156,6 +156,27 @@ async fn both_vaults_give_a_reader_the_same_history() {
         reading.as_secs_f64(),
         reading.as_secs_f64() * 1000.0 / ops.len() as f64,
     );
+    println!(
+        "     of which: p2panda process {:.1}s · writing state back {:.1}s",
+        ingested.processing.as_secs_f64(),
+        ingested.persisting.as_secs_f64(),
+    );
+
+    // What replication would actually move, measured rather than projected.
+    let wire: usize = ops
+        .iter()
+        .map(|o| {
+            o.inner().header.encode().len()
+                + o.inner().body.as_ref().map(|b| b.size() as usize).unwrap_or(0)
+        })
+        .sum();
+    let plaintext: usize = days.values().flatten().map(|r| r.to_canonical_json().len() + 1).sum();
+    println!(
+        "     on the wire: {:.2} MB for {:.2} MB of records ({:.2}x)",
+        wire as f64 / 1e6,
+        plaintext as f64 / 1e6,
+        wire as f64 / plaintext as f64,
+    );
     assert_eq!(
         ingested.panicked, 0,
         "{} operation(s) panicked, so this reader's history has a hole in it",
