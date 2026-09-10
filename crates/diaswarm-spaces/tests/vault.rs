@@ -213,3 +213,49 @@ async fn state_survives_a_reopen() {
          p2panda-spaces does not read it from"
     );
 }
+
+/// A RECORD PUBLISHED TWICE IS READ ONCE.
+///
+/// AAPS's sync queue resolves every version row to the record it belongs to, so
+/// one record arrives once per version row. The emitter drops repeats within a
+/// pass and a bounded drain has many passes, so the same record really does get
+/// sealed more than once — 30,188 CGM records published on a real backfill where
+/// only 23,247 distinct ones exist.
+///
+/// `diaswarm-core`'s reader deduplicates for exactly this reason. Without the
+/// same thing here, a follower would double-count.
+#[tokio::test]
+async fn a_record_sealed_twice_is_read_once() {
+    let mut subject = peer("dup-subject").await;
+    let reader = peer("dup-reader").await;
+    subject.register(&reader).await.unwrap();
+    reader.register(&subject).await.unwrap();
+
+    let mut ops = subject.seal(&[]).await.unwrap();
+    ops.extend(subject.grant(reader.subject(), Reach::Everything).await.unwrap());
+
+    // The same day, sealed three times — which is what several passes handing
+    // over the same re-resolved records looks like.
+    let d = day(22_500, 133.0);
+    for _ in 0..3 {
+        ops.extend(subject.seal(&d).await.unwrap());
+    }
+
+    let got = reader.ingest(&ops).await.unwrap();
+    assert_eq!(got.panicked, 0);
+    let readings: Vec<String> = got
+        .records
+        .iter()
+        .filter(|r| r.kind() != "meta")
+        .map(|r| r.to_canonical_json())
+        .collect();
+
+    assert_eq!(
+        readings.len(),
+        d.len(),
+        "sealed {} records three times and read {} back — a follower would \
+         double-count insulin this way",
+        d.len(),
+        readings.len()
+    );
+}

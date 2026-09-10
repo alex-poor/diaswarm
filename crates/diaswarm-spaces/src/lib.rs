@@ -666,14 +666,31 @@ pub struct Ingested {
     pub panicked: usize,
 }
 
-/// Parse each window's rejoined byte stream back into records.
+/// Parse each window's rejoined byte stream back into records, once each.
+///
+/// **DEDUPLICATED, BECAUSE THE SAME RECORD IS PUBLISHED MORE THAN ONCE.**
+/// `diaswarm-core`'s reader does the same thing for the same reason: "a reader
+/// that trusted the segments to be disjoint would double-count insulin".
+///
+/// The duplication is not a fault in either vault. AAPS's sync queue walks
+/// version rows and resolves each to the record it belongs to, so one record
+/// arrives once per version row — 22,003 times over for CGM on one real
+/// database. The emitter drops repeats, but its memory lasts one pass, and a
+/// drain bounded into passes hands the same record to more than one of them.
+/// Measured: 30,188 CGM records published where only 23,247 distinct ones
+/// exist.
+///
+/// The old vault absorbed this by re-sealing a whole segment and skipping what
+/// it already held. This one appends, so the reader is where it has to be
+/// caught — and a reader is the right place regardless, since a peer relaying
+/// two overlapping copies is normal rather than broken.
 ///
 /// Lines that do not parse are dropped rather than failing the read: a reader
 /// that can open four of a subject's five windows should see four windows of
-/// data, not an error. The same tolerance covers the two records either side of
-/// a missing operation.
+/// data, not an error.
 fn decode_records(streams: &BTreeMap<String, Vec<u8>>) -> Vec<Record> {
     let mut out = Vec::new();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for bytes in streams.values() {
         for line in String::from_utf8_lossy(bytes).lines() {
             let line = line.trim();
@@ -681,7 +698,12 @@ fn decode_records(streams: &BTreeMap<String, Vec<u8>>) -> Vec<Record> {
                 continue;
             }
             if let Ok(r) = Record::from_json(line) {
-                out.push(r);
+                // By canonical form, not by the line as it arrived: two copies
+                // of one record are identical canonically whatever whitespace
+                // or key order carried them.
+                if seen.insert(r.to_canonical_json()) {
+                    out.push(r);
+                }
             }
         }
     }

@@ -48,26 +48,27 @@ bounded passes with no crash, and **the shadow vault sealed exactly what it was
 handed on every pass**. The two implementations have never once disagreed about
 a record.
 
-**2. The device drains more than the snapshot tool sees — and it is not a
-migration question.** Per kind, over a complete backfill:
+**2. ~~The device drains more than the snapshot tool sees.~~ Chased, and it was
+a real difference between the vaults.** The device drained 30,188 CGM records
+where `canon.py` yields 23,247. Measured on the snapshot, the database cannot
+produce more than 23,247 *distinct* CGM records — version rows are byte-identical
+once canonicalised, and no timestamp disagrees about a value. So 6,941 were
+published twice.
 
-| kind | device | `canon.py` | |
-|---|---|---|---|
-| cgm | 30,188 | 23,247 | **+6,941** |
-| tbr | 11,400 | 10,757 | +643 |
-| bolus / carb | 920 / 263 | 919 / 261 | +1 / +2 |
-| event / target / profile | 91 / 40 / 19 | identical | 0 |
+The cause: AAPS's sync queue resolves every version row to the record it belongs
+to, so one record arrives once per version row — 22,003 of them for CGM here.
+The emitter drops repeats, but its memory lasts one pass, and a drain bounded
+into passes hands the same record to several of them.
 
-`canon.py` reads a snapshot and takes the rows that survive §3.1 and §3.2 —
-current, valid. The device drains AAPS's sync queue, which walks **every** row
-including version history and resolves each to the record it belongs to. Most of
-those resolve to bytes already emitted and are deduplicated; some evidently do
-not.
+**That is where the two vaults differed.** `diaswarm-core` re-seals a whole
+segment and skips what it already holds, *and* deduplicates again on read —
+"a reader that trusted the segments to be disjoint would double-count insulin".
+`diaswarm-spaces` appends, and had neither. A follower would have double-counted.
 
-**Both vaults get the same input**, so this changes nothing about whether
-`diaswarm-spaces` is a faithful replacement — it is the same question spec §7
-reserves `amend` for, and it applies to the vault running today. It should be
-chased, and it does not gate a cutover.
+Fixed by deduplicating on read, where the old vault also does it, and where it
+belongs regardless: a peer relaying two overlapping copies of a subject is
+normal rather than broken. `a_record_sealed_twice_is_read_once` covers it, and
+fails without the fix.
 
 **3. Two phones replicate, partially.** Run on the real devices with
 `crates/diaswarm-net/src/bin/twophone.rs` — a binary in `/data/local/tmp`, no
