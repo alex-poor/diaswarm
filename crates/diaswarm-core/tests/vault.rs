@@ -597,3 +597,54 @@ fn an_older_vault_publishes_its_signing_key_on_the_next_seal() {
         Some(subject.verifying().to_bytes())
     );
 }
+
+/// A follower polling for new readings must not re-open the whole grant.
+///
+/// THE COST IS THE POINT, so this asserts on what was opened rather than only
+/// on what came back. `read_as` decrypts every segment the reader holds a wrap
+/// for and keeps the canonical form of every record in a set; on a two-minute
+/// poll against a subject with a year of granted history that is the entire
+/// year, every two minutes, for one new reading. A filter applied to the result
+/// would return the same records and cost the same, so the bound has to be
+/// applied before the segment is read.
+///
+/// The boundary case is the one that would silently lose data: the mark falls
+/// inside an epoch, and that epoch must be opened WHOLE — deduplication of
+/// overlapping segments happens per call, so half an epoch is not a safe unit.
+#[test]
+fn a_bounded_read_skips_old_epochs_and_keeps_the_boundary_one() {
+    let (run, vault, _) = live_run(10, 99);
+    let base: i64 = 20_000;
+
+    let everything = vault.read_as(&run.b, "follow").unwrap();
+    assert_eq!(everything.len(), 10, "the unbounded read is not the baseline it should be");
+
+    // From the seventh day on: four epochs, and the seventh included.
+    let bounded = vault.read_as_from(&run.b, "follow", base + 6).unwrap();
+    assert_eq!(
+        bounded.keys().copied().collect::<Vec<_>>(),
+        vec![base + 6, base + 7, base + 8, base + 9],
+        "the bound did not land on the epoch it was given"
+    );
+    for epoch in bounded.keys() {
+        assert_eq!(
+            bounded[epoch], everything[epoch],
+            "a bounded read returned different records for epoch {epoch}"
+        );
+    }
+
+    // A mark inside an epoch keeps that whole epoch, including records BEFORE
+    // the mark — which is what makes it safe to dedupe within the call.
+    let mid_day = (base + 6) * EPOCH_MS + 3_600_000 + 60_000 - OFFSET;
+    let from = diaswarm_core::epoch_of(mid_day, OFFSET);
+    assert_eq!(from, base + 6, "the offset arithmetic moved the mark into another epoch");
+    assert!(
+        vault.read_as_from(&run.b, "follow", from).unwrap().contains_key(&(base + 6)),
+        "the epoch the mark falls inside was skipped"
+    );
+
+    // Past the end is empty, not everything — an off-by-one that inverted the
+    // comparison would still pass every assertion above.
+    assert!(vault.read_as_from(&run.b, "follow", base + 10).unwrap().is_empty());
+    let _ = run.dir.path();
+}

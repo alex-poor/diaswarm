@@ -575,6 +575,159 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netLatest<'a
     }
 }
 
+/// Every glucose reading this phone can open for a followed subject after
+/// `since_ms`, as `millis<TAB>mgdl<TAB>trend<TAB>src` lines, oldest first.
+///
+/// THE PLURAL OF `netLatest`, AND THAT IS THE WHOLE POINT. A number on a screen
+/// says somebody is alive; a line on a graph says what their night was like,
+/// and the graph is the thing this project is trying to be better than
+/// Nightscout at. The reader has already opened the vault to answer
+/// `netLatest`, so this costs the same decryption and returns what it was
+/// throwing away.
+///
+/// `since_ms` is EXCLUSIVE, so a caller holding a high-water mark can pass it
+/// straight back without re-reading the reading it already has. `limit` bounds
+/// the string that crosses JNI — a Libre 3 produces about 1,586 readings a day
+/// and a follower catching up after a week must not try to hand 11,000 of them
+/// over in one Java String. A caller that gets exactly `limit` lines should ask
+/// again from the last timestamp it saw.
+///
+/// `trend` and `src` are the Kotlin enum NAMES, not their display text, because
+/// that is what `SwarmRecords` put in: `TrendArrow.name` and `SourceSensor.name`.
+/// Missing fields come back empty rather than guessed at — a reading whose
+/// trend the sensor never reported is not FLAT.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netGlucose<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    store_path: JString<'a>,
+    subject: JString<'a>,
+    identity_path: JString<'a>,
+    purpose: JString<'a>,
+    since_ms: jlong,
+    limit: jint,
+) -> JString<'a> {
+    let (Ok(store), Ok(subj), Ok(id), Ok(p)) = (
+        env.get_string(&store_path),
+        env.get_string(&subject),
+        env.get_string(&identity_path),
+        env.get_string(&purpose),
+    ) else {
+        return to_jstring(env, String::new());
+    };
+    let dir = PathBuf::from(String::from(store)).join(String::from(subj));
+    let Some(reader) = load_or_create_identity(Path::new(&String::from(id))) else {
+        return to_jstring(env, String::new());
+    };
+    let Ok(vault) = Vault::open(&dir) else { return to_jstring(env, String::new()) };
+
+    // OPEN THE RECENT END, NOT THE WHOLE GRANT. `read_as` decrypts every
+    // segment the reader holds a wrap for and keeps the canonical form of every
+    // record in a set to deduplicate overlapping segments — for this subject's
+    // own 74 days that is around 150,000 records and several megabytes, and
+    // this runs on a two-minute poll rather than on a button. The epoch is on
+    // the segment filename, so anything that cannot hold a reading newer than
+    // `since_ms` is skipped before it is read.
+    //
+    // A whole epoch of slack on purpose: `since_ms` falls inside an epoch and
+    // deduplication is per call, so the epoch containing it must be opened
+    // whole. `since_ms <= 0` means "no mark yet" and reads everything.
+    let from_epoch = if since_ms > 0 {
+        epoch_of(since_ms, vault.offset())
+    } else {
+        i64::MIN
+    };
+    let Ok(opened) = vault.read_as_from(&reader, &String::from(p), from_epoch) else {
+        return to_jstring(env, String::new());
+    };
+
+    // Sorted and deduplicated by timestamp: segments legitimately overlap (a
+    // rotation restarts one for the same epoch), so the same reading can be in
+    // the map twice. The consumer inserts these into a database keyed on
+    // (timestamp, sensor) and would merely do redundant work, but a follower
+    // counting what it received should be told the truth.
+    let mut rows: Vec<(i64, f64, String, String)> = opened
+        .values()
+        .flatten()
+        .filter(|r| r.kind() == "cgm")
+        .filter(|r| r.t() > since_ms)
+        .filter_map(|r| {
+            Some((
+                r.t(),
+                r.get("mgdl")?.as_f64()?,
+                r.get("trend").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                r.get("src").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            ))
+        })
+        .collect();
+    rows.sort_by_key(|(t, _, _, _)| *t);
+    rows.dedup_by_key(|(t, _, _, _)| *t);
+    if limit > 0 {
+        rows.truncate(limit as usize);
+    }
+
+    let listing = rows
+        .iter()
+        .map(|(t, mgdl, trend, src)| format!("{t}\t{mgdl}\t{trend}\t{src}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    to_jstring(env, listing)
+}
+
+/// The newest profile a followed subject has published, as its canonical JSON,
+/// or empty if this reader can open none.
+///
+/// **A FOLLOWER'S GRAPH NEEDS THE SUBJECT'S PROFILE, NOT A MADE-UP ONE.** AAPS
+/// draws glucose in the units, and against the target band, of the profile in
+/// force — with no profile it draws nothing at all, and with a locally invented
+/// one it would draw somebody else's blood against a stranger's targets. The
+/// subject already publishes exactly this: §2 requires `profile` records to
+/// carry basal, ISF, IC and target blocks normalised to mg/dL, precisely so a
+/// consumer can say what the loop was trying to do.
+///
+/// Only the newest is returned. A follower wants the profile in force now; the
+/// history of profile changes is in the vault for anyone assembling one.
+///
+/// Unbounded on purpose, unlike `netGlucose`: profile records are rare — 19 in
+/// this subject's 74 days — and the one in force may have been published long
+/// before the window a follower is watching. Bounding this to recent epochs
+/// would silently leave a long-settled profile unfindable.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netProfile<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    store_path: JString<'a>,
+    subject: JString<'a>,
+    identity_path: JString<'a>,
+    purpose: JString<'a>,
+) -> JString<'a> {
+    let (Ok(store), Ok(subj), Ok(id), Ok(p)) = (
+        env.get_string(&store_path),
+        env.get_string(&subject),
+        env.get_string(&identity_path),
+        env.get_string(&purpose),
+    ) else {
+        return to_jstring(env, String::new());
+    };
+    let dir = PathBuf::from(String::from(store)).join(String::from(subj));
+    let Some(reader) = load_or_create_identity(Path::new(&String::from(id))) else {
+        return to_jstring(env, String::new());
+    };
+    let Ok(vault) = Vault::open(&dir) else { return to_jstring(env, String::new()) };
+    let Ok(opened) = vault.read_as(&reader, &String::from(p)) else {
+        return to_jstring(env, String::new());
+    };
+    let newest = opened
+        .values()
+        .flatten()
+        .filter(|r| r.kind() == "profile")
+        .max_by_key(|r| r.t());
+    match newest {
+        Some(r) => to_jstring(env, r.to_canonical_json()),
+        None => to_jstring(env, String::new()),
+    }
+}
+
 /// Who this subject has granted, one per line: `reader<TAB>purpose`.
 ///
 /// Read from the vault's private book, which is the only thing that can put a

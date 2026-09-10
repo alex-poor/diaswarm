@@ -7,6 +7,7 @@ import androidx.work.OneTimeWorkRequest
 import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
+import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.rx.AapsSchedulers
@@ -63,6 +64,7 @@ class SwarmPlugin @Inject constructor(
     private val rxBus: RxBus,
     private val aapsSchedulers: AapsSchedulers,
     private val fabricPrivacy: FabricPrivacy,
+    private val config: Config,
     preferences: Preferences,
 ) : PluginBaseWithPreferences(
     PluginDescription()
@@ -218,6 +220,14 @@ class SwarmPlugin @Inject constructor(
                 )
             )
             addPreference(
+                AdaptiveStringPreference(
+                    ctx = context,
+                    stringKey = SwarmStringKey.FollowInvite,
+                    title = R.string.swarm_follow_invite,
+                    summary = R.string.swarm_follow_invite_summary
+                )
+            )
+            addPreference(
                 AdaptiveClickPreference(
                     ctx = context,
                     stringKey = SwarmStringKey.Resync,
@@ -252,6 +262,22 @@ class SwarmPlugin @Inject constructor(
                     summary = R.string.swarm_shadow_spaces_summary
                 )
             )
+            // ONLY WHERE IT CAN DO ANYTHING. On a build that drives a pump
+            // this row would offer a thing [SwarmFollowerBg] refuses to do, and
+            // a setting that silently does nothing is worse than an absent one:
+            // somebody sets it, sees no graph, and goes looking for the bug in
+            // the network. The follower is a separate app — install the
+            // AAPSClient build and the row is there.
+            if (config.AAPSCLIENT) {
+                addPreference(
+                    AdaptiveStringPreference(
+                        ctx = context,
+                        stringKey = SwarmStringKey.FollowerGraphSubject,
+                        title = R.string.swarm_follower_graph,
+                        summary = R.string.swarm_follower_graph_summary
+                    )
+                )
+            }
             addPreference(
                 AdaptiveClickPreference(
                     ctx = context,

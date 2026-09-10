@@ -193,6 +193,39 @@ object SwarmNative {
         purpose: String
     ): String
 
+    /**
+     * Every openable glucose reading for a followed subject after [sinceMs],
+     * as `millis<TAB>mgdl<TAB>trend<TAB>src` lines, oldest first.
+     *
+     * [sinceMs] is EXCLUSIVE, so a caller can pass back the last timestamp it
+     * stored. [limit] bounds the string that crosses JNI; getting exactly
+     * [limit] lines means there is more, and the caller should ask again from
+     * the last timestamp it saw. `trend` and `src` are enum NAMES, matching
+     * what [SwarmRecords] wrote, and are empty when the sensor reported none.
+     */
+    external fun netGlucose(
+        storePath: String,
+        subject: String,
+        identityPath: String,
+        purpose: String,
+        sinceMs: Long,
+        limit: Int
+    ): String
+
+    /**
+     * The newest profile a followed subject has published, as canonical JSON,
+     * or empty.
+     *
+     * Blocks are already mg/dL — the native side normalises on the way in, so
+     * a consumer never has to know which unit the subject's phone was set to.
+     */
+    external fun netProfile(
+        storePath: String,
+        subject: String,
+        identityPath: String,
+        purpose: String
+    ): String
+
     external fun vaultGrant(
         vaultPath: String,
         identityPath: String,

@@ -53,6 +53,39 @@ enum class SwarmLongKey(
      * three times and never once reached its handler.
      */
     ShadowFilled("swarm_shadow_filled", 0L),
+
+    /**
+     * The newest followed reading already written into this phone's own database.
+     *
+     * A HIGH-WATER MARK, NOT A CACHE. `CgmSourceTransaction` is idempotent on
+     * `(timestamp, sourceSensor)`, so re-offering a reading is harmless — but a
+     * Libre 3 produces about 1,586 readings a day, and re-offering a day of them
+     * every two minutes is 1,586 indexed lookups for nothing. This is what keeps
+     * a steady-state pass at one or two rows.
+     *
+     * Zero means "nothing mirrored yet", and [SwarmFollowerBg] starts from a
+     * bounded window rather than the subject's whole history: the point is a
+     * graph you can read, not a backfill of somebody's year.
+     */
+    FollowerMirroredThrough("swarm_follower_mirrored_through", 0L),
+
+    /**
+     * Which subject [FollowerMirroredThrough] is a mark for, as `hashCode`.
+     *
+     * WITHOUT THIS THE MARK IS A TRAP. Change whose line is on the graph and
+     * the mark is still sitting at the old person's newest reading — which is
+     * almost certainly in the future relative to anything the new person's
+     * backfill would offer, so the new subject would appear to have no data at
+     * all, for ever, and nothing would say why. Cheaper to notice than to
+     * diagnose.
+     *
+     * `String.hashCode` because the mark needs a companion that is invisible on
+     * the settings screen, and the long keys are the invisible ones. It is
+     * specified by the Java language and so stable across devices and versions;
+     * a collision between two subjects the same phone follows costs one
+     * skipped backfill and no wrong data.
+     */
+    FollowerMirroredSubject("swarm_follower_mirrored_subject", 0L),
 }
 
 /**
@@ -94,6 +127,22 @@ enum class SwarmStringKey(
     RevokeReader("swarm_revoke_reader", ""),
 
     /**
+     * Somebody's invite text, followed and cleared on the next pass.
+     *
+     * **BECAUSE A CAMERA IS NOT ALWAYS IN THE ROOM.** Scanning is the good path
+     * when two people are together, and it is the only path there was — which
+     * quietly meant that following somebody at a distance was impossible, and
+     * that no part of following could be exercised without two phones and a
+     * pair of hands. An invite is a short piece of text; it can be sent in a
+     * message, and the *Show my invite* dialog already offers to copy it.
+     *
+     * It carries no authority. An invite says "here is my key and where to
+     * reach me"; holding one lets you keep somebody's ciphertext and nothing
+     * else. Reading still requires them to grant you, from their phone.
+     */
+    FollowInvite("swarm_follow_invite", ""),
+
+    /**
      * Identity for the "show my invite" button, which stores nothing.
      *
      * `AdaptiveClickPreference` requires a `StringPreferenceKey` even when the
@@ -121,4 +170,24 @@ enum class SwarmStringKey(
      * something to ask of anybody.
      */
     Resync("swarm_resync", "", exportable = false),
+
+    /**
+     * Whose glucose goes on THIS phone's graph, as the subject's key (a prefix
+     * is enough), or blank.
+     *
+     * **THE ONLY WRITE THIS PROJECT MAKES INTO AAPS'S OWN DATABASE**, and it is
+     * fenced twice over. [SwarmFollowerBg] refuses unless the build is an
+     * AAPSClient flavour — a different `applicationId`, no pump drivers compiled
+     * in, and nothing a preference can switch on — so the readings can never
+     * land in the app that drives the pump. This key then decides which of
+     * possibly several followed people is the one being watched, because AAPS
+     * has exactly one glucose series and somebody has to say whose it is.
+     *
+     * Blank with exactly one subject followed means that subject: there is no
+     * ambiguity to resolve and making a follower type a key to see the graph
+     * they just scanned a code for is ceremony, not safety. Blank with several
+     * followed means nothing is mirrored, because guessing would be picking a
+     * person at random.
+     */
+    FollowerGraphSubject("swarm_follower_graph_subject", ""),
 }

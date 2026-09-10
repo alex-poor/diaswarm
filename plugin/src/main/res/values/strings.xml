@@ -40,6 +40,10 @@
     <string name="swarm_following_reading">%1$.1f mg/dL, %2$d min ago</string>
     <string name="swarm_following_unreadable">Held, but not readable — they have not shared with you yet.</string>
     <string name="swarm_following_nothing">Nothing has arrived from them yet.</string>
+    <string name="swarm_follow_invite">Follow someone by invite</string>
+    <string name="swarm_follow_invite_summary">Paste an invite they sent you. Following costs them nothing; you cannot read anything until they share with you.</string>
+    <string name="swarm_follower_graph">Show on the glucose graph</string>
+    <string name="swarm_follower_graph_summary">Whose readings go on this phone’s own graph, by the start of their key. Leave blank if you follow only one person. Not available in the app that drives a pump.</string>
     <string name="swarm_shadow_spaces">Shadow the new vault (experimental)</string>
     <string name="swarm_shadow_spaces_summary">Also seal into the p2panda-spaces vault and log whether it agrees. Nothing reads it; the existing vault stays in charge.</string>
     <string name="swarm_resync">Re-read everything from the database</string>

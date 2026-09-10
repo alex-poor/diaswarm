@@ -48,6 +48,46 @@ copies the `.so` into `src/main/jniLibs`, where the library packages it from.
 The `.so` is **not committed**: a checked-in binary is a second, opaque copy of
 the frozen spec that nobody can diff and everybody trusts.
 
+## Following somebody: the follower is a different app
+
+**Install `aapsclient`, not `full`.** Putting a followed person's glucose on the
+AAPS graph means writing into AAPS's own `glucoseValues` table, and in the app
+that drives a pump that is not a display bug — `CompatDBHelper` fires
+`EventNewBG`, which extends `EventLoop`, and `InvokeLoopWorker` doses on it. So
+[`SwarmFollowerBg`](src/main/kotlin/app/aaps/plugins/sync/swarm/SwarmFollowerBg.kt)
+refuses unless `Config.AAPSCLIENT`, and that is a build flavour: no preference,
+no import and no bug in this module can turn it on. See decision D22.
+
+The flavour is also the right shape for a follower. Its `applicationId` is
+`info.nightscout.aapsclient`, so it installs **alongside** the loop app — on the
+same phone if you like — with its own database, and `Config.PUMPDRIVERS` is
+false, so it has no pump driver compiled into it at all.
+
+```sh
+cd ../aaps-diaswarm
+./gradlew :app:assembleAapsclientLoop -PappVersionSuffix=follower
+adb install -r app/build/outputs/apk/aapsclient/loop/app-aapsclient-loop.apk
+```
+
+Then, entirely on the two phones — no adb, no root:
+
+1. **Follower** · AAPSClient → Config Builder → enable **Swarm** → its gear icon
+   → *Show my invite*. A QR code appears. The follower app has its own identity;
+   the loop app's grants do not carry over to it.
+2. **Subject** · AAPS → Swarm → *Scan a code* → scan that QR → **Share with
+   them**. The grant is written on the next sync pass.
+3. **Follower** · Swarm → *Scan a code* → scan the subject's invite → **Follow
+   them**.
+4. Wait two minutes. The readings land on the follower's overview graph.
+
+*Show on the glucose graph* only needs setting when the follower follows more
+than one person — AAPS has one glucose series and somebody has to say whose it
+is. Following exactly one person needs no choice and asks for none.
+
+The first pass reaches a day back and no further: a grant may carry years, a
+graph shows hours, and decrypting a year to draw six of them is how a follower's
+first impression becomes a frozen app.
+
 ## What is not done
 
 - **`publish()` does nothing.** The plugin canonicalises and counts; it has no

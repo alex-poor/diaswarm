@@ -290,6 +290,56 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D22 · A follower is a separate app, and the build flavour is the fence
+
+**Settled 2026-09-10.** The thing this project is trying to beat shows somebody
+else's trend line in an app. So a follower puts the person they follow onto the
+AAPS glucose graph, by inserting their readings into AAPS's own `glucoseValues`
+table — [`SwarmFollowerBg`](../plugin/src/main/kotlin/app/aaps/plugins/sync/swarm/SwarmFollowerBg.kt).
+That is a write into the database of a medical device, and D7 says this add-on
+does not do that. The reconciliation is that **the app which drives the pump
+never runs it**.
+
+**WHY THE RISK IS NOT "A WRONG LINE".** `CompatDBHelper` fires `EventNewBG` on
+every glucose row that lands, `EventNewBG` extends `EventLoop`, and
+`InvokeLoopWorker` runs the loop on exactly that event. A followed person's
+glucose in a looping phone's database is not a display bug. It is dosing on
+somebody else's blood.
+
+**THE FENCE IS `Config.AAPSCLIENT`, WHICH IS THE BUILD FLAVOUR** — not a
+preference, not a runtime check on the active pump, not "is the loop currently
+enabled". Those are all states something else can change: a preference import, a
+tap in the Config Builder, a bug in this add-on. A flavour cannot be changed by
+any of them.
+
+`aapsclient` also happens to be exactly the right shape for a follower:
+
+* its `applicationId` is `info.nightscout.aapsclient`, so it **installs
+  alongside** the loop app instead of over it. The follower is a second app with
+  its own database — on the same phone, if you like — and nothing it writes is
+  visible to the app holding the pump key.
+* `Config.PUMPDRIVERS` is `full || pumpcontrol`, so no pump driver is compiled
+  into it. There is no pump to command.
+* `LoopPlugin` is `alwaysEnabled(config.APS)`, and `config.APS` is false there.
+
+Two further barriers, because a single fence around this is not enough. Every
+mirrored row is tagged in `ids.nightscoutId`, and the drain refuses to publish a
+tagged row — otherwise a follower re-publishes the person they follow as their
+own glucose, and whoever follows the follower sees the wrong person's blood
+under their name. And nothing is mirrored until somebody says whose line it is,
+unless exactly one person is followed and there is nothing to say.
+
+**WHAT THIS COSTS.** A follower needs a second APK and a second identity, so the
+person they follow has to grant that identity rather than the one in their loop
+app. That is a real cost at a demo and it buys a property no amount of care in
+this file could: the readings cannot reach the pump app, because they are not in
+its database.
+
+**Still unguarded:** an AAPS database exported from a follower and imported into
+a looping phone carries the rows across. That is a foreign-database import into
+a medical device, already catastrophic for reasons that have nothing to do with
+this; the tag at least makes the rows findable afterwards.
+
 ### D21 · Replication is p2panda log sync over the pool's own topics
 
 **Settled 2026-09-10.** `crates/diaswarm-net/src/replicate.rs` carries subjects

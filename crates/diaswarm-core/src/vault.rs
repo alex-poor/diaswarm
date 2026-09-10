@@ -794,6 +794,34 @@ impl Vault {
         reader: &Identity,
         purpose: &str,
     ) -> Result<BTreeMap<i64, Vec<Record>>, VaultError> {
+        self.read_as_from(reader, purpose, i64::MIN)
+    }
+
+    /// The same, but only from `from_epoch` onward.
+    ///
+    /// **A READER WATCHING A GRAPH DOES NOT WANT THE YEAR.** [`read_as`] opens
+    /// every segment the reader holds a wrap for: it decrypts each one, parses
+    /// every line, and keeps the canonical form of every record in a set so
+    /// overlapping segments can be deduplicated. That is the right shape for
+    /// assembling a history once, and the wrong one entirely for a follower
+    /// asking "anything new?" every two minutes — the cost is the whole grant,
+    /// every time, and it grows for ever while the answer stays one reading
+    /// long.
+    ///
+    /// The epoch is on the segment's filename, so a segment that is entirely
+    /// too old is skipped before it is read, unwrapped, or decrypted. Callers
+    /// that want everything keep calling [`read_as`].
+    ///
+    /// Deduplication is per call, which is why the bound is an epoch and not a
+    /// timestamp: overlapping segments for the same epoch must be compared with
+    /// each other or a rotation double-counts (see below), and excluding half
+    /// of an epoch would break exactly that.
+    pub fn read_as_from(
+        &self,
+        reader: &Identity,
+        purpose: &str,
+        from_epoch: i64,
+    ) -> Result<BTreeMap<i64, Vec<Record>>, VaultError> {
         let tag = hex(&grant_tag(&reader.encryption, &self.subject_pub, purpose));
         let name = format!("{tag}.wrap");
         let mut out: BTreeMap<i64, Vec<Record>> = BTreeMap::new();
@@ -808,6 +836,9 @@ impl Vault {
         // expected.
         let mut seen: BTreeSet<String> = BTreeSet::new();
         for seg in self.segments()? {
+            if seg.epoch < from_epoch {
+                continue;
+            }
             let path = self.root.join("wraps").join(seg.seq.to_string()).join(&name);
             if !path.exists() {
                 continue;

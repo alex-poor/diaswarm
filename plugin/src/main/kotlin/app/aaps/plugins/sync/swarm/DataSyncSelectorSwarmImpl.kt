@@ -53,6 +53,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private val preferences: Preferences,
     private val persistenceLayer: PersistenceLayer,
     private val context: Context,
+    private val followerBg: SwarmFollowerBg,
 ) : DataSyncSelector {
 
     /** Native dedupe state, held across the whole upload. */
@@ -106,7 +107,18 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 { persistenceLayer.getLastGlucoseValueId() },
                 { id -> persistenceLayer.getNextSyncElementGlucoseValue(id).blockingGet()
                     ?.let { it.first to it.second.id } },
-                { (it as app.aaps.core.data.model.GV).isValid }),
+                // NOT MINE, NOT MINE TO PUBLISH. A follower mirrors somebody
+                // else's readings into this database so AAPS will draw them
+                // (see [SwarmFollowerBg]); without this line the drain would
+                // pick them straight back up and re-publish them as this
+                // subject's own glucose, and anyone following the follower
+                // would see the wrong person's blood under their name.
+                // `isValid` alone does not catch it — a mirrored row is a
+                // perfectly valid row, it just belongs to someone else.
+                {
+                    val gv = it as app.aaps.core.data.model.GV
+                    gv.isValid && gv.ids.nightscoutId?.startsWith(SwarmFollowerBg.MIRROR_TAG) != true
+                }),
             Source("bolus", SwarmLongKey.BolusLastSyncedId,
                 { persistenceLayer.getLastBolusId() },
                 { id -> persistenceLayer.getNextSyncElementBolus(id).blockingGet()
@@ -565,6 +577,16 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         if (reached < 0) aapsLogger.debug(LTag.CORE, "swarm: refresh failed ($reached)")
         else if (reached > 0) aapsLogger.debug(LTag.CORE, "swarm: refreshed $reached followed subject(s)")
 
+        // AND THEN PUT IT ON THE GRAPH, which is the point of following anyone.
+        // Refuses outright on any build that can dose; see [SwarmFollowerBg].
+        // Wrapped because a follower failing to draw a line must never take
+        // down the pass that keeps the data arriving.
+        try {
+            followerBg.mirror()?.let { aapsLogger.info(LTag.CORE, it) }
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.CORE, "swarm: mirroring followed glucose failed", e)
+        }
+
         scheduleNextPoll()
     }
 
@@ -642,6 +664,21 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             preferences.put(SwarmStringKey.GrantReader, "")
             if (n < 0) aapsLogger.error(LTag.CORE, "swarm: grant refused ($n) for ${who.take(16)}…")
             else aapsLogger.info(LTag.CORE, "swarm: granted ${who.take(16)}… — $n wraps published")
+        }
+
+        // FOLLOWING IS NOT GRANTING, and it does not touch this phone's vault —
+        // it is here because this is the one place that acts on what the user
+        // asked for and clears the request, and a second mechanism for that
+        // would be a second thing to get wrong.
+        preferences.get(SwarmStringKey.FollowInvite).trim().takeIf { it.isNotEmpty() }?.let { invite ->
+            val store = SwarmPaths.store(context).absolutePath
+            val n = SwarmNative.netFollow(store, invite)
+            preferences.put(SwarmStringKey.FollowInvite, "")
+            when {
+                n > 0L  -> aapsLogger.info(LTag.CORE, "swarm: now following ${invite.take(16)}…")
+                n == 0L -> aapsLogger.info(LTag.CORE, "swarm: already following ${invite.take(16)}…")
+                else    -> aapsLogger.error(LTag.CORE, "swarm: that invite would not parse ($n)")
+            }
         }
 
         preferences.get(SwarmStringKey.RevokeReader).trim().takeIf { it.isNotEmpty() }?.let { who ->
