@@ -382,8 +382,14 @@ Bundled SQLite in app storage, a tokio runtime and p2panda's state machinery
 all work there. Phone B, idle, was three to four times slower — worth
 remembering before reading anything into a single timing.
 
-*Reopens if:* first-contact latency turns out to matter more than having one
-transport, or upstream makes session initiation public.
+**Measured 2026-09-10, and it does not.** Five cold runs: a direct dial reaches
+data in 32 ms, log sync in 3 seconds, 5 of 5 arriving. A hundredfold as a ratio
+and a spinner as an experience. Keeping a hand-written fetch path alive to save
+three seconds would be the opposite of the point.
+
+*Reopens if:* first contact between peers on different networks — not measured,
+and dependent on n0 discovery rather than mDNS — turns out to be far slower than
+the local case.
 
 ### D20 · The vault moves onto p2panda-spaces; a window is a space
 

@@ -16,3 +16,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 futures-util = "0.3"
 anyhow = "1"
 p2panda-sync = "=0.7.1"
+iroh = "1.1"

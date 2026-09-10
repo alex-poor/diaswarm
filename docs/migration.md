@@ -64,10 +64,27 @@ ever been two phones on the old transport.
 sealed the old way has to re-seal from the AAPS database, which is what the
 re-drain button does — see (1).
 
-**5. First contact is worse.** `SyncHandle::initiate_session` is `#[cfg(test)]`
-upstream, so a follower that has just scanned an invite waits for discovery
-rather than fetching. That is a real regression against today's behaviour and it
-has no workaround inside the library.
+**5. First contact is worse — by three seconds.** ~~An open question.~~
+Measured in `spike/p2panda-logsync --bin firstcontact`, five cold runs each with
+a fresh network id so no discovery state carries over:
+
+| path | median | spread |
+|---|---|---|
+| direct dial — what an invite does today | **32 ms** | 29–33 ms |
+| log sync — subscribe and wait for discovery | **3 s** | 2–6 s, 5 of 5 arrived |
+
+A hundred times slower as a ratio, and three seconds as an experience. That is a
+spinner, not a person scanning the code again because it looks broken — and the
+follower UI already shows every reading with its age, so "waiting for the first
+sync" is a small addition rather than a new idea.
+
+**Recommendation: accept it, and delete `wire.rs`.** Keeping a bespoke fetch
+path alive to save three seconds is the opposite of what this migration is for.
+
+*Measured on a LAN with mDNS, both peers on one machine — which is the scanning
+case, since people scan a code standing next to each other. First contact
+between peers on different networks, relying on n0 discovery, is not measured
+and could be slower.*
 
 ## A caveat about the evidence itself
 
