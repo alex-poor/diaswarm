@@ -1,0 +1,6 @@
+# p2panda 0.7.1 needs 1.96+. Pinned at the repository root so every crate, the
+# Android cross-build and CI all use the same compiler — a plugin built with a
+# different toolchain from its tests is a difference nobody would look for.
+[toolchain]
+channel = "1.98.1"
+targets = ["aarch64-linux-android", "armv7-linux-androideabi"]

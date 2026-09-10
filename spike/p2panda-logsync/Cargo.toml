@@ -1,0 +1,18 @@
+[package]
+name = "p2panda-logsync-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The question: does p2panda's own log sync carry an operation BODY, and how
+# large a one? `crates/diaswarm-spaces` moved record ciphertext into the body to
+# escape the 512-byte header limit — 324x faster on real history — and that is
+# only worth anything if replication actually moves bodies.
+[dependencies]
+p2panda-net = "=0.7.1"
+p2panda-core = "=0.7.1"
+p2panda-store = { version = "=0.7.1", features = ["macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+futures-util = "0.3"
+anyhow = "1"
+p2panda-sync = "=0.7.1"
