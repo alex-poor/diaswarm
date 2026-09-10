@@ -69,6 +69,18 @@ upstream, so a follower that has just scanned an invite waits for discovery
 rather than fetching. That is a real regression against today's behaviour and it
 has no workaround inside the library.
 
+## A caveat about the evidence itself
+
+**The network tests are timing-dependent.** Everything in `tests/replicate.rs`
+and `tests/swarm.rs` waits for mDNS discovery — up to sixty seconds — and under
+load that is not always enough: running all four crates' suites at once has
+failed one of them twice, and both passed immediately on their own.
+
+That matters more than an ordinary flaky test, because these are the tests a
+cutover decision would rest on. A green run means the property held; a red one
+means either the property broke or the laptop was busy, and nothing in the
+output distinguishes those. Worth fixing before the decision, not after.
+
 ## What the cutover would cost
 
 * **Storage per subject is unchanged** — 13.1 MB/yr, and that depends on §3.3
