@@ -38,7 +38,8 @@ use p2panda_core::{Hash, VerifyingKey};
 use p2panda_encryption::Rng;
 use p2panda_spaces::manager::Manager;
 use p2panda_spaces::space::Space;
-use p2panda_spaces::{Credentials, Event, SpaceId, SpacesArgs, StrongRemoveResolver};
+pub use p2panda_spaces::SpacesArgs;
+use p2panda_spaces::{Credentials, Event, SpaceId, StrongRemoveResolver};
 use p2panda_auth::group::GroupCrdtState;
 use p2panda_spaces::space::SpacesState;
 use p2panda_spaces::{ActorId, AuthMessage, OperationId, SpacesStoreState};
@@ -235,6 +236,15 @@ impl Vault {
             .unwrap_or(0);
 
         Ok(Vault { manager, spaces: spaces_for_vault, sqlite: store, root, offset_ms, windows })
+    }
+
+    /// The store this vault writes to.
+    ///
+    /// Handed out so replication can run on the same one: log sync reads and
+    /// writes operations directly, and a second store would be a second copy
+    /// of the subject that nothing keeps in step.
+    pub fn store(&self) -> SqliteStore {
+        self.sqlite.clone()
     }
 
     /// This subject's public key — what a reader is granted against.

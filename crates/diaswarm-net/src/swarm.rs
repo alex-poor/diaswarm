@@ -158,6 +158,15 @@ impl Swarm {
         Ok(self.endpoint.endpoint().await?)
     }
 
+    /// The p2panda endpoint and gossip this peer runs on.
+    ///
+    /// Handed out so replication can be built on the *same* ones. A second
+    /// endpoint would be a second identity in the pool that nothing else knows
+    /// about — the mistake D19 records, arriving from a new direction.
+    pub fn parts(&self) -> (Endpoint, Gossip) {
+        (self.endpoint.clone(), self.gossip.clone())
+    }
+
     /// The pool this peer is in. Two pools with different ids never meet.
     pub fn network_id(&self) -> p2panda_net::NetworkId {
         self.endpoint.network_id()

@@ -290,6 +290,51 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D21 · Replication is p2panda log sync over the pool's own topics
+
+**Settled 2026-09-10.** `crates/diaswarm-net/src/replicate.rs` carries subjects
+with `p2panda-net`'s log sync instead of [`wire.rs`](../crates/diaswarm-net/src/wire.rs)'s
+`Have`/`Manifest`/`Grants`/`Segment`/`Wraps`.
+
+**NOTHING IN THE POOL CHANGES**, which is what makes this small. A bucket topic
+already carries a gossip announcement of *which* subjects live in it; log sync
+carries *what they contain*, over the same topic. Gossip answers "who is in
+this bucket", log sync answers "give me their operations". `pool.rs` — the one
+piece p2panda supplies no equivalent for — is untouched.
+
+A subject is an author and a log: `diaswarm-spaces` writes everything into log
+0 of the subject's own key, so `associate(topic, subject_key, 0)` is the whole
+of "carry this person's data". A peer holding a bucket associates every subject
+it hears about there and the data arrives without anyone being asked.
+
+Measured in `tests/replicate.rs`: a peer that was told nothing but a topic ends
+up holding a stranger's operations, and cannot read a byte of them.
+
+**RECEIVING IS NOT HOLDING**, and the gap between them is the trap here. Log
+sync hands the application the operations it fetched and stops; storing them is
+the application's decision. The first version counted `OperationReceived` events
+and looked healthy — sync started, six operations and 2,602 bytes crossed, sync
+finished, live mode began — with an empty store behind it. **A peer that
+carries nothing while reporting healthy sync is the worst shape a bug in this
+project can take**, so the sync event log is kept and exposed rather than
+reduced to a count.
+
+**What this buys beyond deleting a protocol:** live mode. After catch-up, new
+operations are pushed over gossip rather than polled for, which is the answer to
+[D17](#) and §12.3 — the two-minute follower poll, and a reading that is stale
+without saying so.
+
+**What it cannot do:** start a sync on demand. `SyncHandle::initiate_session` is
+`#[cfg(test)]` upstream, with a TODO wondering whether to make it public. A peer
+subscribes and waits for discovery. For the pool that is correct — nobody is
+dialled, everyone is found — but **a follower that has just scanned an invite
+gets its data when discovery gets round to it**, which is a worse first
+impression than the current fetch-on-demand and has no workaround inside the
+library.
+
+*Reopens if:* first-contact latency turns out to matter more than having one
+transport, or upstream makes session initiation public.
+
 ### D20 · The vault moves onto p2panda-spaces; a window is a space
 
 **Settled 2026-09-10.** `crates/diaswarm-spaces` replaces the sealing

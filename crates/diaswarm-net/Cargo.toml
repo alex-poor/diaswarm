@@ -7,6 +7,7 @@ description = "Move a vault between peers over iroh"
 
 [dependencies]
 diaswarm-core = { path = "../diaswarm-core" }
+diaswarm-spaces = { path = "../diaswarm-spaces" }
 iroh = "1.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "fs", "signal", "time"] }
 serde = { version = "1", features = ["derive"] }
@@ -15,6 +16,8 @@ sha2 = "0.10"
 # D2a: the moment two devices must sync, p2panda-net over iroh is the answer.
 p2panda-net = "=0.7.1"
 p2panda-core = "=0.7.1"
+p2panda-store = { version = "=0.7.1", features = ["macros"] }
+p2panda-sync = "=0.7.1"
 futures-util = "0.3"
 anyhow = "1"
 

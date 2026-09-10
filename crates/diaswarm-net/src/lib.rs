@@ -29,6 +29,7 @@
 //! not this one.
 
 pub mod peer;
+pub mod replicate;
 pub mod pool;
 pub mod swarm;
 pub mod wire;
