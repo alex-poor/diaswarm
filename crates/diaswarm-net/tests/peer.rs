@@ -147,6 +147,7 @@ async fn a_dead_first_endpoint_does_not_stop_a_refresh() {
         subject: subject_hex.clone(),
         from: vec![dead.clone(), live.clone()],
         purpose: Some("follow".into()),
+        relay: None,
     };
     let r = refresh_one(&store, &follow, true).await;
 
@@ -206,7 +207,7 @@ async fn unreachable_is_reported_per_endpoint() {
     let a = format!("{}@127.0.0.1:1", SecretKey::generate().public());
     let b = format!("{}@127.0.0.1:2", SecretKey::generate().public());
     let follow =
-        Follow { subject: subject.clone(), from: vec![a.clone(), b.clone()], purpose: None };
+        Follow { subject: subject.clone(), from: vec![a.clone(), b.clone()], purpose: None, relay: None };
 
     let r = refresh_one(&store, &follow, true).await;
     assert!(!r.reached());

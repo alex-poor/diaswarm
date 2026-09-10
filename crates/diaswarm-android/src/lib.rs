@@ -455,11 +455,13 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netFollow<'a
         return -1;
     };
     let Ok(inv) = diaswarm_core::invite::Invite::parse(&String::from(text)) else { return -2 };
-    match diaswarm_net::peer::add_follow(
+    match diaswarm_net::peer::add_follow_via(
         Path::new(&String::from(store)),
         &inv.subject,
         &inv.endpoint,
         Some(&inv.purpose),
+        // Their relay, as they published it — see peer::Follow::relay.
+        Some(inv.relay.as_str()),
     ) {
         Ok(true) => 1,
         Ok(false) => 0,

@@ -331,9 +331,24 @@ networks exchanging a vault — the hardware to hand is one wifi, and the test
 phone's SIM is out of service. That test is the remote follower, and it needs
 this build on both ends.
 
-**Still open:** the invite carries a node id but not a relay, so both sides must
-agree on one out of band. Putting the relay in the invite is a version bump of
-the invite format and the honest fix.
+**THE RELAY TRAVELS IN THE INVITE**, as of the same day. `diaswarm:2:` adds a
+relay field, and `peer::Follow` stores it per subject. A relay compiled into the
+binary is one that every phone must be rebuilt to change, which would make "run
+your own" a release rather than a new invite. It is per subject and not a global
+setting because two people you follow may be reachable through different relays
+— one public, one their family's — and dialling the second through the first
+finds nobody.
+
+`diaswarm:1:` invites are still read, and mean the default relay. Ones already
+scanned onto phones do not stop existing because the format grew a field. An
+empty relay field means direct connections only: the local network and nowhere
+else.
+
+**Still open:** which relay to actually use. n0's public one is the default for
+now, chosen so the app works when installed; the decision to move to a
+self-hosted relay is now a change of invite, not of code. Note that
+`iroh-relay` defaults to `AccessConfig::Everyone` — a self-hosted relay carries
+anybody's traffic until it is given an allowlist of node ids or a shared token.
 
 ### D22 · A follower is a separate app, and the build flavour is the fence
 

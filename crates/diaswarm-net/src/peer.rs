@@ -89,6 +89,16 @@ pub struct Follow {
     /// as normal for a relay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
+    /// Where this subject can be reached when they are not on the same wifi,
+    /// as it arrived in their invite (D23).
+    ///
+    /// **PER SUBJECT, NOT PER PHONE.** Two people you follow may be reachable
+    /// through different relays — one on a public one, one on a relay their
+    /// family runs — and a single global setting would make following both
+    /// impossible. `None` is an invite from before relays existed, which means
+    /// "however this build reaches people by default".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay: Option<String>,
 }
 
 impl Follow {
@@ -130,6 +140,17 @@ pub fn save_follows(store: &Path, follows: &[Follow]) -> Result<()> {
 /// Add a subject to what this peer keeps, or add an upstream to an existing
 /// one. Returns true if anything changed.
 pub fn add_follow(store: &Path, subject: &str, from: &str, purpose: Option<&str>) -> Result<bool> {
+    add_follow_via(store, subject, from, purpose, None)
+}
+
+/// The same, recording which relay this subject said to reach them through.
+pub fn add_follow_via(
+    store: &Path,
+    subject: &str,
+    from: &str,
+    purpose: Option<&str>,
+    relay: Option<&str>,
+) -> Result<bool> {
     let subject = subject.to_ascii_lowercase();
     if subject.len() != 64 || !subject.bytes().all(|b| b.is_ascii_hexdigit()) {
         anyhow::bail!("a subject is 64 hex characters");
@@ -150,6 +171,13 @@ pub fn add_follow(store: &Path, subject: &str, from: &str, purpose: Option<&str>
                 existing.purpose = purpose.map(str::to_string);
                 changed = true;
             }
+            // A fresh invite is the subject saying where they are NOW. Somebody
+            // who moved off a public relay onto their own re-shares their code,
+            // and the point of that is for it to take effect.
+            if relay.is_some() && existing.relay.as_deref() != relay {
+                existing.relay = relay.map(str::to_string);
+                changed = true;
+            }
             if changed {
                 save_follows(store, &follows)?;
             }
@@ -160,6 +188,7 @@ pub fn add_follow(store: &Path, subject: &str, from: &str, purpose: Option<&str>
                 subject,
                 from: vec![from.to_string()],
                 purpose: purpose.map(str::to_string),
+                relay: relay.map(str::to_string),
             });
             save_follows(store, &follows)?;
             Ok(true)

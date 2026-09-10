@@ -93,33 +93,13 @@ pub struct Swarm {
     relay: Option<iroh::RelayUrl>,
 }
 
-/// The relay that makes this a swarm rather than a LAN party.
+/// Where a peer is reachable when it is not on your wifi.
 ///
-/// **WITHOUT ONE, PEERS ONLY EVER MEET ON THE SAME WIFI**, and that was true of
-/// every demonstration this project had given: mDNS found phones on one network
-/// and nothing found anything anywhere else. p2panda's headline is "establish
-/// and manage direct connections to any device over the Internet"; its own
-/// `chat.rs` example is how — a relay on the endpoint, and the peer you already
-/// know seeded into the address book carrying that relay.
-///
-/// WHAT A RELAY IS AND IS NOT. It is STUN plus a fallback path: it helps two
-/// phones behind NAT find a direct route to each other, and carries their
-/// packets only until they do. It is not a server the data lives on. It sees
-/// ciphertext and cannot open it — the epoch keys never leave the phones — and
-/// once hole-punching succeeds it is out of the path entirely. What it can see
-/// is that two node ids exchanged bytes, and from which addresses; that is a
-/// metadata observer, and it belongs in the same paragraph as the social-graph
-/// leak this design already accepts (feasibility §9).
-///
-/// **THIS IS MEANT TO BE REPLACED WITH YOUR OWN.** `n0` runs these for public
-/// use, which is what makes the app work the moment it is installed rather than
-/// after somebody stands up infrastructure. Anyone who would rather not hand a
-/// third party that metadata can run `iroh-relay` on a VPS and point every
-/// phone at it; nothing else changes.
-///
-/// Asia-Pacific because that is where these phones are, and a relay on the far
-/// side of the planet adds a round trip to every hole-punch.
-pub const DEFAULT_RELAY: &str = "https://aps1-1.relay.n0.iroh.link.";
+/// **ONE DEFINITION, IN THE CRATE THAT OWNS THE INVITE.** The relay travels in
+/// the invite now (D23), so the default belongs beside the format that carries
+/// it — a second copy here would be a second thing to change, and the two would
+/// disagree the first time somebody edited only one.
+pub use diaswarm_core::invite::DEFAULT_RELAY;
 
 impl Swarm {
     /// Join the pool, and start answering for what we hold.
@@ -168,22 +148,6 @@ impl Swarm {
                 None
             }
         };
-        if let Some(url) = &relay_url {
-            for f in crate::peer::load_follows(&store).unwrap_or_default() {
-                for from in &f.from {
-                    // parse_upstream already yields the address, keeping any IP
-                    // hints the invite carried; the relay is what makes it
-                    // dialable from a different network.
-                    let Ok(addr) = crate::peer::parse_upstream(from) else { continue };
-                    let _ = book
-                        .insert_node_info(
-                            p2panda_net::addrs::NodeInfo::from(addr.with_relay_url(url.clone()))
-                                .bootstrap(),
-                        )
-                        .await;
-                }
-            }
-        }
 
         let mut builder = Endpoint::builder(book.clone()).signing_key(signing_key).network_id(network);
         if let Some(url) = relay_url.clone() {
@@ -212,7 +176,7 @@ impl Swarm {
 
         let presence = gossip.stream(topic(pool::presence_topic())).await.context("presence")?;
 
-        Ok(Swarm {
+        let swarm = Swarm {
             store,
             endpoint,
             book,
@@ -223,7 +187,11 @@ impl Swarm {
             joined: Arc::new(Mutex::new(HashMap::new())),
             heard: Arc::new(Mutex::new(HashMap::new())),
             relay: relay_url,
-        })
+        };
+        // Tell the address book where everybody we already follow lives, before
+        // anything asks. One implementation of that rule, not two.
+        swarm.seed_follows().await;
+        Ok(swarm)
     }
 
     /// The iroh endpoint underneath, so the follow path uses the same identity.
@@ -419,8 +387,23 @@ impl Swarm {
     /// and a follow that only became dialable after a restart would look like
     /// the network being broken.
     async fn seed_follows(&self) {
-        let Some(url) = &self.relay else { return };
         for f in crate::peer::load_follows(&self.store).unwrap_or_default() {
+            // THEIR RELAY, NOT OURS. Two people you follow can be reachable
+            // through different relays — one public, one their family's — and
+            // dialling the second through the first finds nobody. An invite
+            // from before relays existed carries none, and falls back to
+            // whichever this phone uses itself.
+            let url = match f.relay.as_deref() {
+                Some("") => continue, // said explicitly: direct connections only
+                Some(r) => match r.parse::<iroh::RelayUrl>() {
+                    Ok(u) => u,
+                    Err(_) => continue,
+                },
+                None => match &self.relay {
+                    Some(u) => u.clone(),
+                    None => continue,
+                },
+            };
             for from in &f.from {
                 let Ok(addr) = crate::peer::parse_upstream(from) else { continue };
                 let _ = self
