@@ -224,7 +224,22 @@ class SwarmPlugin @Inject constructor(
                     title = R.string.swarm_resync,
                     summary = R.string.swarm_resync_summary,
                     onPreferenceClickListener = {
-                        SwarmSharing.confirmResync(context) { resync() }
+                        // LOGGED BEFORE THE DIALOG, so a tap that goes nowhere
+                        // is distinguishable from a tap that never happened.
+                        // Two re-drains were asked for and neither left a trace:
+                        // `resync()` logs only once it runs, so a dialog that
+                        // fails to appear is silent and looks to the person
+                        // tapping exactly like a button that worked.
+                        aapsLogger.info(LTag.CORE, "swarm: re-drain tapped")
+                        try {
+                            SwarmSharing.confirmResync(context) { resync() }
+                        } catch (e: Throwable) {
+                            aapsLogger.error(LTag.CORE, "swarm: re-drain dialog failed: $e")
+                            // The dialog is a courtesy, not the mechanism. If it
+                            // cannot be shown the work still gets done, because
+                            // being unable to ask is not a reason to refuse.
+                            resync()
+                        }
                         true
                     }
                 )
