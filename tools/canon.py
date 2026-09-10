@@ -577,6 +577,9 @@ def main() -> int:
     ap.add_argument("db", type=Path, help="AAPS SQLite snapshot (copy the -wal too)")
     ap.add_argument("-o", "--out", type=Path, help="write NDJSON here (default: stdout)")
     ap.add_argument("--stats", action="store_true", help="report to stderr and write nothing")
+    ap.add_argument("--no-thin", action="store_true",
+                    help="skip the §3.3 five-minute CGM thinning, so the raw "
+                         "stream can be fed to another implementation of it")
     ap.add_argument("--offset", type=int, default=None,
                     help="hours to cut epoch days at (default: the mode of the data's own utcOffset)")
     args = ap.parse_args()
@@ -591,7 +594,10 @@ def main() -> int:
 
     print(f"  read {args.db}", file=sys.stderr)
     records = extract(db)
-    records, cgm_dropped = debounce_cgm(records)
+    if args.no_thin:
+        cgm_dropped = 0
+    else:
+        records, cgm_dropped = debounce_cgm(records)
     offset = args.offset * 3_600_000 if args.offset is not None else standing_offset(db)
     print(f"  epochs   days cut at UTC{offset / 3_600_000:+g}", file=sys.stderr)
     blob = encode(records, offset)

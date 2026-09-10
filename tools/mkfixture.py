@@ -94,6 +94,21 @@ def rows() -> list[tuple[str, dict]]:
     add("glucoseValues", timestamp=T0 + 2 * MIN, value=150.0,
         trendArrow="FLAT", sourceSensor="Dexcom G6")
 
+    # --- a ONE-MINUTE sensor, which is what the subject actually has --------
+    #
+    # Libre 3 reports every 59 seconds: 1,586 readings a day where the Dexcom it
+    # replaced managed 255. spec §3.3 thins that to one per five-minute bucket,
+    # and for a long time only tools/canon.py did — the on-device emitter kept
+    # every reading, and the two disagreed by 3,898 records over 74 days with
+    # each internally consistent. Nothing caught it because the fixture had no
+    # sub-five-minute CGM in it to disagree about.
+    #
+    # Distinct values, so a test can say WHICH reading survived rather than only
+    # how many did.
+    for i in range(12):
+        add("glucoseValues", timestamp=T0 + 60 * MIN + i * 60_000,
+            value=200.0 + i, trendArrow="FLAT", sourceSensor="Libre 3")
+
     # Version history: a corrected copy of an earlier reading, written into its
     # own bucket with a value nothing else uses. In its own bucket deliberately —
     # a version row sharing a bucket with the row it supersedes would be removed

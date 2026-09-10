@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use diaswarm_core::{debounce_cgm, encode, epoch_of, header, sort, Record, EPOCH_MS};
+use diaswarm_core::{debounce_cgm, encode, epoch_of, header, sort, Emitted, Record, EPOCH_MS};
 
 /// The reference snapshot's own standing offset, which canon.py derives from it.
 const OFFSET: i64 = 12 * 3_600_000;
@@ -272,4 +272,80 @@ fn an_unrecognised_unit_is_admitted_rather_than_guessed() {
         .normalise();
     assert_eq!(r.get("unit").and_then(|v| v.as_str()), Some("FURLONGS"));
     assert_eq!(r.get("isf").unwrap()[0]["amount"].as_f64(), Some(2.0), "scaled a unit it did not know");
+}
+
+/// DOES THE SHIPPED PATH THIN CGM THE WAY `canon.py` DOES?
+///
+/// The other tests here compare `debounce_cgm` — the batch function — against
+/// Python, and they passed for months while the bug was live. Nothing on a
+/// phone calls that function. The emitter does the thinning, and it did not do
+/// it at all, so the two implementations disagreed by 3,898 records over 74
+/// days of real history with each internally consistent.
+///
+/// So this drives `Emitted`, which is what the device actually runs, and
+/// compares its output to Python's over the same fixture. The fixture carries a
+/// one-minute sensor for the same reason: without sub-five-minute CGM in it,
+/// there is nothing for the two to disagree about.
+#[test]
+fn the_emitter_thins_cgm_exactly_as_python_does() {
+    let root = repo_root();
+    let db = std::env::temp_dir().join("diaswarm-thinning.db");
+    let _ = std::fs::remove_file(&db);
+
+    if Command::new("python3")
+        .arg(root.join("tools/mkfixture.py"))
+        .arg(&db)
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+    {
+        eprintln!("skipping: python3 or the fixture tool is unavailable");
+        return;
+    }
+
+    let canon = |extra: &[&str]| -> Option<String> {
+        let mut c = Command::new("python3");
+        c.arg(root.join("tools/canon.py")).arg(&db).arg("--offset").arg("12");
+        for a in extra {
+            c.arg(a);
+        }
+        let out = c.output().ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string())
+    };
+
+    let (Some(thinned), Some(raw)) = (canon(&[]), canon(&["--no-thin"])) else {
+        eprintln!("skipping: canon.py would not run");
+        return;
+    };
+
+    let parse = |s: &str| -> Vec<Record> {
+        s.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .filter_map(|l| Record::from_json(l).ok())
+            .collect()
+    };
+
+    // Python's answer, and the raw stream both implementations start from.
+    let expected: Vec<String> =
+        parse(&thinned).iter().map(Record::to_canonical_json).collect();
+    let source = parse(&raw);
+    assert!(
+        source.len() > expected.len(),
+        "the fixture has no sub-five-minute CGM, so this test proves nothing"
+    );
+
+    // The device's answer.
+    let mut emitter = Emitted::new();
+    let got: Vec<String> = source
+        .iter()
+        .filter(|r| emitter.accept(r))
+        .map(Record::to_canonical_json)
+        .collect();
+
+    assert_eq!(
+        got, expected,
+        "the emitter and canon.py disagree about which records reach a reader"
+    );
+    assert!(emitter.thinned > 0, "nothing was thinned, so §3.3 did not run");
 }

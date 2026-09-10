@@ -67,7 +67,19 @@ def main() -> int:
           f"got {len(of_kind(recs, 'carb'))}")
 
     # --- §3.3: one CGM reading per bucket, KEEPING THE FIRST ----------------
-    check("one cgm reading per 5-minute bucket", len(cgm) == 5, f"got {len(cgm)}")
+    #
+    # Eight, not five: five five-minute readings plus three buckets' worth of
+    # the one-minute sensor the fixture now carries. That sensor is there
+    # because §3.3 was implemented in this tool and NOT in the emitter the
+    # phone runs, and with no sub-five-minute CGM in the fixture there was
+    # nothing for the two to disagree about.
+    check("one cgm reading per 5-minute bucket", len(cgm) == 8, f"got {len(cgm)}")
+
+    # A one-minute sensor reaches a reader as a five-minute one, keeping the
+    # first of each bucket — 200.0, 205.0, 210.0 rather than any later value.
+    minute_sensor = sorted(r["mgdl"] for r in cgm if r["mgdl"] >= 200.0)
+    check("a one-minute sensor is thinned to one reading per bucket",
+          minute_sensor == [200.0, 205.0, 210.0], f"got {minute_sensor}")
     first_bucket = [r for r in cgm if r["t"] // canon.CGM_BUCKET_MS
                     == mkfixture.T0 // canon.CGM_BUCKET_MS]
     check("debounce keeps the FIRST reading of a bucket, not the last",
