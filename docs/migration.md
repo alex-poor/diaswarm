@@ -42,7 +42,35 @@ the JNI surface and the Kotlin plugin.
 
 ## What is not yet true
 
-**1. A backfill has never completed cleanly.** The first re-drain crashed AAPS
+**1. ~~A backfill has never completed cleanly.~~ It completes, and the result
+does not match.** On the loop phone, triggered by enabling shadow mode:
+
+| kind | device | `canon.py` | |
+|---|---|---|---|
+| cgm | **4,729** | **19,349** | 14,620 missing |
+| tbr | **12,858** | **10,757** | 2,101 extra |
+| bolus / carb | 920 / 262 | 919 / 261 | +1 each, new data |
+| event / target / profile | 91 / 40 / 19 | 91 / 40 / 19 | exact |
+
+**The CGM shortfall is a defect in the thinning, not in the vault.** 10,521
+readings were thinned where `canon.py` thins 3,898. Each bounded pass builds an
+emitter whose `resume_mark` is the previous pass's highest bucket and thins
+anything at or below it. That is safe only if rows arrive in time order — and a
+drain walks rows by **rowId**, so one late row moves the mark and every earlier
+reading in the next pass is discarded as "already published". Bounding the drain
+into six passes gave that six opportunities.
+
+Order-dependence *within* a run was fixed with a bucket set. Between runs it was
+left as a high-water mark, and bounding the passes turned a theoretical problem
+into 14,600 lost readings.
+
+**The tbr excess is unexplained** and is now the more interesting number, since
+2,101 extra records cannot be a thinning bug.
+
+**Neither is a reason to distrust `diaswarm-spaces`**: the shadow vault sealed
+exactly what it was given, 18,921 of 18,921. What it was given was wrong.
+
+**Old wording:** The first re-drain crashed AAPS
 with an `OutOfMemoryError` — caused by shadow-mode code holding a second copy
 of the whole history — and the second was interrupted by that crash's fallout.
 Both causes are fixed and the drain is now bounded at 4,000 records a pass, but
