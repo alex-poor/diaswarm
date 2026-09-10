@@ -84,4 +84,14 @@ enum class SwarmStringKey(
 
     /** Same, for the list of people this phone follows. */
     ShowFollowing("swarm_show_following", "", exportable = false),
+
+    /**
+     * Same, for "re-read everything from the database".
+     *
+     * Exists because the high-water marks are `LongNonPreferenceKey`s and so
+     * appear on no screen: without a button there is no way to ask for a
+     * re-drain except editing the preferences file as root, which is not
+     * something to ask of anybody.
+     */
+    Resync("swarm_resync", "", exportable = false),
 }

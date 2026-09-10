@@ -227,4 +227,20 @@ object SwarmSharing {
             .setPositiveButton(android.R.string.ok, null)
             .show()
     }
+
+    /**
+     * Ask before re-reading everything.
+     *
+     * Not because it is dangerous — nothing is written to AAPS's database and
+     * re-sealing is idempotent — but because it is long, and a button that
+     * silently occupies a phone for several minutes is one people press twice.
+     */
+    fun confirmResync(context: Context, onConfirm: () -> Unit) {
+        MaterialAlertDialogBuilder(context, app.aaps.core.ui.R.style.DialogTheme)
+            .setTitle(R.string.swarm_resync)
+            .setMessage(R.string.swarm_resync_confirm)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(android.R.string.ok) { _, _ -> onConfirm() }
+            .show()
+    }
 }

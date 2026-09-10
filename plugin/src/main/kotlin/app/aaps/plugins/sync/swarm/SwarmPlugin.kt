@@ -218,6 +218,18 @@ class SwarmPlugin @Inject constructor(
                 )
             )
             addPreference(
+                AdaptiveClickPreference(
+                    ctx = context,
+                    stringKey = SwarmStringKey.Resync,
+                    title = R.string.swarm_resync,
+                    summary = R.string.swarm_resync_summary,
+                    onPreferenceClickListener = {
+                        SwarmSharing.confirmResync(context) { resync() }
+                        true
+                    }
+                )
+            )
+            addPreference(
                 AdaptiveSwitchPreference(
                     ctx = context,
                     booleanKey = SwarmBooleanKey.ShadowSpacesVault,
@@ -413,6 +425,35 @@ class SwarmPlugin @Inject constructor(
             ExistingPeriodicWorkPolicy.UPDATE,
             PeriodicWorkRequest.Builder(SwarmDataSyncWorker::class.java, 15, TimeUnit.MINUTES).build()
         )
+    }
+
+    /**
+     * Forget how far the drain got, and start again from the beginning.
+     *
+     * **THE DATABASE IS NEVER WRITTEN.** This resets this plugin's own
+     * high-water marks and nothing else; AAPS's data is read exactly as it is
+     * read on every ordinary pass (D7). What it costs is time and battery: the
+     * whole history is re-read, re-canonicalised and re-sealed.
+     *
+     * Re-sealing is safe to repeat. `Vault::seal` appends and skips anything a
+     * segment already holds, and the drain advances its marks per row, so a
+     * pass killed by the worker's deadline resumes where it stopped rather
+     * than starting over.
+     *
+     * The reason it exists: a shadow vault (see `SwarmBooleanKey`) only sees
+     * records sealed after it was switched on. Comparing it against a real
+     * history means feeding it one.
+     */
+    private fun resync() {
+        for (key in SwarmLongKey.entries) {
+            // Not AmendmentsSeen: it is a running count of something observed,
+            // not a position in the database, and zeroing it would throw away
+            // the only record of how often post-emit edits actually happen.
+            if (key == SwarmLongKey.AmendmentsSeen) continue
+            preferences.put(key, 0L)
+        }
+        aapsLogger.info(LTag.CORE, "swarm: high-water marks reset — re-reading everything")
+        enqueue()
     }
 
     private fun enqueue() {
