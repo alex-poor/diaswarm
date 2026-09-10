@@ -27,6 +27,8 @@
 //! windows there are — and space ids are derived from it, so a reader can name
 //! a window without being told.
 
+use std::borrow::Borrow;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use futures::FutureExt;
@@ -88,7 +90,48 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
-/// How far back a grant reaches.
+/// How much plaintext one published operation carries.
+///
+/// **A SPACES MESSAGE IS SMALL BY DESIGN, AND THAT IS NOT NEGOTIABLE.** The
+/// ciphertext travels inline in `SpacesArgs::Application`, which lives in the
+/// operation's header extensions, and `p2panda-core` decodes headers with
+/// `.length_limit(512)` and the comment "rather low / pessimistic thresholds".
+/// Measured, the practical ceiling is somewhere between 1,376 and 1,548 bytes
+/// of records; past it a published operation is written and then fails to
+/// decode on the way back out, reported as a corrupted header.
+///
+/// 1 KB leaves room for the rest of the header, which is not fixed — a space's
+/// dependencies are carried in it too. A day of CGM is roughly 23 KB, so a day
+/// is about two dozen operations rather than one. That is the shape p2panda
+/// expects; it is not a workaround.
+const MAX_PAYLOAD: usize = 256;
+
+/// Split a window's records into publishable payloads.
+///
+/// **BY BYTES, NOT BY RECORD.** Splitting on record boundaries is the obvious
+/// design and it cannot work: a single `profile` record in this subject's real
+/// history is 566 bytes, which is already over the ceiling, so it could never
+/// be published at all no matter how the chunker grouped things.
+///
+/// Instead a window's payloads are one byte stream. `encode_records` terminates
+/// every record with a newline, so a record split across two payloads is
+/// rejoined by concatenating them in order and splitting on newlines at the
+/// end — which is what [`Vault::ingest`] does, per space.
+///
+/// The cost is that a reader missing an operation in the middle corrupts the
+/// two records either side of the gap rather than just losing one. They fail to
+/// parse and are dropped. A missing operation is already data loss; this makes
+/// it very slightly worse and much simpler, and `ingest` reports the count of
+/// operations it could not process so the loss is never silent.
+fn chunk(records: &[Record]) -> Vec<Vec<u8>> {
+    encode_records(records)
+        .into_bytes()
+        .chunks(MAX_PAYLOAD)
+        .map(<[u8]>::to_vec)
+        .collect()
+}
+
+/// How far back a grant reaches./// How far back a grant reaches.
 ///
 /// The choice is offered per grant because the answer is genuinely different
 /// for different people: a partner who has been watching for a year wants the
@@ -401,9 +444,11 @@ impl Vault {
         if records.is_empty() {
             return Ok(msgs);
         }
-        let payload = encode_records(records).into_bytes();
+        let payloads = chunk(records);
         for n in 0..self.windows {
-            msgs.push(self.publish_into(n, payload.clone()).await?);
+            for payload in &payloads {
+                msgs.push(self.publish_into(n, payload.clone()).await?);
+            }
         }
         Ok(msgs)
     }
@@ -502,7 +547,11 @@ impl Vault {
     /// takes the app down. An unreadable day is a bad afternoon; an app that
     /// will not start is a loop that has stopped.
     pub async fn ingest(&self, ops: &[Operation]) -> Result<Ingested, Error> {
-        let mut lines: Vec<String> = Vec::new();
+        // Per space, in arrival order: see [`chunk`]. Records span payloads,
+        // so a window's payloads have to be rejoined before anything is parsed,
+        // and rejoining two different windows' streams would splice records
+        // that were never adjacent.
+        let mut streams: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         let mut refused = 0usize;
         let mut panicked = 0usize;
         for op in ops {
@@ -515,7 +564,16 @@ impl Vault {
             // is a member, so a reader that has seen two of a subject's windows
             // has two spaces to keep current — and the same stale-auth-state
             // panic as the subject.
-            let _ = self.repair().await;
+            //
+            // Only before auth-carrying operations. Repair queries the store,
+            // and a year of records is tens of thousands of application
+            // messages; doing it before each one made ingest quadratic in the
+            // history for no benefit, since an application message cannot
+            // change anybody's membership.
+            if !matches!(Borrow::<SpacesArgs<Conditions>>::borrow(op), SpacesArgs::Application { .. })
+            {
+                let _ = self.repair().await;
+            }
 
             let processed = std::panic::AssertUnwindSafe(self.manager.process(op))
                 .catch_unwind()
@@ -538,12 +596,12 @@ impl Vault {
                 let _ = self.persist_space(y).await;
             }
             for e in events {
-                if let Event::Application { data, .. } = e {
-                    lines.push(String::from_utf8_lossy(&data).to_string());
+                if let Event::Application { space_id, data } = e {
+                    streams.entry(space_id.to_hex()).or_default().extend_from_slice(&data);
                 }
             }
         }
-        Ok(Ingested { records: decode_records(&lines), refused, panicked })
+        Ok(Ingested { records: decode_records(&streams), refused, panicked })
     }
 
     async fn store_operation(&self, op: &Operation) -> Result<(), Error> {
@@ -578,15 +636,16 @@ pub struct Ingested {
     pub panicked: usize,
 }
 
-/// Parse whatever a reader could open back into records.
+/// Parse each window's rejoined byte stream back into records.
 ///
 /// Lines that do not parse are dropped rather than failing the read: a reader
 /// that can open four of a subject's five windows should see four windows of
-/// data, not an error.
-fn decode_records(payloads: &[String]) -> Vec<Record> {
+/// data, not an error. The same tolerance covers the two records either side of
+/// a missing operation.
+fn decode_records(streams: &BTreeMap<String, Vec<u8>>) -> Vec<Record> {
     let mut out = Vec::new();
-    for payload in payloads {
-        for line in payload.lines() {
+    for bytes in streams.values() {
+        for line in String::from_utf8_lossy(bytes).lines() {
             let line = line.trim();
             if line.is_empty() {
                 continue;

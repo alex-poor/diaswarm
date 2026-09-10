@@ -358,6 +358,40 @@ answer, but `Vault::ingest` processes every operation inside `catch_unwind` and
 worker takes the app down, and a reader that silently received four days out of
 five is the failure this project keeps being bitten by.
 
+**MEASURED ON REAL HISTORY, AND THE NUMBERS ARE NOT COMFORTABLE.**
+`crates/diaswarm-spaces/tests/differential.rs` put 31,341 records — 74 days of
+this subject's actual loop history, 2.71 MB — through both implementations and
+got the same records out of both, exactly. That is the result that would justify
+deleting `vault.rs`. Three costs came with it:
+
+  * **A published message is tiny.** The ciphertext travels inline in the
+    operation header and `p2panda-core` decodes headers with
+    `.length_limit(512)`. A single `profile` record in this history is 566 bytes
+    — already over the ceiling — so chunking on record boundaries can never
+    work, and a window's payloads are one byte stream chunked at 256 bytes and
+    rejoined per space.
+  * **Threefold inflation.** The header is ~507 bytes whatever the payload, and
+    stable — it does not grow with history. At a 256-byte chunk that is 2.71 MB
+    of records as 10,569 operations and 8.06 MB on the wire, projecting to
+    ~40 MB and ~52,000 operations a year *per live window*. Bigger chunks would
+    fix most of it (512 → 2.0×, 1024 → 1.5×) and the ceiling forbids them.
+  * **Reading is quadratic.** 537 operations read at 5 ms each, 1,455 at 19 ms,
+    3,141 at 42 ms, 10,569 at 155 ms — per-operation cost rising linearly with
+    total history, so the whole 74 days took 27 minutes on a laptop in release
+    mode. Sealing grows too but far more slowly (1→3 ms). The likely cause is
+    that the entire space state, secret bundle and orderer included, is
+    serialised and rewritten on every operation. **A follower catching up on a
+    year would not finish**, and a phone is slower than a laptop.
+
+The first two are prices. The third is a blocker for bulk history, and it is
+not obviously ours to fix: it is how `p2panda-spaces` persists state. Three ways
+out, none yet chosen — carry bulk records outside spaces and use spaces only for
+the key layer and grants, which is what D2 actually wanted from it; or batch
+state writes rather than per operation; or take it upstream.
+
+**Nothing has been deleted, and nothing ships on this yet.** `diaswarm-core`
+remains the implementation in use.
+
 *Reopens if:* the duplication cost turns out to matter more than the per-grant
 choice — in which case every reader goes in window 0 and "from now on" is
 dropped — or if upstream lets a reader belong to more than one space, which
