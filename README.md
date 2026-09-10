@@ -44,9 +44,17 @@ Not reviewed cryptography. See [Limits](#limits) before trusting it with anythin
 > no AAPS source. AndroidAPS is the work of its own maintainers, and problems with
 > this add-on are not theirs — report them [here](https://github.com/alex-poor/diaswarm/issues).
 >
-> **No APK is distributed here, and none ever will be.** Running a loop is running
-> a medical device you assembled; you build it yourself, from source you have read.
-> Releases in this repository version *this project*, not AndroidAPS.
+> **No loop APK is distributed here, and none ever will be.** Running a loop is
+> running a medical device you assembled; you build it yourself, from source you
+> have read. Releases in this repository version *this project*, not AndroidAPS.
+>
+> **The follower is released as an APK**, and is a different proposition: a
+> separate `applicationId`, no pump drivers compiled into it, and structurally
+> unable to dose ([D22](docs/decisions.md)). It is a viewer for somebody else's
+> glucose, it installs alongside AAPS rather than over it, and handing a person a
+> file they can install is reasonable in a way that handing them a loop is not.
+> It is built by CI from the two public commits named in each release, and the
+> workflow refuses to produce a `full` build at all.
 
 ---
 
