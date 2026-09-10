@@ -446,11 +446,21 @@ class SwarmPlugin @Inject constructor(
      */
     private fun resync() {
         for (key in SwarmLongKey.entries) {
-            // Not AmendmentsSeen: it is a running count of something observed,
-            // not a position in the database, and zeroing it would throw away
-            // the only record of how often post-emit edits actually happen.
-            if (key == SwarmLongKey.AmendmentsSeen) continue
-            preferences.put(key, 0L)
+            when (key) {
+                // A running count of something observed, not a position in the
+                // database. Zeroing it would throw away the only record of how
+                // often post-emit edits actually happen.
+                SwarmLongKey.AmendmentsSeen -> continue
+
+                // -1, NOT 0. Zero is a real five-minute bucket — just after
+                // midnight on 1 January 1970 — so resetting it to zero would
+                // mean "everything since 1970 is already published" and thin
+                // every CGM reading in the re-drain. The only key here whose
+                // reset value is not zero.
+                SwarmLongKey.CgmBucketHighWater -> preferences.put(key, -1L)
+
+                else -> preferences.put(key, 0L)
+            }
         }
         aapsLogger.info(LTag.CORE, "swarm: high-water marks reset — re-reading everything")
         enqueue()

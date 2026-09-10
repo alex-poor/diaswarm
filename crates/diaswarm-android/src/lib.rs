@@ -86,8 +86,43 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_canonicalLin
 pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterNew(
     _env: JNIEnv,
     _class: JClass,
+    last_cgm_bucket: jlong,
 ) -> jlong {
-    Box::into_raw(Box::new(Emitted::new())) as jlong
+    // NEGATIVE MEANS "NOTHING EMITTED YET". A bucket is a count of five-minute
+    // periods since the epoch and is never negative, so there is no value to
+    // confuse it with — and the caller stores it in a `Long` preference whose
+    // default is 0, which would otherwise mean "bucket zero, 1970" and thin
+    // every reading the phone has.
+    let mark = if last_cgm_bucket < 0 { None } else { Some(last_cgm_bucket as i64) };
+    Box::into_raw(Box::new(Emitted::resuming(mark))) as jlong
+}
+
+/// The newest CGM bucket emitted, for the caller to persist. -1 if none.
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterLastCgmBucket(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlong {
+    if handle == 0 {
+        return -1;
+    }
+    let emitter = unsafe { &*(handle as *const Emitted) };
+    emitter.last_cgm_bucket().unwrap_or(-1)
+}
+
+/// How many CGM readings were thinned this run (spec §3.3).
+#[no_mangle]
+pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterThinned(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlong {
+    if handle == 0 {
+        return 0;
+    }
+    let emitter = unsafe { &*(handle as *const Emitted) };
+    emitter.thinned as jlong
 }
 
 #[no_mangle]

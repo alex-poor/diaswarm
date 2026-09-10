@@ -317,6 +317,16 @@ pub struct Emitted {
     /// Records that differed from something already emitted for the same
     /// `(t, k)` — i.e. real edits. Counted rather than handled, on purpose.
     pub amendments: usize,
+    /// The newest five-minute bucket a CGM reading has been emitted for.
+    ///
+    /// **CARRIED ACROSS RUNS BY THE CALLER**, which is the whole difficulty. A
+    /// set of seen buckets works within one drain and is useless live: readings
+    /// arrive one per minute in separate passes, so an in-memory set never sees
+    /// two readings from the same bucket together. A high-water mark survives
+    /// because it is one number the caller can persist beside its other ones.
+    last_cgm_bucket: Option<i64>,
+    /// CGM readings dropped for sharing a bucket with an earlier one.
+    pub thinned: usize,
 }
 
 impl Emitted {
@@ -324,8 +334,42 @@ impl Emitted {
         Self::default()
     }
 
+    /// Resume, knowing the newest CGM bucket already emitted.
+    ///
+    /// Pass `None` on a first run or after a reset; anything else and the first
+    /// reading of each bucket since is what gets through.
+    pub fn resuming(last_cgm_bucket: Option<i64>) -> Self {
+        Self { last_cgm_bucket, ..Self::default() }
+    }
+
+    /// The newest CGM bucket emitted so far, for the caller to persist.
+    pub fn last_cgm_bucket(&self) -> Option<i64> {
+        self.last_cgm_bucket
+    }
+
     /// Returns true if this record is new and should be emitted.
     pub fn accept(&mut self, record: &Record) -> bool {
+        // ONE CGM READING PER FIVE MINUTES, KEEPING THE FIRST (spec §3.3).
+        //
+        // Not a duplicate filter. This subject's Libre 3 reports every 59
+        // seconds — 1,586 readings a day where the Dexcom it replaced managed
+        // 255 — and every one of them is a real, distinct value the loop acted
+        // on. They are thinned because a *follower* is not disadvantaged by
+        // getting one in five, while carrying all of them costs every peer in
+        // the pool 51.5 MB a year of CGM instead of 8.3.
+        //
+        // The loop is unaffected: it reads the database, not this stream.
+        if record.kind() == kind::CGM {
+            let bucket = record.t().div_euclid(CGM_BUCKET_MS);
+            match self.last_cgm_bucket {
+                Some(last) if bucket <= last => {
+                    self.thinned += 1;
+                    return false;
+                }
+                _ => self.last_cgm_bucket = Some(bucket),
+            }
+        }
+
         let json = record.to_canonical_json();
         if !self.seen.insert(json) {
             return false;

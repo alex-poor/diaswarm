@@ -48,7 +48,14 @@ object SwarmNative {
      * finaliser — leaking is better than freeing native state on a GC thread in
      * a process that has to keep dosing.
      */
-    external fun emitterNew(): Long
+    /**
+     * A new emitter, resuming from [lastCgmBucket] (-1 for "nothing yet").
+     *
+     * See [app.aaps.plugins.sync.swarm.keys.SwarmLongKey.CgmBucketHighWater]:
+     * the mark has to be carried across passes or CGM thinning never happens
+     * live, because readings arrive one per minute in separate passes.
+     */
+    external fun emitterNew(lastCgmBucket: Long): Long
     external fun emitterFree(handle: Long)
 
     /** The canonical line to publish, or empty if already emitted. */
@@ -64,6 +71,12 @@ object SwarmNative {
      * measurement, and it wants reading before anyone designs the mechanism.
      */
     external fun emitterAmendments(handle: Long): Long
+
+    /** The newest CGM bucket emitted, to persist. -1 if none. */
+    external fun emitterLastCgmBucket(handle: Long): Long
+
+    /** How many CGM readings were thinned this run (spec §3.3). */
+    external fun emitterThinned(handle: Long): Long
 
     /**
      * Seal one epoch of canonical NDJSON into the vault on disk.

@@ -156,7 +156,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
 
     override suspend fun doUpload() {
         SwarmNative.check()
-        emitter = SwarmNative.emitterNew()
+        emitter = SwarmNative.emitterNew(preferences.get(SwarmLongKey.CgmBucketHighWater))
         try {
             sources.forEach { drain(it) }
             sealPending()
@@ -173,6 +173,17 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 aapsLogger.info(LTag.CORE, "swarm: $amendments post-emit edits this run")
             }
         } finally {
+            run {
+                // BEFORE FREEING IT. The mark lives in the emitter and dies
+                // with it; without this, thinning restarts from nothing every
+                // pass and a one-minute sensor publishes every reading.
+                val mark = SwarmNative.emitterLastCgmBucket(emitter)
+                if (mark >= 0) preferences.put(SwarmLongKey.CgmBucketHighWater, mark)
+                val thinned = SwarmNative.emitterThinned(emitter)
+                if (thinned > 0) {
+                    aapsLogger.info(LTag.CORE, "swarm: thinned $thinned CGM readings to 5-minute buckets")
+                }
+            }
             SwarmNative.emitterFree(emitter)
             emitter = 0L
         }

@@ -202,34 +202,30 @@ One reading per five minutes, **keeping the first**. Not the last, and not the
 mean: the first is the reading the loop actually saw and acted on, and averaging
 would invent a value no device reported and no dose was based on.
 
-> ⚠️ **THIS RULE IS WRONG FOR A ONE-MINUTE SENSOR, and the subject now has one.**
-> Measured 2026-09-10 on the running loop:
+> **Amended 2026-09-10, and the reason changed rather than the rule.** Measured
+> on the running loop:
 >
 > | source | readings/day | median gap | period |
 > |---|---|---|---|
 > | `LIBRE_3` | **1,586** | **59 s** | from 2026-09-07, currently the only live source |
 > | `DEXCOM_G6_NATIVE_XDRIP` | 255 | 300 s | until 2026-09-07 |
 >
-> The paragraph below said this drops nothing. Under Dexcom it dropped nothing.
-> Under Libre 3 it drops **four readings in five** — 3,898 on one snapshot —
-> and they are not duplicates, they are distinct readings a minute apart that
-> the loop saw. `tools/canon.py` applies the rule and is therefore destroying
-> real data; the on-device emitter does not, and is the one behaving correctly.
+> This paragraph used to say the rule drops nothing, and that it was kept as
+> defence against a double-broadcasting source. Both are now wrong. It drops
+> **four readings in five** — 3,898 on one snapshot — and they are not a
+> broadcasting fault, they are a one-minute sensor working correctly.
 >
-> **What replaces it is not yet decided.** "One per bucket" was a filter against
-> a broadcasting fault, and the fault it guarded against — [D3](../docs/decisions.md)'s
-> doubling — turned out to be version history, removed by §3.1 alone. Dropping
-> §3.3 outright is the obvious move and it removes the only defence against a
-> genuinely duplicating source. Whatever replaces it must be expressed in terms
-> of the sensor's own cadence rather than a constant five minutes.
+> **The rule stays, as deliberate thinning rather than as a filter.** A follower
+> is not meaningfully disadvantaged by one reading in five; one minute matters
+> for dosing and state estimation, and **the loop does not read this stream** —
+> it reads the database directly. What thinning buys is every peer in the pool
+> carrying 8.3 MB a year of CGM instead of 51.5.
 >
-> It also moves every storage figure in this project: CGM alone is 51.5 MB/yr at
-> this rate against 8.3 MB/yr at Dexcom's, and README and D19 quote numbers
-> computed from the latter.
-
-~~On the snapshots above this drops **nothing** — §3.1 already removed the
-doubling. It is kept as defence in depth, because a genuinely double-broadcasting
-source would otherwise reach consumers unnoticed, and the check is free.~~
+> It was the *emitter* that was wrong, not the rule: `tools/canon.py` applied
+> §3.3 and the on-device emitter did not, so the two disagreed by 3,898 records
+> and each was internally consistent. `Emitted::accept` now applies it, carrying
+> the newest emitted bucket across runs — without that a live emitter starting
+> fresh each pass never sees two readings from one bucket and thins nothing.
 
 ## 4. What is excluded
 

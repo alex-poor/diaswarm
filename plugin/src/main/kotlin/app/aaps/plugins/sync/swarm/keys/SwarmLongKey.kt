@@ -26,6 +26,20 @@ enum class SwarmLongKey(
 
     /** How many genuine post-emit edits have been seen. See spec §7. */
     AmendmentsSeen("swarm_amendments_seen", 0L),
+
+    /**
+     * The newest five-minute CGM bucket already published (spec §3.3).
+     *
+     * **-1, NOT 0.** Zero is a real bucket — five minutes past midnight on 1
+     * January 1970 — so a default of 0 would mean "everything since 1970 is
+     * already published" and thin every reading the phone ever sees. The one
+     * preference here whose default is not zero, for that reason.
+     *
+     * Carried across passes because live readings arrive one per minute in
+     * separate passes: an emitter that starts fresh each time never sees two
+     * readings from one bucket together and thins nothing.
+     */
+    CgmBucketHighWater("swarm_cgm_bucket_high_water", -1L),
 }
 
 /**
