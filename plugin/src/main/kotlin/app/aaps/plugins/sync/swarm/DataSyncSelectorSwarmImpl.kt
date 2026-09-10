@@ -212,6 +212,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         SwarmNative.check()
         emitter = SwarmNative.emitterNew(preferences.get(SwarmLongKey.CgmBucketHighWater))
         try {
+            backfillIfShadowJustEnabled()
             drained.clear()
             drainedThisPass = 0
             sources.forEach { drain(it) }
@@ -299,6 +300,43 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private val maxRecordsPerPass = 4_000
 
     private var drainedThisPass = 0
+
+    /**
+     * Fill the shadow vault the first time shadow mode is switched on.
+     *
+     * A shadow vault holding only what arrived after somebody flipped a switch
+     * cannot be compared against anything. Enabling the comparison should
+     * therefore *cause* the comparison to be possible, rather than leaving a
+     * person to find a second button and press that too.
+     *
+     * Resetting the marks is all it takes: the drain reads from wherever they
+     * point, and the passes are bounded, so the history comes across in
+     * four-thousand-record steps over the next few minutes.
+     *
+     * `CgmBucketHighWater` goes to -1, not 0. Zero is a real five-minute
+     * bucket — just after midnight on 1 January 1970 — so zeroing it would
+     * mean "everything since 1970 is already published" and thin every reading
+     * in the backfill.
+     */
+    private fun backfillIfShadowJustEnabled() {
+        val on = preferences.get(SwarmBooleanKey.ShadowSpacesVault)
+        val filled = preferences.get(SwarmLongKey.ShadowFilled) == 1L
+        if (!on) {
+            if (filled) preferences.put(SwarmLongKey.ShadowFilled, 0L)
+            return
+        }
+        if (filled) return
+
+        aapsLogger.info(LTag.CORE, "swarm: shadow mode is on and unfilled — re-reading everything")
+        for (key in SwarmLongKey.entries) {
+            when (key) {
+                SwarmLongKey.AmendmentsSeen, SwarmLongKey.ShadowFilled -> continue
+                SwarmLongKey.CgmBucketHighWater -> preferences.put(key, -1L)
+                else -> preferences.put(key, 0L)
+            }
+        }
+        preferences.put(SwarmLongKey.ShadowFilled, 1L)
+    }
 
     private fun drain(source: Source) {
         while (true) {

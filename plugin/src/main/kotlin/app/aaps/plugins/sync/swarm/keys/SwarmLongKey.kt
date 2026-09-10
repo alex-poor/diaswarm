@@ -40,6 +40,19 @@ enum class SwarmLongKey(
      * readings from one bucket together and thins nothing.
      */
     CgmBucketHighWater("swarm_cgm_bucket_high_water", -1L),
+
+    /**
+     * Whether the shadow vault has been filled since it was last switched on.
+     *
+     * **BECAUSE A BUTTON IS A WORSE MECHANISM THAN A CONSEQUENCE.** Turning
+     * shadow mode on and having it hold only what happened afterwards is not
+     * useful: the whole point is to compare it against a real history. So
+     * switching it on now backfills, once, and this remembers that it did.
+     *
+     * It also removes a dependency on the re-drain button, which was tapped
+     * three times and never once reached its handler.
+     */
+    ShadowFilled("swarm_shadow_filled", 0L),
 }
 
 /**
