@@ -275,111 +275,180 @@ impl Vault {
         out.map_err(|e| Error::Store(e.to_string()))
     }
 
-    /// Open a new window, carrying every current reader into it.
+    /// Bring every stale space up to date with the shared auth state.
     ///
-    /// Carrying them matters: a window boundary is not a revocation, and a
-    /// reader who keeps their grant must keep receiving data. Somebody else
-    /// being granted must not silently cut them off.
-    async fn open_window(
-        &mut self,
-        members: &[(VerifyingKey, Access<Conditions>)],
-    ) -> Result<Vec<Operation>, Error> {
-        let n = self.windows;
-        let (groups_y, space_y, msgs) = self
+    /// **BEFORE EVERY AUTH-LEVEL OPERATION, not once before a batch.** All of a
+    /// subject's spaces share one global auth state, so creating a space or
+    /// changing anyone's membership leaves every *other* space working from an
+    /// old view of it — and the next membership change on a stale space panics
+    /// `p2panda-auth`. Adding a member is itself an auth change, so two adds in
+    /// a row need a repair between them.
+    ///
+    /// This is what `p2panda-spaces`' own `shared_auth_state` test does on
+    /// every line, commented "Make Space 0 aware of this change". Not doing it
+    /// is what made a second window look like an upstream defect
+    /// (`spike/p2panda-spaces` §5a).
+    ///
+    /// `repair_spaces_persisted` is test-only like the rest, so the state is
+    /// persisted here.
+    async fn repair(&self) -> Result<Vec<Operation>, Error> {
+        let needs = self
             .manager
-            .create_space(self.window_id(n), members)
+            .spaces_repair_required()
+            .await
+            .map_err(|e| Error::Spaces(e.to_string()))?;
+        if needs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let results = self
+            .manager
+            .repair_spaces(&needs)
+            .await
+            .map_err(|e| Error::Spaces(e.to_string()))?;
+        let mut msgs = Vec::new();
+        for (space_y, produced) in results {
+            self.persist_space(space_y).await?;
+            msgs.extend(produced);
+        }
+        Ok(msgs)
+    }
+
+    /// Open a new window: an empty space, with the stream header in it.
+    ///
+    /// **EMPTY, AND IT STAYS THAT WAY UNTIL SOMEBODY IS GRANTED INTO IT.** An
+    /// earlier version carried every existing reader into each new window,
+    /// which is the obvious reading of "nobody loses access because someone
+    /// else was granted" and is unimplementable: a reader can belong to exactly
+    /// one of a subject's spaces, and the second one it joins hands it no
+    /// welcome (§5b). Access is kept alive by [`Vault::seal`] publishing into
+    /// every window instead.
+    async fn open_window(&mut self) -> Result<Vec<Operation>, Error> {
+        let mut msgs = self.repair().await?;
+        let n = self.windows;
+        let (groups_y, space_y, create) = self
+            .manager
+            .create_space(self.window_id(n), &[])
             .await
             .map_err(|e| Error::Spaces(e.to_string()))?;
         self.persist_group(&groups_y).await?;
         self.persist_space(space_y).await?;
         self.windows = n + 1;
         self.note_windows()?;
+        msgs.extend(create);
+
+        // The stream header goes first in every window, so a reader learns the
+        // spec version and the epoch offset from the data itself rather than
+        // from anything it had to be told separately.
+        msgs.push(self.publish_into(n, encode(&[], self.offset_ms).into_bytes()).await?);
         Ok(msgs)
     }
 
-    /// Everyone who can currently read, across all windows.
-    async fn current_readers(&self) -> Result<Vec<(VerifyingKey, Access<Conditions>)>, Error> {
-        if self.windows == 0 {
-            return Ok(Vec::new());
-        }
-        let space = self.space(self.windows - 1).await?;
+    /// Everyone who can read window `n`, this device excluded.
+    async fn readers_of(&self, n: usize) -> Result<Vec<VerifyingKey>, Error> {
+        let space = self.space(n).await?;
         let me = self.subject();
         Ok(space
             .members()
             .await
             .map_err(|e| Error::Spaces(e.to_string()))?
             .into_iter()
-            .filter(|(id, _)| *id != me)
+            .map(|(id, _)| id)
+            .filter(|id| *id != me)
             .collect())
     }
 
-    /// Everyone who can currently read, as public keys.
+    /// Everyone who can currently read anything, across all windows.
     ///
     /// Read back through `p2panda-spaces`' own API rather than from anything
     /// this crate remembers, which is what makes it a check on persistence
     /// rather than an echo of it.
     pub async fn reader_ids(&self) -> Result<Vec<VerifyingKey>, Error> {
-        Ok(self.current_readers().await?.into_iter().map(|(id, _)| id).collect())
+        let mut out: Vec<VerifyingKey> = Vec::new();
+        for n in 0..self.windows {
+            for id in self.readers_of(n).await? {
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+        Ok(out)
     }
 
-    /// Seal a day's records into the current window.
+    /// Seal a day's records — into **every** live window.
     ///
-    /// APPEND-ONLY, and that is a simplification rather than a compromise. The
-    /// hand-rolled vault re-sealed a whole segment on every call, which meant
-    /// reading the existing plaintext back, merging, and writing over it —
-    /// and writing over it with only the newest records once cost a subject
-    /// 4,276 records from the only copy they had. Publishing is one message per
-    /// call; there is nothing to overwrite.
+    /// FAN-OUT, AND IT IS THE WHOLE DESIGN. A reader can belong to exactly one
+    /// of a subject's spaces, so windows cannot share readers and a reader
+    /// cannot be moved forward into a newer window. What keeps everyone
+    /// receiving is that the day is published into all of them: a reader
+    /// granted long ago is still in window 0, a reader granted "from now on"
+    /// last week is in window 3, and each gets the same day encrypted under
+    /// their own window's secret.
+    ///
+    /// **This costs one copy of the ciphertext per live window**, which is the
+    /// price of the per-grant history choice and is stated in the README rather
+    /// than hidden here.
+    ///
+    /// Append-only, unlike the hand-rolled vault, which re-sealed a whole
+    /// segment on every call — reading the plaintext back, merging and writing
+    /// over it. Writing over it with only the newest records once cost a
+    /// subject 4,276 records from the only copy they had. There is nothing to
+    /// overwrite here.
     pub async fn seal(&mut self, records: &[Record]) -> Result<Vec<Operation>, Error> {
         let mut msgs = Vec::new();
         if self.windows == 0 {
-            msgs.extend(self.open_window(&[]).await?);
-            // The stream header goes first in a window, so a reader learns the
-            // spec version and the epoch offset from the data itself.
-            msgs.push(self.publish(encode(&[], self.offset_ms).into_bytes()).await?);
+            msgs.extend(self.open_window().await?);
         }
         if records.is_empty() {
             return Ok(msgs);
         }
-        msgs.push(self.publish(encode_records(records).into_bytes()).await?);
+        let payload = encode_records(records).into_bytes();
+        for n in 0..self.windows {
+            msgs.push(self.publish_into(n, payload.clone()).await?);
+        }
         Ok(msgs)
     }
 
-    async fn publish(&self, payload: Vec<u8>) -> Result<Operation, Error> {
-        let space = self.space(self.windows - 1).await?;
+    async fn publish_into(&self, n: usize, payload: Vec<u8>) -> Result<Operation, Error> {
+        let space = self.space(n).await?;
         let (space_y, msg) =
             space.publish(&payload).await.map_err(|e| Error::Spaces(e.to_string()))?;
         self.persist_space(space_y).await?;
         Ok(msg)
     }
 
-    /// Let a reader in.
-    pub async fn grant(&mut self, reader: VerifyingKey, reach: Reach) -> Result<Vec<Operation>, Error> {
+    /// Let a reader in, as far back as they are being given.
+    pub async fn grant(
+        &mut self,
+        reader: VerifyingKey,
+        reach: Reach,
+    ) -> Result<Vec<Operation>, Error> {
         let mut msgs = Vec::new();
-        match reach {
-            Reach::Everything => {
-                if self.windows == 0 {
-                    msgs.extend(self.seal(&[]).await?);
-                }
-                for n in 0..self.windows {
-                    let space = self.space(n).await?;
-                    let (groups_y, space_y, auth_msg, space_msg) = space
-                        .add(reader, Access::read())
-                        .await
-                        .map_err(|e| Error::Spaces(e.to_string()))?;
-                    self.persist_group(&groups_y).await?;
-                    self.persist_space(space_y).await?;
-                    msgs.push(auth_msg);
-                    msgs.push(space_msg);
-                }
-            }
-            Reach::FromNow => {
-                let mut members = self.current_readers().await?;
-                members.push((reader, Access::read()));
-                msgs.extend(self.open_window(&members).await?);
-                msgs.push(self.publish(encode(&[], self.offset_ms).into_bytes()).await?);
-            }
+        if self.windows == 0 {
+            msgs.extend(self.open_window().await?);
         }
+
+        let window = match reach {
+            // Window 0 holds everything the subject has ever sealed, and keeps
+            // receiving, so joining it is "the lot, from the beginning".
+            Reach::Everything => 0,
+            // A window that did not exist until now cannot contain anything
+            // published before now. There is nothing to withhold.
+            Reach::FromNow => {
+                msgs.extend(self.open_window().await?);
+                self.windows - 1
+            }
+        };
+
+        msgs.extend(self.repair().await?);
+        let space = self.space(window).await?;
+        let (groups_y, space_y, auth_msg, space_msg) = space
+            .add(reader, Access::read())
+            .await
+            .map_err(|e| Error::Spaces(e.to_string()))?;
+        self.persist_group(&groups_y).await?;
+        self.persist_space(space_y).await?;
+        msgs.push(auth_msg);
+        msgs.push(space_msg);
         Ok(msgs)
     }
 
@@ -391,11 +460,11 @@ impl Vault {
     pub async fn revoke(&mut self, reader: VerifyingKey) -> Result<Vec<Operation>, Error> {
         let mut msgs = Vec::new();
         for n in 0..self.windows {
-            let space = self.space(n).await?;
-            let members = space.members().await.map_err(|e| Error::Spaces(e.to_string()))?;
-            if !members.iter().any(|(id, _)| *id == reader) {
+            if !self.readers_of(n).await?.contains(&reader) {
                 continue;
             }
+            msgs.extend(self.repair().await?);
+            let space = self.space(n).await?;
             let (groups_y, space_y, auth_msg, space_msg) = space
                 .remove(reader)
                 .await
@@ -441,6 +510,13 @@ impl Vault {
                 refused += 1;
                 continue;
             }
+            // A READER NEEDS THE REPAIR DISCIPLINE TOO. Processing a space's
+            // messages gives this peer state for that space whether or not it
+            // is a member, so a reader that has seen two of a subject's windows
+            // has two spaces to keep current — and the same stale-auth-state
+            // panic as the subject.
+            let _ = self.repair().await;
+
             let processed = std::panic::AssertUnwindSafe(self.manager.process(op))
                 .catch_unwind()
                 .await;

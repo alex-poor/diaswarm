@@ -290,6 +290,79 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D20 · The vault moves onto p2panda-spaces; a window is a space
+
+**Settled 2026-09-10.** `crates/diaswarm-spaces` replaces the sealing
+construction with `p2panda-spaces`, which composes `p2panda-auth`
+(capabilities), `p2panda-encryption` (the key layer) and `p2panda-store`
+(SQLite persistence). It exists **alongside** `diaswarm-core`, not instead of
+it, until the properties have been compared on real history.
+
+**What goes, if it lands:** 1,159 lines of hand-composed cryptography — a
+content key per segment, that key wrapped separately to every reader, the
+signed hash-chained grant log, the unlinkable grant tags, and the on-disk vault
+layout. Also the `Have`/`Manifest`/`Grants`/`Segment`/`Wraps` protocol, since
+messages become `p2panda_core::Operation`s and replication becomes
+`p2panda-sync`'s log sync. SECURITY.md's headline warning — standard primitives
+composed by hand, reviewed by nobody — is about the code this deletes.
+
+**What stays ours, with a reason rather than by default:** bucket assignment
+(p2panda is topic-based and supplies no shard assignment, so `pool.rs` stays),
+the AAPS record canonicalisation, the JNI surface and the Kotlin plugin.
+
+**A WINDOW IS A SPACE, AND EVERY READER IS IN EXACTLY ONE.** A reader can
+belong to only one of a subject's spaces — the second one they join hands them
+no welcome and then panics them (`spike/p2panda-spaces` §5b). So membership is
+never carried forward; instead **every day is published into every live
+window**:
+
+| Grant | How |
+|---|---|
+| with history | add the reader to window 0, which holds everything and keeps receiving |
+| from now on | open a new window and add only them; it cannot contain what predates it |
+| revoke | `remove` from their window, which rotates immediately |
+
+**The cost is duplication: one copy of each day per live window.** A partner, a
+parent and a clinician on different terms is three copies of the subject's year
+rather than one — roughly 78 MB each. That is the price of the per-grant history
+choice, and it must reach the README's storage numbers before this ships,
+because it changes what a peer carrying a share of the pool is agreeing to.
+
+**Three things the library only exposes under `test_utils`,** which is not a
+feature a medical application should enable, so each is worked around on public
+API and written down here because none of it is guessable:
+
+  * `Space::*_persisted` and `Manager::set_groups_state`/`set_space_state` are
+    test-only. The public API returns state the public API cannot store, and
+    `AuthGroupState` is a private alias. The route is one layer down, on
+    `p2panda-store`'s public `GroupsStore`/`SpacesStore` traits — which needs
+    the key the global auth state is filed under, a private constant.
+    `state_survives_a_reopen` round-trips through the manager's own public read
+    path so that a drift in that constant fails loudly.
+  * `SecretKey::from_bytes`/`as_bytes` are test-only, so the encryption identity
+    can be neither exported nor restored as bytes. `Credentials` derives
+    `Serialize`, so the vault owns a 0600 `credentials.json`. A device that came
+    back from a reboot as a new member would invalidate every grant made to it.
+  * `repair_spaces_persisted` is test-only, and repair is **required**: all of a
+    subject's spaces share one global auth state, so after any auth-level change
+    every other space is stale and the next membership change on a stale one
+    panics. `spaces_repair_required` then `repair_spaces` before every auth
+    operation — on readers too, since processing a space's messages gives a peer
+    state for that space whether or not it is a member.
+
+⚠️ **`p2panda-auth` panics rather than erroring** when an operation arrives
+without its dependencies, and inconsistently — the same situation sometimes
+returns a clean error. Log sync delivers in dependency order, which is the
+answer, but `Vault::ingest` processes every operation inside `catch_unwind` and
+**returns the panic count**, because on a looping phone a panic in a background
+worker takes the app down, and a reader that silently received four days out of
+five is the failure this project keeps being bitten by.
+
+*Reopens if:* the duplication cost turns out to matter more than the per-grant
+choice — in which case every reader goes in window 0 and "from now on" is
+dropped — or if upstream lets a reader belong to more than one space, which
+would remove the fan-out entirely.
+
 ### D19 · The pool is the only way peers find each other
 
 **Settled 2026-09-10, superseding D18.** There is one discovery mechanism:

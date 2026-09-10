@@ -52,7 +52,9 @@ async fn what_is_sealed_is_what_is_read() {
         ops.extend(subject.seal(&records).await.unwrap());
     }
 
-    let read = reader.ingest(&ops).await.unwrap().records;
+    let got = reader.ingest(&ops).await.unwrap();
+    assert_eq!(got.panicked, 0, "an operation panicked, so this history has a hole in it");
+    let read = got.records;
     let sent_json: Vec<String> = sent.iter().map(|r| r.to_canonical_json()).collect();
     let read_json: Vec<String> = read.iter().map(|r| r.to_canonical_json()).collect();
 
@@ -83,26 +85,28 @@ async fn a_stranger_holds_everything_and_reads_nothing() {
     ops.extend(subject.grant(reader.subject(), Reach::Everything).await.unwrap());
     ops.extend(subject.seal(&day(22_100, 117.0)).await.unwrap());
 
-    assert!(!reader.ingest(&ops).await.unwrap().records.is_empty(), "the granted reader read nothing");
-    assert!(
-        stranger.ingest(&ops).await.unwrap().records.is_empty(),
-        "a stranger opened data it was never granted"
+    let by_reader = reader.ingest(&ops).await.unwrap();
+    let by_stranger = stranger.ingest(&ops).await.unwrap();
+    assert_eq!(by_reader.panicked, 0, "the reader's history has a hole in it");
+    assert_eq!(
+        by_stranger.panicked, 0,
+        "holding a stranger's ciphertext must be uneventful — a peer carries other \
+         people's data constantly and cannot panic doing it"
     );
+    assert!(!by_reader.records.is_empty(), "the granted reader read nothing");
+    assert!(by_stranger.records.is_empty(), "a stranger opened data it was never granted");
 }
 
 /// THE CHOICE THE USER ASKED FOR: per grant, with history or without.
 ///
-/// ⚠️ **IGNORED BECAUSE THIS CRATE BUILDS THE WINDOW WRONG, NOT BECAUSE
-/// UPSTREAM CANNOT DO IT.** `Reach::FromNow` here carries existing readers into
-/// the new window, so they end up in two spaces — and a reader can belong to
-/// exactly one (`spike/p2panda-spaces` §5b). It also skips the repair the
-/// library requires before every auth-level operation (§5a).
+/// A reader granted "everything" joins window 0, which holds the whole history
+/// and keeps receiving. A reader granted "from now on" gets a window of their
+/// own, which cannot contain anything published before it existed.
 ///
-/// §5c measures the arrangement that works: one window per grant, every reader
-/// in exactly one of them, and each day published into every live window. This
-/// test should pass once `Reach::FromNow` is rebuilt that way — which is the
-/// next piece of work, not an upstream wait.
-#[ignore = "Reach::FromNow needs rebuilding as fan-out; see spike/p2panda-spaces FINDINGS §5c"]
+/// Nobody is in two windows — a reader can belong to exactly one of a subject's
+/// spaces (`spike/p2panda-spaces` §5b) — so what keeps the older reader
+/// receiving is `seal` publishing into every window, not membership being
+/// carried forward.
 #[tokio::test]
 async fn a_grant_reaches_back_only_when_it_is_asked_to() {
     let mut subject = peer("reach-subject").await;
@@ -157,10 +161,9 @@ async fn revoking_stops_what_comes_next() {
     ops.extend(subject.revoke(reader.subject()).await.unwrap());
     ops.extend(subject.seal(&day(22_301, 120.0)).await.unwrap());
 
-    let read: Vec<String> = reader
-        .ingest(&ops)
-        .await
-        .unwrap()
+    let got = reader.ingest(&ops).await.unwrap();
+    assert_eq!(got.panicked, 0, "an operation panicked, so this history has a hole in it");
+    let read: Vec<String> = got
         .records
         .iter()
         .map(|r| r.to_canonical_json())
