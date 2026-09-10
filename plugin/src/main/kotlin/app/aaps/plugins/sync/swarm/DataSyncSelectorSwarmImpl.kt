@@ -155,6 +155,32 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     override fun profileReceived(timestamp: Long) = Unit
 
     override suspend fun doUpload() {
+        // ONE PASS AT A TIME.
+        //
+        // The one-shot and periodic jobs are separate unique works, so
+        // WorkManager will happily run them together — observed as two workers
+        // logging an identical drain at the same millisecond. Two passes share
+        // `emitter`, `pending` and `drained`: one frees the native emitter in
+        // its `finally` while the other is still calling into it, which is a
+        // use-after-free in JNI on a phone driving a pump.
+        //
+        // Skipping rather than queueing, because the work is idempotent: the
+        // high-water marks mean the next pass picks up whatever this one would
+        // have done.
+        if (!passInFlight.compareAndSet(false, true)) {
+            aapsLogger.debug(LTag.CORE, "swarm: a pass is already running, skipping this one")
+            return
+        }
+        try {
+            uploadOnce()
+        } finally {
+            passInFlight.set(false)
+        }
+    }
+
+    private val passInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private suspend fun uploadOnce() {
         SwarmNative.check()
         emitter = SwarmNative.emitterNew(preferences.get(SwarmLongKey.CgmBucketHighWater))
         try {
@@ -206,6 +232,19 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * turns "563 somewhere" into a table.
      */
     private val drained = mutableMapOf<String, Int>()
+
+    /**
+     * Shadow records sealed this pass, summed rather than collected.
+     *
+     * **A COUNT, NOT A LIST.** The first version built a second copy of every
+     * canonical line in the pass and then joined it into one string to hand
+     * across JNI. On a full re-drain — 31,000 records, 2.7 MB of text — that
+     * was a duplicate of the whole history plus a single allocation as large
+     * again, on top of `pending` and whatever AAPS needs to walk 80,000 rows.
+     * It ran the app out of heap and killed it, which on this phone means the
+     * loop stops. The shadow vault is worth nothing and must cost nothing.
+     */
+    private var shadowSealed = 0L
 
     private fun drain(source: Source) {
         while (true) {
@@ -275,10 +314,10 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private fun sealPending() {
         val vault = SwarmPaths.vault(context, this::class.java).absolutePath
         val identity = SwarmPaths.identity(context).absolutePath
-        val sealedThisPass = mutableListOf<String>()
         for ((epoch, body) in pending) {
-            sealedThisPass.addAll(body.toString().lines().filter { it.isNotBlank() })
-            val n = SwarmNative.vaultSeal(vault, identity, epoch, offsetMs, body.toString())
+            val text = body.toString()
+            shadowSeal(text)
+            val n = SwarmNative.vaultSeal(vault, identity, epoch, offsetMs, text)
             if (n < 0) {
                 aapsLogger.error(LTag.CORE, "swarm: sealing epoch $epoch failed with $n")
             } else {
@@ -287,7 +326,10 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         }
         pending.clear()
         aapsLogger.info(LTag.CORE, "swarm: ${SwarmNative.vaultStatus(vault)}")
-        shadowSeal(sealedThisPass)
+        if (shadowSealed > 0) {
+            aapsLogger.info(LTag.CORE, "swarm: shadow sealed $shadowSealed")
+            shadowSealed = 0L
+        }
     }
 
     /**
@@ -301,9 +343,9 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      *
      * Off by default. See [SwarmBooleanKey.ShadowSpacesVault].
      */
-    private fun shadowSeal(records: List<String>) {
+    private fun shadowSeal(ndjson: String) {
         if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return
-        if (records.isEmpty()) return
+        if (ndjson.isBlank()) return
 
         var handle = 0L
         try {
@@ -313,14 +355,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 aapsLogger.error(LTag.CORE, "swarm: shadow vault would not open")
                 return
             }
-            val n = SwarmNative.spacesSeal(handle, records.joinToString("\n"))
+            val n = SwarmNative.spacesSeal(handle, ndjson)
             if (n < 0) {
                 aapsLogger.error(LTag.CORE, "swarm: shadow seal failed with $n")
             } else {
-                aapsLogger.info(
-                    LTag.CORE,
-                    "swarm: shadow sealed $n of ${records.size} — ${SwarmNative.spacesStatus(handle)}"
-                )
+                shadowSealed += n
             }
         } catch (e: Throwable) {
             // CAUGHT, INCLUDING ERRORS. This runs on a phone driving an insulin
