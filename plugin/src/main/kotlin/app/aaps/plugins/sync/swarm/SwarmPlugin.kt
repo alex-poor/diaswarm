@@ -524,6 +524,28 @@ class SwarmPlugin @Inject constructor(
         ).enqueue()
     }
 
+    /**
+     * Do a pass now, because the user just did something that needs one.
+     *
+     * **A PHONE THAT FOLLOWS NOBODY SCHEDULES NOTHING.** [DataSyncSelectorSwarmImpl.refreshFollowed]
+     * returns before it arms the two-minute poll when there is nobody to poll
+     * for — correctly, because waking a publisher every two minutes to ask a
+     * question it has no reason to ask is a battery cost for nothing. The
+     * consequence is that the FIRST follow has no pass coming: the scan
+     * succeeds, the toast says "now following them", and the phone then sits
+     * silent until the fifteen-minute periodic job happens to fire.
+     *
+     * Watched on a real phone: a correct scan, a correct grant, and a blank
+     * screen for the person who had just done everything right. Fifteen minutes
+     * of looking like a broken app is worse than most bugs that throw.
+     *
+     * `KEEP`, so a pass already running is left to finish — it is about to do
+     * this work anyway.
+     */
+    fun syncNow() {
+        if (isEnabled()) enqueue()
+    }
+
     companion object {
 
         const val JOB_NAME = "SwarmDataSync"

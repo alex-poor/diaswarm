@@ -5,6 +5,8 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.appcompat.app.AppCompatActivity
+import app.aaps.core.interfaces.logging.AAPSLogger
+import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.plugins.sync.swarm.keys.SwarmStringKey
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -39,6 +41,15 @@ import javax.inject.Inject
 class SwarmScanActivity : DaggerAppCompatActivity() {
 
     @Inject lateinit var preferences: Preferences
+
+    /**
+     * Only to ask for a pass once the scan has done something. A scan is the
+     * one moment somebody is definitely waiting for a result, and neither
+     * following nor granting has anything scheduled behind it.
+     */
+    @Inject lateinit var swarmPlugin: SwarmPlugin
+
+    @Inject lateinit var aapsLogger: AAPSLogger
 
     private lateinit var scanner: ActivityResultLauncher<ScanOptions>
 
@@ -106,6 +117,12 @@ class SwarmScanActivity : DaggerAppCompatActivity() {
     private fun follow(invite: String) {
         val store = SwarmPaths.store(this).absolutePath
         val n = SwarmNative.netFollow(store, invite)
+        aapsLogger.info(LTag.CORE, "swarm: scanned an invite to follow — netFollow returned $n")
+        // AND ASK FOR A PASS. Nothing else will: a phone that followed nobody
+        // until a moment ago has no poll armed, so without this the first thing
+        // a new follower sees is fifteen minutes of nothing. See
+        // [SwarmPlugin.syncNow].
+        if (n >= 0L) swarmPlugin.syncNow()
         toastAndFinish(
             when {
                 n > 0L -> getString(R.string.swarm_now_following)
@@ -123,6 +140,10 @@ class SwarmScanActivity : DaggerAppCompatActivity() {
      */
     private fun share(readerKey: String) {
         preferences.put(SwarmStringKey.GrantReader, readerKey)
+        aapsLogger.info(LTag.CORE, "swarm: scanned ${readerKey.take(16)}… to share with")
+        // The pass is what acts on the preference, so ask for one rather than
+        // leaving the other person waiting on whenever this phone next syncs.
+        swarmPlugin.syncNow()
         toastAndFinish(getString(R.string.swarm_will_share))
     }
 
