@@ -99,17 +99,19 @@ pub enum Reach {
     Everything,
     /// A fresh window. Nothing sealed before now is readable, ever.
     ///
-    /// ⚠️ **BLOCKED UPSTREAM AT p2panda-spaces 0.7.1.** A subject's spaces
-    /// share one global auth CRDT, and once a subject has a second space,
-    /// membership changes panic `p2panda-auth` at `group/resolver.rs:250`
-    /// (*"all operations present in map"*). Reproduced in
-    /// `spike/p2panda-spaces` §6 through the library's own test API, so it is
-    /// not this crate's glue: adding a reader to the first space, after a
-    /// second space exists, panics on the *subject's* side.
+    /// ⚠️ **NOT YET IMPLEMENTED CORRECTLY HERE.** The version below carries
+    /// existing readers into each new window, which puts them in two spaces —
+    /// and a reader can belong to exactly one of a subject's spaces
+    /// (`spike/p2panda-spaces` §5b: the second join delivers no welcome).
     ///
-    /// Both ways of creating the window were measured and both fail — with
-    /// initial members, and empty-then-add. Until this is resolved upstream,
-    /// only [`Reach::Everything`] is usable, and it is verified.
+    /// The arrangement that works, measured in §5c, is the other way round:
+    /// every reader stays in the one window they were granted in, and the
+    /// subject publishes each day into every live window. Nobody is ever in two
+    /// spaces. It costs one copy of each day per live window.
+    ///
+    /// This also needs the repair discipline from §5a — `spaces_repair_required`
+    /// then `repair_spaces_persisted` before **every** auth-level operation —
+    /// without which the subject side panics as soon as a second window exists.
     FromNow,
 }
 

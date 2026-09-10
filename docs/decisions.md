@@ -145,34 +145,82 @@ act on it.
 organisation under an agreement, so the strong claim holds there — socially, not
 cryptographically.
 
-### D4 · Epoch keys, one UTC day each
+### D4 · Epoch keys, one day each at a fixed offset — and segments beneath them
 
-**Settled, and now specified.** spec/records.md §5.1 freezes it:
-`epoch = floor(t / 86400000)`.
+**Settled**, and frozen in `spec/records.md` §5.1.
 
-**UTC, deliberately, and it costs something.** An epoch must have the same
-identity on every device — a local-midnight boundary is ambiguous across travel
-and DST, and two peers disagreeing about which epoch a record belongs to is a
-correctness problem in a replicated store. The price is that away from UTC the
-boundary falls inside the waking day (in NZ, near noon), which makes *"they keep
-the rest of the epoch"* harder to say plainly to the person deciding whether that
-is acceptable. A wording problem in one place against an ambiguity problem
-everywhere.
+> ⚠️ **Amended 2026-09-10, retiring two stale claims — both stale in the
+> direction that made revocation sound worse than it is.** What superseded them
+> landed on 2026-09-09 in `4a8c6e2`, *"spec v3: epochs cut at a fixed offset, and
+> revocation that does not wait"*, and this entry was never updated. So
+> `spec/records.md`, the README and this index disagreed for a day about the two
+> things a person deciding whether to trust revocation would actually ask.
+>
+> **This is the second time this file has drifted from a document it cites on
+> every page.** The header records the first: D3 meant *"audit is given up"* here
+> and *"data survives for years"* in feasibility.md. Found this time while
+> writing [rights.md](rights.md), because an external standard asked the question
+> in a shape that made the contradiction visible — which is an argument for
+> measuring this design against outside standards more often than never.
 
-*Reopens if:* asking real people about revocation granularity (below) shows the
-"rest of the epoch" promise is unsayable at a noon boundary. The fix would be a
-per-subject fixed offset, not local time.
+**1. The epoch is not UTC. It is a fixed per-subject offset.** This entry
+previously argued for raw UTC and named its own escape hatch: *"the fix would be
+a per-subject fixed offset, not local time."* **That condition fired and the fix
+was taken.** `tools/canon.py` derives the offset from the mode of AAPS's own
+`utcOffset` column — where someone lives, rather than where they happened to be
+when a snapshot was taken.
+
+**The original argument survives, and is why the fix took this shape rather than
+local time.** An epoch must have the same identity on every device, and two peers
+disagreeing about which epoch a record belongs to is a correctness problem in a
+replicated store — so a *local midnight* boundary, which moves with DST and with
+travel, was never available. A constant recorded once is not local time. What it
+buys is that the worst case lands while the subject is asleep instead of near
+noon, which is the wording problem the old entry accepted and no longer has.
+
+**2. A revoked reader does not keep the rest of the epoch.** The sealing layer
+**cuts a new segment on withdrawal**, so what a reader keeps is bounded by *when
+they were revoked*. An epoch may hold several segments; it stays the unit grants
+and consumers speak in, but it is no longer the unit of key custody. Epoch length
+is therefore a question of cost and scoping rather than of safety.
+
+**So "it bounds what a revoked reader keeps to one epoch" is retired.** D10 saw
+this coming from the other side on 2026-09-08 — p2panda's `remove()` rotates
+immediately rather than at the day boundary, so the reference construction's
+promise was *"the pessimistic one, which is the safe direction to be wrong in"*.
+The reference then stopped being pessimistic, and nobody said so here.
+
+---
 
 A content key per epoch, wrapped to each live grantee and published beside the
 data. Granting starts the wrapping; revoking stops it. This buys time-scoped
-access for free (give a researcher one year's keys), and it bounds what a revoked
-reader keeps to **one epoch**.
+access for free — give a researcher one year's keys — and per-recipient wrapping
+scopes history by which keys you wrapped, which is the expressiveness D2a and D10
+both turn on.
 
-**Cost is now measured, not estimated.** The reference snapshot spans 49 epochs:
-245 wraps for five readers, about **24 KB of key records beside 1.66 MB of
-data** — 179 KB/year against the 180 KB/year §7.2 predicted. So cost is
-irrelevant to the choice, as claimed. **Choose on revocation granularity.** Nobody has yet asked a person whether "they keep up to 24 more
-hours" is acceptable, and that is a question for people, not for this repo.
+**Cost is measured, not estimated:** 245 wraps for five readers, about **24 KB of
+key records beside 1.66 MB of data** — 179 KB/year against the 180 KB/year
+feasibility.md §7.2 predicted. Cost is irrelevant to the choice, as claimed.
+
+*One figure to check.* This entry has said **49 epochs** and `spec/records.md`
+§5.1 says **47** for the same snapshot and the same 245 wraps. 245 = 49 × 5, so
+the likely reconciliation is **47 epochs holding 49 segments** — two days with a
+mid-day re-cut, which is exactly what correction 2 above creates. Neither
+document says "segments", so this is unverified arithmetic, not a finding.
+Whichever is right, the KB figures agree and nothing downstream moves.
+
+**The open question changed shape, and it is no longer granularity.** Granularity
+is now good: revocation does not wait for a boundary. What nobody has asked a
+person is whether **"nothing new will be sent after you stop it"** is an
+acceptable meaning of *withdraw* — given that everything already downloaded stays
+readable forever. feasibility.md §11 requires that wording because every
+alternative is untrue; it does not establish that the wording satisfies anybody.
+Still a question for people and not for this repo — [rights.md](rights.md) §12
+has the route to some.
+
+*Reopens if:* asking real people shows a withdrawal that recalls nothing is not
+recognisable to them as withdrawal at all. **There is no protocol fix in that
+direction** — the honest responses are wording, or a narrower default grant.
 
 ### D5 · The commons is a gateway, not a bigger phone
 
@@ -679,4 +727,5 @@ seven and renumbered them**, which is how an open question stops being tracked.
 | 4 | **Cohort re-identification.** A 5-minute CGM trace is close to a fingerprint | The question an ethics committee asks first |
 | 5 | **Multi-device.** A phone and a spare is the problem `p2panda-spaces` exists to solve, and it is not optional — loop phones get replaced | Blocked on the same gap as D2 |
 | 6 | **Delegation.** Diabetes has minors and has emergencies. The delegate for a child is permanent; the delegate in an emergency is unplanned | |
+| — | **Is "nothing new will be sent" recognisable as *withdrawal*?** D4's question, reshaped: granularity is solved, semantics are not. Nobody has asked a person whether a withdrawal that recalls nothing counts as one | Not in §12; rights.md §12 has a route |
 | — | **Who operates the commons**, and does being a named, revocable peer actually change what an ethics committee thinks? That is the claim this design makes to that audience and it has never been tested on one | Not in §12; the gate on D5 |

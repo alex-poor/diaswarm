@@ -166,14 +166,13 @@ server's cooperation ([§11](feasibility.md)).
    and nobody has established that the Charter's participants would accept it as
    satisfying their principle. Everything a reader already downloaded stays
    readable forever, and no protocol reaches that.
-2. **Granularity is good, and better than [D4](decisions.md) claims.**
-   `spec/records.md` §5.1 is later and authoritative: the sealing layer **cuts a
-   new segment on withdrawal**, so what a reader keeps is bounded by *when they
-   were revoked*, not by the epoch. Epochs are cut at a fixed per-subject offset
-   — local midnight, not raw UTC — so the boundary no longer falls in the middle
-   of the waking day either. ⚠️ **D4's index entry still says "one UTC day each"
-   and asks whether people accept keeping "up to 24 more hours". Both are
-   superseded**; that question no longer describes the system.
+2. **Granularity is good, and this document is why [D4](decisions.md) now says
+   so.** The sealing layer **cuts a new segment on withdrawal**, so what a reader
+   keeps is bounded by *when they were revoked*, not by the epoch; and epochs are
+   cut at a fixed per-subject offset — local midnight, not raw UTC — so the
+   boundary does not fall in the middle of the waking day. D4 claimed otherwise
+   on both counts until 2026-09-10, when writing this section surfaced the drift
+   and D4 was amended. **Nothing in the system changed; the record of it did.**
 3. **There is no pause.** The only controls are withdrawing a grant or turning
    the plugin off — nothing between sharing and not sharing. Under a principle
    built on *choice*, two states is a thin menu.
@@ -442,13 +441,14 @@ An extension of [§11](feasibility.md)'s list, for this specific audience.
 
 ## 12. Open actions
 
-1. **Fix [D4](decisions.md) before showing this to anyone.** It says epochs are
-   *"one UTC day each"* and closes by asking whether people accept that a
-   revoked reader *"keeps up to 24 more hours"*. `spec/records.md` §5.1 and the
-   README both say otherwise — fixed per-subject offset, and a new segment cut
-   on withdrawal. **This is the drift decisions.md exists to prevent**, and the
-   document has caught itself doing it once before, over D3. A rights claim
-   resting on a stale decision record is the worst place to discover it.
+1. ~~**Fix [D4](decisions.md) before showing this to anyone.**~~ **Done
+   2026-09-10.** D4 described epochs as *"one UTC day each"* and asked whether
+   people accept a revoked reader keeping *"up to 24 more hours"*; both had been
+   superseded on 2026-09-09 by `4a8c6e2` and the index was never updated. **This
+   is the drift decisions.md exists to prevent** — the second instance, after
+   D3 — and it was found only because an outside standard asked the question in a
+   shape that made the contradiction visible. Kept in this list as the argument
+   for doing that again.
 2. **Take the withdrawal-semantics question to them** — the one that survives.
    D4's stated mechanism is *"a question for people, not for this repo"*, and
    the Charter project is 40+ people with diabetes across 16 countries, a

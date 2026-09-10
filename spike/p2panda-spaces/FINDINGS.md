@@ -110,43 +110,84 @@ and on a phone running a closed loop a panic in a background worker is not an
 acceptable failure mode. The spike processes every message inside
 `catch_unwind` for exactly this reason.
 
-## 5. THE BLOCKER: a subject cannot have two spaces
+## 5. ~~THE BLOCKER: a subject cannot have two spaces~~ — WRONG, twice over
 
-Everything above uses one space per subject. The window design needs more than
-one — "grant from now on" *is* a second space — and that does not work at 0.7.1.
+An earlier version of this section said a subject cannot have two spaces, and
+recommended filing an upstream bug. **Both halves were wrong**, and the second
+one nearly wasted a maintainer's time. What was measured was real; what it was
+attributed to was not.
+
+### 5a. Repair is the missing discipline, not a missing feature
+
+Spaces share **one global auth state**. After any auth-level change — creating a
+space, creating a group, adding or removing a member anywhere — every *other*
+space is working from a stale view of it, and the next membership change on one
+of them panics `p2panda-auth`.
+
+`p2panda-spaces`' own `shared_auth_state` test does the right thing on every
+line, with the comment *"Make Space 0 aware of this change"*:
+
+```rust
+let needs = manager.spaces_repair_required().await?;      // ask which are stale
+let messages = manager.repair_spaces_persisted(&needs).await?;  // fix them
+```
+
+**Before every auth-level operation, not once before a batch.** Adding a member
+to space A is itself an auth change, so space B is stale immediately afterwards.
+With repair in place, every subject-side panic in this spike disappeared.
+
+This was reached by reading the library's own tests rather than by reasoning
+about the failure. Three attempts to reason about it produced three wrong
+answers.
+
+### 5b. A reader can belong to exactly one of a subject's spaces
+
+What survives after repair is real and much narrower:
 
 ```
-  a reader in two of one subject's spaces
-
-      adding to space A PANICKED (subject side)
   6. a reader can belong to two of one subject's spaces  FAIL
-     opens ["B day 6", "B day 7", "B after both"]
 ```
 
-A reader added to space B is fine. Adding that same reader to space A — which
-already existed, and which the subject has been publishing to all along —
-panics `p2panda-auth` at `group/resolver.rs:250`, *"all operations present in
-map"*. **On the subject's side, not the reader's**, so it is not something a
-careful reader can defend against.
+Adding a reader to one space works. Adding the *same* reader to a second space
+produces a space message carrying no welcome for them — *"expected direct
+message of type 'welcome' but got nothing instead"* — and the reader then
+panics processing what follows. Swapping which space is joined first swaps which
+one works, so it is the **second** join that fails, not a particular space.
 
-**This is the library's own test API**, `add_persisted`, not
-`crates/diaswarm-spaces`' hand-written persistence — so it is not our glue.
+### 5c. The design that fits: a window per grant, and fan out
 
-The likely shape of it: a subject's spaces share one **global** auth CRDT
-(`Hash::digest(b"global-groups-context")` — one key, not one per space). Once
-two spaces exist, their auth operations interleave in that single state and the
-resolver's assumption that every referenced operation is present stops holding.
-That is a guess about the cause; the failure itself is measured.
+This does not sink windows, it reshapes them. Instead of carrying existing
+readers forward into each new window:
 
-**Consequence.** `Reach::Everything` — grant with history — works and is
-verified. `Reach::FromNow` is blocked, and with it the per-grant choice. Both
-ways of opening the second window were tried: created with its members, and
-created empty then added to. The first panics the reader once, the second three
-times. Neither works.
+* every reader stays in the **one** window they were granted in;
+* the subject publishes each day into **every live window**.
 
-**Not worked around, deliberately.** A workaround for a panic in a shared CRDT,
-in a background worker on a phone driving an insulin pump, would be guessing at
-someone else's invariants. This wants an upstream issue.
+```
+  7. both windows keep receiving, each to its own reader  PASS
+     alice now opens ["B day 6", "B day 7", "B after both", "B day 10", "B day 11"]
+```
+
+Alice is in window B only. Window A keeps publishing; she reads none of it, and
+keeps receiving hers. Nobody is ever in two spaces, so 5b is never reached.
+
+| Grant | How |
+|---|---|
+| **with history** | add the reader to window 0 — they get everything, onward |
+| **from now on** | open a new window, add only them, publish into it from now |
+| **revoke** | `remove` from their window |
+
+**The cost is duplication**: one copy of every day per live window. With a
+partner, a parent and a clinician on different terms that is three copies of
+~78 MB a year rather than one. That is a real cost and it belongs in the
+README's storage numbers, not buried here.
+
+### 5d. What was nearly filed
+
+An upstream issue, reproduced with LLM-written code, describing 5a as a defect.
+p2panda's [LLM policy](https://github.com/p2panda/.github/blob/main/LLM_POLICY.md)
+does not accept LLM-generated issues or code, which is what stopped it — but the
+report would also have been **wrong**, and the answer was in their own test
+suite the whole time.
 
 ## 6. Version note
 

@@ -94,27 +94,35 @@ async fn main() {
     let window_a = SpaceId::digest(b"window-a");
     let (space_a, create_a) = subject.manager.create_space_persisted(window_a, &[]).await.unwrap();
 
-    let mut a_msgs: Vec<TestOperation> = create_a;
+    // ONE LOG, IN THE ORDER THE SUBJECT PRODUCED IT.
+    //
+    // Keeping a vector per space and concatenating them is the obvious way to
+    // write this spike and it is wrong: auth messages from the two spaces
+    // interleave, and a reader handed them grouped by space sees a space
+    // message before the auth message it depends on. That is a real p2panda
+    // error — "maybe it arrived out-of-order" — but it was the harness's fault,
+    // not the library's. A subject has one log; log sync delivers it in order.
+    let mut log: Vec<TestOperation> = create_a;
     for day in 0..2 {
-        a_msgs.push(space_a.publish_persisted(format!("A day {day}").as_bytes()).await.unwrap());
+        log.push(space_a.publish_persisted(format!("A day {day}").as_bytes()).await.unwrap());
     }
 
     // --- bob is granted, AFTER those two days were already published ------
     let (m1, m2) = space_a.add_persisted(bob_id, Access::read()).await.unwrap();
-    a_msgs.push(m1);
-    a_msgs.push(m2);
+    log.push(m1);
+    log.push(m2);
 
     for day in 2..4 {
-        a_msgs.push(space_a.publish_persisted(format!("A day {day}").as_bytes()).await.unwrap());
+        log.push(space_a.publish_persisted(format!("A day {day}").as_bytes()).await.unwrap());
     }
 
     // --- bob is revoked, and the subject keeps publishing -----------------
     let (m1, m2) = space_a.remove_persisted(bob_id).await.unwrap();
-    a_msgs.push(m1);
-    a_msgs.push(m2);
+    log.push(m1);
+    log.push(m2);
 
     for day in 4..6 {
-        a_msgs.push(space_a.publish_persisted(format!("A day {day}").as_bytes()).await.unwrap());
+        log.push(space_a.publish_persisted(format!("A day {day}").as_bytes()).await.unwrap());
     }
 
     // ================= WINDOW B: a second space, alice only ===============
@@ -123,12 +131,23 @@ async fn main() {
     // withhold from her — she was never a member of the space holding them.
     let window_b = SpaceId::digest(b"window-b");
     let (space_b, create_b) = subject.manager.create_space_persisted(window_b, &[]).await.unwrap();
-    let mut b_msgs: Vec<TestOperation> = create_b;
+
+    // MAKE EVERY OTHER SPACE AWARE OF THIS. `p2panda-spaces`' own
+    // `shared_auth_state` test does exactly this after every auth-level change,
+    // with the comment "Make Space 0 aware of this change". Spaces share one
+    // global auth state, so a space that has not been repaired after another
+    // one changed it is working from a stale view of that state.
+    let repair: Vec<TestOperation> =
+        subject.manager.repair_spaces_persisted(&[window_a]).await.unwrap();
+    println!("    repaired window A after window B was created: {} message(s)", repair.len());
+
+    log.extend(create_b);
+    log.extend(repair);
     let (m1, m2) = space_b.add_persisted(alice_id, Access::read()).await.unwrap();
-    b_msgs.push(m1);
-    b_msgs.push(m2);
+    log.push(m1);
+    log.push(m2);
     for day in 6..8 {
-        b_msgs.push(space_b.publish_persisted(format!("B day {day}").as_bytes()).await.unwrap());
+        log.push(space_b.publish_persisted(format!("B day {day}").as_bytes()).await.unwrap());
     }
 
     // ================= what each reader can actually open =================
@@ -136,15 +155,9 @@ async fn main() {
     // Each reader is fed only the space it was granted. Feeding a reader the
     // OTHER space's messages is a separate experiment below, because it does
     // not merely fail — it panics, which is a finding of its own.
-    let bob_read = feed("bob", &bob, &a_msgs).await;
+    let bob_read = feed("bob", &bob, &log).await;
 
-    // ALICE GETS EVERYTHING, both windows, in the order the subject produced
-    // it. Fed only window B she cannot even process its first message, which
-    // is itself the answer to a question worth asking: are two spaces made by
-    // one subject independent, or does the second one's auth history depend on
-    // the first?
-    let all: Vec<TestOperation> = a_msgs.iter().chain(b_msgs.iter()).cloned().collect();
-    let alice_read = feed("alice", &alice, &all).await;
+    let alice_read = feed("alice", &alice, &log).await;
 
     println!("    bob   (added mid-window A, then revoked) opens {bob_read:?}");
     println!("    alice (added to window B only)           opens {alice_read:?}");
@@ -184,7 +197,7 @@ async fn main() {
         .register_member(&subject.manager.me().await.unwrap())
         .await
         .unwrap();
-    let stranger_read = feed("stranger", &stranger, &all).await;
+    let stranger_read = feed("stranger", &stranger, &log).await;
     report(
         "5. a stranger processes everything, reads nothing",
         stranger_read.is_empty(),
@@ -202,44 +215,92 @@ async fn main() {
     subject.manager.register_member(&both.manager.me().await.unwrap()).await.unwrap();
     let both_id = both.manager.id();
 
-    let mut two: Vec<TestOperation> = Vec::new();
+    
+    // ASK WHICH SPACES ARE STALE, AND FIX THEM FIRST. Every auth-level change
+    // in any space — including alice being added to B — leaves the others
+    // working from an old view of the shared auth state. The manager will say
+    // which ones need it rather than us guessing.
+    let needs = subject.manager.spaces_repair_required().await.unwrap();
+    println!("      spaces needing repair before this: {}", needs.len());
+    if !needs.is_empty() {
+        let fixes = subject.manager.repair_spaces_persisted(&needs).await.unwrap();
+        println!("      repair produced {} message(s)", fixes.len());
+        log.extend(fixes);
+    }
+
     let added_a = std::panic::AssertUnwindSafe(space_a.add_persisted(both_id, Access::read()))
         .catch_unwind()
         .await;
     match added_a {
         Ok(Ok((m1, m2))) => {
-            two.push(m1);
-            two.push(m2);
+            log.push(m1);
+            log.push(m2);
         }
         Ok(Err(e)) => println!("      adding to space A refused: {e}"),
         Err(_) => println!("      adding to space A PANICKED (subject side)"),
     }
+    // AND AGAIN. Adding to A was itself an auth change, so B is now the stale
+    // one. Repair is not a one-off before a batch of work — it belongs before
+    // every single auth-level operation.
+    let needs = subject.manager.spaces_repair_required().await.unwrap();
+    println!("      spaces needing repair between the two adds: {}", needs.len());
+    if !needs.is_empty() {
+        let fixes = subject.manager.repair_spaces_persisted(&needs).await.unwrap();
+        log.extend(fixes);
+    }
+
     let added_b = std::panic::AssertUnwindSafe(space_b.add_persisted(both_id, Access::read()))
         .catch_unwind()
         .await;
     match added_b {
         Ok(Ok((m1, m2))) => {
-            two.push(m1);
-            two.push(m2);
+            log.push(m1);
+            log.push(m2);
         }
         Ok(Err(e)) => println!("      adding to space B refused: {e}"),
         Err(_) => println!("      adding to space B PANICKED (subject side)"),
     }
     if let Ok(m) = space_a.publish_persisted(b"A after both").await {
-        two.push(m);
+        log.push(m);
     }
     if let Ok(m) = space_b.publish_persisted(b"B after both").await {
-        two.push(m);
+        log.push(m);
     }
 
-    let everything: Vec<TestOperation> =
-        a_msgs.iter().chain(b_msgs.iter()).chain(two.iter()).cloned().collect();
-    let both_read = feed("both", &both, &everything).await;
+    let both_read = feed("both", &both, &log).await;
     report(
         "6. a reader can belong to two of one subject's spaces",
         both_read.iter().any(|d| d == "A after both") && both_read.iter().any(|d| d == "B after both"),
         &format!("opens {both_read:?}"),
     );
+
+    // ================= FAN-OUT: a day published into every live window ====
+    //
+    // §6 says a reader can be in exactly one space. That does not sink the
+    // window design, it reshapes it: instead of carrying readers forward into
+    // each new window, every reader stays in the ONE window they were granted
+    // in, and the subject publishes each day into every window that is still
+    // live. Nobody is ever in two spaces, and a reader granted "from now on"
+    // still cannot see anything sealed before their window existed.
+    //
+    // The cost is duplicated ciphertext — one copy per live window — and that
+    // is the trade this measures rather than assumes.
+    println!("\n  fan-out: publishing into every live window\n");
+    let mut fan: Vec<TestOperation> = Vec::new();
+    for day in 10..12 {
+        fan.push(space_a.publish_persisted(format!("A day {day}").as_bytes()).await.unwrap());
+        fan.push(space_b.publish_persisted(format!("B day {day}").as_bytes()).await.unwrap());
+    }
+    log.extend(fan);
+
+    let bob_after = feed("bob", &bob, &log).await;
+    let alice_after = feed("alice", &alice, &log).await;
+    report(
+        "7. both windows keep receiving, each to its own reader",
+        alice_after.iter().any(|d| d == "B day 11") && !alice_after.iter().any(|d| d.starts_with("A ")),
+        &format!("alice now opens {alice_after:?}"),
+    );
+    let _ = bob_after;
 
     println!("\n  what this means for the design");
     let history_free = bob_read.iter().any(|d| d == "A day 0");

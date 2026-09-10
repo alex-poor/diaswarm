@@ -92,18 +92,17 @@ async fn a_stranger_holds_everything_and_reads_nothing() {
 
 /// THE CHOICE THE USER ASKED FOR: per grant, with history or without.
 ///
-/// ⚠️ **IGNORED BECAUSE IT FAILS UPSTREAM, NOT HERE.** `Reach::FromNow` opens a
-/// second space, and a subject's spaces share one global auth CRDT: once there
-/// are two, membership changes panic `p2panda-auth` at
-/// `group/resolver.rs:250`. `spike/p2panda-spaces` §6 reproduces it through
-/// the library's OWN test API — adding a reader to the first space, once a
-/// second exists, panics on the subject's side — so this is not this crate's
-/// persistence glue.
+/// ⚠️ **IGNORED BECAUSE THIS CRATE BUILDS THE WINDOW WRONG, NOT BECAUSE
+/// UPSTREAM CANNOT DO IT.** `Reach::FromNow` here carries existing readers into
+/// the new window, so they end up in two spaces — and a reader can belong to
+/// exactly one (`spike/p2panda-spaces` §5b). It also skips the repair the
+/// library requires before every auth-level operation (§5a).
 ///
-/// Kept, named, and left failing-if-run rather than deleted or quietly made to
-/// pass: when upstream fixes it, or when a way round is found, this is the test
-/// that says so. `Reach::Everything` is unaffected and verified above.
-#[ignore = "p2panda-spaces 0.7.1: a second space per subject panics p2panda-auth — see spike/p2panda-spaces FINDINGS §6"]
+/// §5c measures the arrangement that works: one window per grant, every reader
+/// in exactly one of them, and each day published into every live window. This
+/// test should pass once `Reach::FromNow` is rebuilt that way — which is the
+/// next piece of work, not an upstream wait.
+#[ignore = "Reach::FromNow needs rebuilding as fan-out; see spike/p2panda-spaces FINDINGS §5c"]
 #[tokio::test]
 async fn a_grant_reaches_back_only_when_it_is_asked_to() {
     let mut subject = peer("reach-subject").await;
