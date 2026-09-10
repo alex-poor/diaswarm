@@ -290,6 +290,47 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D24 · The follower is published, and built without jitpack
+
+**Settled 2026-09-11.** The follower is released as a signed APK, built by CI
+from two public commits, and the goal is F-Droid.
+
+**THE README'S "NO APK, EVER" RULE IS SPLIT, NOT BROKEN.** It was written about
+the app that drives an insulin pump and still holds for it: you assemble a
+medical device yourself, from source you have read. The follower is a viewer —
+separate `applicationId`, no pump drivers compiled in, structurally unable to
+dose (D22) — and handing somebody a file they can install is reasonable in a way
+that handing them a loop is not. The workflow names `Aapsclient` in every gradle
+invocation and then checks the output directory, failing the run if a `full`
+artifact appears: a comment saying "do not build the pump app" is not a control.
+
+**AGPL IS WHY THE RELEASE NOTES NAME BOTH COMMITS.** The APK contains
+AndroidAPS, so distributing it obliges publishing the corresponding source. The
+AAPS fork and its `diaswarm-addon` branch are public for that reason, not as a
+convenience.
+
+**Signed with a key that is not the debug keystore.** The `loop` build type is
+debug-signed on purpose — that is what keeps `install -r` an update and the pump
+key alive — and its private half is public knowledge. A distributed app needs a
+key nobody else holds, so the release is signed from GitHub secrets by a
+separate 4096-bit key. Without those secrets CI still produces an artifact,
+unsigned: installable by nobody, reviewable by anybody, which is the right
+outcome for a fork or a pull request.
+
+**JITPACK IS GONE, and that was the F-Droid blocker.** F-Droid will not build
+against it, because it compiles arbitrary source at an arbitrary commit and
+nothing from it is reproducible. Exactly one artifact came from it: QRGen,
+declared `api` by `plugins:main` and imported by no file in the tree, left over
+from the removed SmsCommunicator. The invite QR is now encoded with
+`com.google.zxing:core`, already present for the scanner. `pingplacepicker` and
+`kulid` looked like blockers and were not — declared in the version catalog,
+referenced by nothing, never resolved.
+
+**What still stands between this and F-Droid**, so nobody reads the above as
+"done": F-Droid builds one repository and this is two, which needs `srclibs` in
+the metadata; a tagged release with a monotonic versionCode; and their build
+server has to complete an AAPS build. Only the dependency half is settled.
+
 ### D23 · Peers meet through a relay, not only on the same wifi
 
 **Settled 2026-09-11.** `Swarm::join_via` configures an iroh relay on the
