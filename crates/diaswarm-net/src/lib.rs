@@ -46,7 +46,20 @@ use serde::{Deserialize, Serialize};
 /// failed request that a follower reported as "unreachable" — the subject
 /// looked offline when it was merely older. An ALPN mismatch refuses the
 /// connection instead, which is a thing a person can act on.
-pub const ALPN: &[u8] = b"diaswarm/5";
+///
+/// **`6` BECAUSE [`Request::Offer`] ARRIVED WITHOUT ONE.** The rule above was
+/// written for a change that broke fetching, and this one does not: an older
+/// peer fails to decode the new variant, replies empty, and [`wire::offer_on`]
+/// reads that as "they did not take it" — which is exactly what a peer whose
+/// acceptance window has closed looks like. So the one-scan flow would fail
+/// against an old follower, permanently, reported as the ordinary refusal it
+/// is indistinguishable from, while fetching carried on working and hid it.
+///
+/// Bumped now because it is free now: every released follower postdates the
+/// variant, so nothing deployed is cut off by this. It stops being free once
+/// somebody is running a published build, and per D8 a follower has no expiry
+/// mechanism to force it forward.
+pub const ALPN: &[u8] = b"diaswarm/6";
 
 /// One request. One per stream, answered with raw bytes then a clean close.
 #[derive(Debug, Serialize, Deserialize)]

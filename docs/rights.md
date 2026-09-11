@@ -235,7 +235,7 @@ already using, to ensure interoperability, easier transition for the users, and
 lower costs for patients."*
 
 **This project speaks exactly one dialect and invented all of it**: a bespoke
-record vocabulary (`spec/records.md`), a bespoke wire (`diaswarm/5`), a bespoke
+record vocabulary (`spec/records.md`), a bespoke wire (`diaswarm/6`), a bespoke
 invite scheme ([D16](decisions.md)), no FHIR, no Nightscout-shaped API, and no
 export of any kind. On the principle the Charter names second, this is close to
 the opposite of what is asked.

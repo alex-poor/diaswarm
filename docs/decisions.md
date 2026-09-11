@@ -290,6 +290,50 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D25 · Sharing writes to the peer it dials, and that moved the wire to `diaswarm/6`
+
+**Settled 2026-09-11.** `Request::Offer` carries an invite *to* a peer, so the
+subject's single scan finishes the exchange in both directions (D16). Wire
+version `diaswarm/6`.
+
+**IT IS THE ONLY REQUEST THAT WRITES.** Every other one is read-only, which is
+what makes serving to anyone safe (§9.2) and what D14 rests on. This one adds a
+subject to what the receiver replicates, so an unsolicited offer is a stranger
+making your phone carry their ciphertext. It is accepted only while the
+receiver's owner has their invite on screen — a deadline, not a flag, because a
+window that has to be closed is one somebody forgets to close. Accepting is not
+reading and grants nothing.
+
+**THE VERSION DID NOT MOVE WITH IT, AND THAT IS WHY THIS ENTRY EXISTS.** The
+variant landed in `42e6567` and `a975f2a` on 2026-09-11 with `ALPN` left at
+`diaswarm/5` — against the rule written directly above the constant, which D19
+had already paid for once. The bump is this entry.
+
+**The rule needed applying rather than reciting, because this break is quieter
+than the one the rule was written for.** That one broke fetching. This one does
+not: an older peer fails to decode the variant, replies empty, and `offer_on`
+reads empty as *"they did not take it"* — indistinguishable from a closed
+window. So the one-scan flow fails against an old follower, permanently, wearing
+the face of an ordinary refusal, while the trend line keeps updating and hides
+it. A loud failure at the handshake is worth more than a working graph beside a
+pairing flow that silently cannot work.
+
+**Bumped now because it is free now.** Every released follower postdates the
+variant — `Offer` at 10:36, the first release build at 13:33 — so nothing
+deployed is cut off. It stops being free as soon as somebody is running a
+published Ayni, and per D8 a follower has no expiry mechanism to drag it
+forward: the loop app stops dosing when it goes stale, and a viewer never does.
+
+**One line, because nothing hardcodes the string.** `wire_alpn` derives what
+goes on the wire by mixing `ALPN` with the network id, and every dial and
+`accept` outside p2panda goes through it or `default_wire_alpn`. Verified:
+`an_address_dial_reaches_a_pooled_peer` plus the transport, peer, swarm and
+replicate suites, 17 tests, all passing on `diaswarm/6`.
+
+*Reopens if:* a published follower exists that a future bump would strand, at
+which point the question stops being "bump or not" and becomes whether the wire
+needs a negotiated version rather than a fatal one.
+
 ### D24 · The follower is published, and built without jitpack
 
 **Settled 2026-09-11.** The follower is released as a signed APK, built by CI

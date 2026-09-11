@@ -205,8 +205,8 @@ async fn a_follower_survives_the_subject_leaving_without_a_second_address() {
 ///
 /// This is the guard on a derivation this crate does not own. p2panda hashes
 /// the protocol id with its network id before iroh ever sees it, so a peer in
-/// the pool does not answer on `diaswarm/5` — it answers on
-/// `Hash(diaswarm/5 ++ network_id)`. Dialling with the plain string is refused
+/// the pool does not answer on the plain [`ALPN`] — it answers on
+/// `Hash(ALPN ++ network_id)`. Dialling with the plain string is refused
 /// as "peer doesn't support any known protocol", which looks exactly like the
 /// phone being switched off.
 ///

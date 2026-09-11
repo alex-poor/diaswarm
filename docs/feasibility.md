@@ -1196,7 +1196,7 @@ an open vault, and needs neither the commons (§10.5) nor the review gate (§10.
 It is here because §11 has no answer to *interoperability*, and the Diabetes Data
 Rights Charter asks for one (see [rights.md](rights.md)). The design currently
 speaks exactly one dialect, invented here: a bespoke record vocabulary
-(spec/records.md), a bespoke wire (`diaswarm/5`), a bespoke invite. That is the
+(spec/records.md), a bespoke wire (`diaswarm/6`), a bespoke invite. That is the
 correct call for the wire and the wrong call for the boundary where a person's
 data leaves the system toward their own clinician.
 
