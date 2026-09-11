@@ -1,5 +1,6 @@
 package app.aaps.plugins.sync.swarm
 
+import nz.diaswarm.jni.SwarmNative
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkManager

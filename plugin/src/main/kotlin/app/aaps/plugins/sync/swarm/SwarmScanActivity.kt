@@ -1,5 +1,6 @@
 package app.aaps.plugins.sync.swarm
 
+import nz.diaswarm.jni.SwarmNative
 import android.app.Activity
 import android.os.Bundle
 import android.widget.Toast

@@ -1,4 +1,4 @@
-package app.aaps.plugins.sync.swarm
+package nz.diaswarm.follower
 
 import nz.diaswarm.jni.SwarmNative
 import android.content.Context

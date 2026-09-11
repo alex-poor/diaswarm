@@ -1,4 +1,4 @@
-package app.aaps.plugins.sync.swarm
+package nz.diaswarm.jni
 
 /**
  * The JNI contract over `crates/diaswarm-android`.

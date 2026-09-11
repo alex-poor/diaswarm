@@ -1,5 +1,6 @@
 package app.aaps.plugins.sync.swarm
 
+import nz.diaswarm.jni.SwarmNative
 import android.content.Context
 import app.aaps.core.data.model.EPS
 import app.aaps.core.data.model.GV

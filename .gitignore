@@ -39,3 +39,9 @@ local.properties
 # Gradle output for the AAPS module. Root-only `/build/` missed this, so
 # every build committed 764 files including two ~20 MB .so binaries.
 /plugin/build/
+
+# The follower's standalone build
+follower/build/
+follower/.gradle/
+follower/local.properties
+follower/src/main/jniLibs/

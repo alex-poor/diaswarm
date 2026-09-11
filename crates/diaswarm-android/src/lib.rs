@@ -1,4 +1,12 @@
-//! The JNI surface the AAPS plugin calls.
+//! The JNI surface both apps call.
+//!
+//! **ONE CONTRACT, TWO CALLERS.** The symbol names are derived from the Kotlin
+//! package and class, so they can belong to only one package — and there are now
+//! two apps: the AAPS add-on that publishes a loop's records, and the standalone
+//! follower that reads somebody else's. Neither owns this, so the package is
+//! `nz.diaswarm.jni` in both and neither app's namespace leaks into the other.
+//! Renaming either half breaks the other AT LOAD TIME ON A PHONE, not at compile
+//! time on a desktop, so the two move together or not at all.
 //!
 //! Deliberately thin. Everything with a decision in it lives in `diaswarm-core`,
 //! which is asserted byte-identical to `tools/canon.py` over the whole reference
@@ -26,7 +34,7 @@ use diaswarm_core::{epoch_of, header, Emitted, Record};
 /// a silently mismatched native library is how a stream ends up conforming to a
 /// spec nobody thinks it conforms to.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_specVersion(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_specVersion(
     _env: JNIEnv,
     _class: JClass,
 ) -> jint {
@@ -35,7 +43,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_specVersion(
 
 /// Which epoch a timestamp falls in — the unit of key custody, a UTC day.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_epochOf(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_epochOf(
     _env: JNIEnv,
     _class: JClass,
     t: jlong,
@@ -46,7 +54,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_epochOf(
 
 /// The stream header (spec §5.2), as a canonical JSON line.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_header<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_header<'a>(
     env: JNIEnv<'a>,
     _class: JClass<'a>,
     offset_ms: jlong,
@@ -60,7 +68,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_header<'a>(
 /// a malformed record on a loop phone must not become an exception on a
 /// background thread in a medical device's process.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_canonicalLine<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_canonicalLine<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     input: JString<'a>,
@@ -83,7 +91,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_canonicalLin
 /// purpose, because relying on one to release native state in an app that must
 /// keep dosing is worse than leaking.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterNew(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_emitterNew(
     _env: JNIEnv,
     _class: JClass,
     last_cgm_bucket: jlong,
@@ -99,7 +107,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterNew(
 
 /// The newest CGM bucket emitted, for the caller to persist. -1 if none.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterLastCgmBucket(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_emitterLastCgmBucket(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -118,7 +126,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterLastC
 /// carried the thinning mark are retired deliberately, rather than in the same
 /// change that stopped losing readings.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterThinned(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_emitterThinned(
     _env: JNIEnv,
     _class: JClass,
     _handle: jlong,
@@ -127,7 +135,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterThinn
 }
 
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterFree(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_emitterFree(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -140,7 +148,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterFree(
 /// Offer a record to the emitter. Returns the canonical line to publish, or an
 /// empty string if it has already been emitted.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterAccept<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_emitterAccept<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -175,7 +183,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterAccep
 /// measure before designing one, because the reference snapshot showed roughly
 /// fifteen a year and that is too few to guess a mechanism from.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_emitterAmendments(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_emitterAmendments(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -237,7 +245,7 @@ fn open_or_create_vault(vault: &Path, subject: &Identity, offset: i64) -> Option
 /// Returns the number of records sealed, or a negative number: -1 bad
 /// arguments, -2 identity unavailable, -3 vault unavailable, -4 seal failed.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultSeal<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultSeal<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     vault_path: JString<'a>,
@@ -280,7 +288,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultSeal<'a
 
 /// The subject's public key, for handing to someone. Empty on failure.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultSubject<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultSubject<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     identity_path: JString<'a>,
@@ -296,7 +304,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultSubject
 
 /// A one-line summary of the vault, for a log line or a status row.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultStatus<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultStatus<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     vault_path: JString<'a>,
@@ -339,7 +347,7 @@ struct Pooled {
 /// key would read as one peer leaving and another arriving — every bucket it
 /// held would reshuffle for nothing.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmJoin<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmJoin<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     store_path: JString<'a>,
@@ -367,7 +375,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmJoin<'a
 
 /// This phone's id in the pool. Empty on a bad handle.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmNodeId<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmNodeId<'a>(
     env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -385,7 +393,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmNodeId<
 /// See `Request::Offer`: this is the window that stops a stranger who knows
 /// this node id from making the phone carry their ciphertext.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmExpectOffer(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmExpectOffer(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -401,7 +409,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmExpectO
 /// Hand our invite to somebody whose invite we just scanned, so they do not
 /// have to scan one back. 1 taken, 0 declined, <0 could not be delivered.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmOffer<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmOffer<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -435,7 +443,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmOffer<'
 ///
 /// Returns `pool<TAB>buckets<TAB>held<TAB>wanted<TAB>adopted`, or empty.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmTick<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmTick<'a>(
     env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -457,7 +465,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmTick<'a
 
 /// Leave the pool and release the handle. Idempotent on 0.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_swarmLeave<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmLeave<'a>(
     _env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -497,7 +505,7 @@ fn load_or_create_node_key(path: &Path) -> Option<[u8; 32]> {
 /// Start keeping a copy of whoever sent this invite. Returns 1 if anything
 /// changed, 0 if it was already known, negative on failure.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netFollow<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netFollow<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     store_path: JString<'a>,
@@ -524,7 +532,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netFollow<'a
 /// Bring every followed subject up to date. Returns how many were reached, or
 /// a negative code. Blocking: the caller is already a worker thread.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netRefresh<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netRefresh<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -562,7 +570,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netRefresh<'
 /// the replica existing on disk. A follower that has never reached anyone and
 /// one that is merely quiet must not look alike (§12.3).
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netFollowing<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netFollowing<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     store_path: JString<'a>,
@@ -593,7 +601,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netFollowing
 /// is a number that looks current and is nine hours old, so the caller is
 /// handed the timestamp and made to say how old it is.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netLatest<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netLatest<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     store_path: JString<'a>,
@@ -651,7 +659,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netLatest<'a
 /// Missing fields come back empty rather than guessed at — a reading whose
 /// trend the sensor never reported is not FLAT.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netGlucose<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netGlucose<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     store_path: JString<'a>,
@@ -747,7 +755,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netGlucose<'
 /// before the window a follower is watching. Bounding this to recent epochs
 /// would silently leave a long-settled profile unfindable.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netProfile<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netProfile<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     store_path: JString<'a>,
@@ -789,7 +797,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_netProfile<'
 /// has been granted, which is indistinguishable here from a vault that does
 /// not exist; both mean "nothing to show", and the caller knows which.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultReaders<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultReaders<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     vault_path: JString<'a>,
@@ -816,7 +824,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultReaders
 /// Composed here rather than in Kotlin so that the phone and the CLI cannot
 /// drift into two formats that look alike and are not.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_inviteFor<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_inviteFor<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     subject: JString<'a>,
@@ -837,7 +845,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_inviteFor<'a
 /// Read an invite, returning `subject\tendpoint\tpurpose`, or empty if it is
 /// not one. Lets the phone accept an invite from another subject later.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_inviteParse<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_inviteParse<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     text: JString<'a>,
@@ -858,7 +866,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_inviteParse<
 /// Called at start so that repairs itself rather than waiting for someone to
 /// notice a follower has gone quiet.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultRewrap<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultRewrap<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     vault_path: JString<'a>,
@@ -890,7 +898,7 @@ fn parse_reader(hexed: &str) -> Option<[u8; 32]> {
 /// Returns the number of wraps written, or a negative code: -1 bad arguments,
 /// -2 identity unavailable, -3 vault unavailable, -4 the grant failed.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultGrant<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultGrant<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     vault_path: JString<'a>,
@@ -929,7 +937,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultGrant<'
 /// reader is not wrapped for. Not "at the next day boundary" — at UTC+12 that
 /// could have been most of a day.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_vaultRevoke<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultRevoke<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     vault_path: JString<'a>,
@@ -1025,7 +1033,7 @@ struct SpacesVault {
 
 /// Open, or create, the spaces vault under a directory. Returns a handle, or 0.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesOpen<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesOpen<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     dir: JString<'a>,
@@ -1043,7 +1051,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesOpen<'
 
 /// Close it. Safe to call with 0.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesClose<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesClose<'a>(
     _env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -1058,7 +1066,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesClose<
 
 /// The subject's public key, hex. Empty on failure.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesSubject<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesSubject<'a>(
     env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -1072,7 +1080,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesSubjec
 
 /// Seal a batch of canonical records. Returns how many were sealed, or < 0.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesSeal<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesSeal<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -1103,7 +1111,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesSeal<'
 /// Returns 0, or < 0. The reader must already be known to this vault — on a
 /// phone that is what scanning an invite does.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesGrant<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesGrant<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -1130,7 +1138,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesGrant<
 
 /// Withdraw a reader's access, from the next thing sealed onward.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesRevoke<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesRevoke<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -1150,7 +1158,7 @@ pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesRevoke
 
 /// A one-line summary, for a log line or a status row.
 #[no_mangle]
-pub extern "system" fn Java_app_aaps_plugins_sync_swarm_SwarmNative_spacesStatus<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesStatus<'a>(
     env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,

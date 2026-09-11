@@ -18,3 +18,29 @@ jni = "0.21"
 serde_json = "1"
 p2panda-core = "=0.7.1"
 diaswarm-spaces = { path = "../diaswarm-spaces" }
+
+# WHAT SHIPS ON A PHONE, and it was 39 MB per ABI before this.
+#
+# Rust's release profile keeps debug symbols by default, so the .so carried a
+# full symbol table nobody on a phone can use — 43 MB of a 72 MB APK across two
+# ABIs. Stripping is the whole difference; the rest is ordinary size tuning.
+#
+# `panic = "abort"` IS NOT SET, and the reason is worth keeping.
+#
+# It looks right — unwinding across a JNI boundary is undefined behaviour — and
+# turning it on immediately killed the app on launch with
+# `Abort message: 'android context was not initialized'`. That panic was always
+# happening: it comes from the iroh stack asking Android for a
+# ConnectivityManager through `ndk_context`, which nothing here ever
+# initialises. It is raised inside a tokio task, so tokio catches it, the task
+# dies, and the swarm carries on without network-change detection — invisibly.
+#
+# So aborting did not introduce a bug, it exposed one. Setting it now would
+# trade a silent degradation for a crash loop; the fix is to hand the JavaVM and
+# Context to `ndk_context` at load time, and until that is done this stays
+# unset. Do not "tidy" it back in.
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+opt-level = "z"
