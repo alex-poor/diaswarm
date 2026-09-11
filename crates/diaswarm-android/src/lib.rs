@@ -776,6 +776,121 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netGlucose<'a>(
     to_jstring(env, listing)
 }
 
+/// Every treatment this phone can open for a followed subject after `since_ms`,
+/// as `kind<TAB>millis<TAB>value<TAB>dur<TAB>flag` lines, oldest first.
+///
+/// **THESE WERE ALWAYS BEING SENT, AND THE READER WAS THROWING THEM AWAY.** The
+/// emitter drains eight kinds — `cgm`, `bolus`, `carb`, `tbr`, `extbolus`,
+/// `event`, `profile`, `target` — so a granted follower has been decrypting
+/// boluses and carbs all along and discarding them one line after opening them,
+/// because [`Java_nz_diaswarm_jni_SwarmNative_netGlucose`] filters
+/// `kind() == "cgm"`. Nothing about the protocol, the grant or the spec changes
+/// here. This returns what was already on the phone.
+///
+/// **WHAT IS STILL GENUINELY ABSENT, AND ALWAYS WILL BE.** Predictions and
+/// loop telemetry. `deviceStatus` and `apsResults` are excluded at the emit
+/// boundary by D6 — no clinical content, and the tables most likely to hold
+/// something nobody meant to share — and the record vocabulary is closed. So
+/// "eventual BG", the loop's own IOB, and its reasoning are not late, they are
+/// not coming. A follower that wants IOB must compute it, which is a different
+/// decision with a safety argument attached, and is not this function.
+///
+/// The shape is deliberately one row type rather than four, because the caller
+/// draws them on one time axis and the differences are all in two numbers:
+///
+/// | kind | `value` | `dur` | `flag` |
+/// |---|---|---|---|
+/// | `bolus` | units | 0 | the bolus type (`NORMAL`, `SMB`, …) |
+/// | `carb` | grams | ms, 0 if not extended | empty |
+/// | `tbr` | rate | ms | `abs` when U/h, else empty and the rate is a percent |
+/// | `extbolus` | units | ms | empty |
+///
+/// `dur` is milliseconds, per spec §2 — never minutes, because real durations
+/// include 36,690 ms and rounding loses what the device had.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netTreatments<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    store_path: JString<'a>,
+    subject: JString<'a>,
+    identity_path: JString<'a>,
+    purpose: JString<'a>,
+    since_ms: jlong,
+    limit: jint,
+) -> JString<'a> {
+    let (Ok(store), Ok(subj), Ok(id), Ok(p)) = (
+        env.get_string(&store_path),
+        env.get_string(&subject),
+        env.get_string(&identity_path),
+        env.get_string(&purpose),
+    ) else {
+        return to_jstring(env, String::new());
+    };
+    let dir = PathBuf::from(String::from(store)).join(String::from(subj));
+    let Some(reader) = load_or_create_identity(Path::new(&String::from(id))) else {
+        return to_jstring(env, String::new());
+    };
+    let Ok(vault) = Vault::open(&dir) else { return to_jstring(env, String::new()) };
+
+    // Bounded by epoch exactly as `netGlucose` is, and for the same reason:
+    // this runs on the same two-minute poll and must not open a year.
+    let from_epoch = if since_ms > 0 {
+        epoch_of(since_ms, vault.offset())
+    } else {
+        i64::MIN
+    };
+    let Ok(opened) = vault.read_as_from(&reader, &String::from(p), from_epoch) else {
+        return to_jstring(env, String::new());
+    };
+
+    let num = |r: &Record, k: &str| r.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let txt = |r: &Record, k: &str| {
+        r.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string()
+    };
+
+    let mut rows: Vec<(i64, String)> = opened
+        .values()
+        .flatten()
+        .filter(|r| r.t() > since_ms)
+        .filter_map(|r| {
+            let kind = r.kind();
+            let line = match kind {
+                "bolus" => format!("bolus\t{}\t{}\t0\t{}", r.t(), num(r, "u"), txt(r, "type")),
+                "carb" => format!("carb\t{}\t{}\t{}\t", r.t(), num(r, "g"), num(r, "dur")),
+                "tbr" => {
+                    // `abs` decides what `rate` MEANS — U/h or a percentage of
+                    // basal. Handing the number over without it would put a
+                    // "150" on a chart that could be 150% or 150 U/h.
+                    let abs = r.get("abs").and_then(|v| v.as_bool()).unwrap_or(false);
+                    format!(
+                        "tbr\t{}\t{}\t{}\t{}",
+                        r.t(),
+                        num(r, "rate"),
+                        num(r, "dur"),
+                        if abs { "abs" } else { "" }
+                    )
+                }
+                "extbolus" => {
+                    format!("extbolus\t{}\t{}\t{}\t", r.t(), num(r, "u"), num(r, "dur"))
+                }
+                _ => return None,
+            };
+            Some((r.t(), line))
+        })
+        .collect();
+
+    // Same overlap as `netGlucose`: segments legitimately repeat, and a bolus
+    // drawn twice is a bolus that looks like two.
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    rows.dedup_by(|a, b| a.1 == b.1);
+    if limit > 0 {
+        rows.truncate(limit as usize);
+    }
+
+    let listing = rows.iter().map(|(_, l)| l.clone()).collect::<Vec<_>>().join("\n");
+    to_jstring(env, listing)
+}
+
 /// The newest profile a followed subject has published, as its canonical JSON,
 /// or empty if this reader can open none.
 ///

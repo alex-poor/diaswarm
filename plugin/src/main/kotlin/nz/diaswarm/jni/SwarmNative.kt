@@ -245,6 +245,33 @@ object SwarmNative {
     ): String
 
     /**
+     * Every openable treatment for a followed subject after [sinceMs], as
+     * `kind<TAB>millis<TAB>value<TAB>dur<TAB>flag` lines, oldest first.
+     *
+     * **THESE WERE ALWAYS BEING SENT.** The emitter drains `bolus`, `carb`,
+     * `tbr` and `extbolus` alongside `cgm`; [netGlucose] filters to `cgm` and
+     * discards the rest a line after decrypting them. This returns what was
+     * already on the phone — no protocol change, no new grant.
+     *
+     * **PREDICTIONS ARE NOT HERE AND ARE NOT COMING.** `deviceStatus` and
+     * `apsResults` are excluded at the emit boundary, so the loop's eventual-BG
+     * and its own IOB are never published. Drawing them would mean computing
+     * them, which is a different decision.
+     *
+     * `value` and `dur` mean different things per kind: bolus is units with no
+     * duration; carb is grams; tbr is a rate that is U/h when `flag` is `abs`
+     * and a percentage otherwise; extbolus is units. `dur` is milliseconds.
+     */
+    external fun netTreatments(
+        storePath: String,
+        subject: String,
+        identityPath: String,
+        purpose: String,
+        sinceMs: Long,
+        limit: Int
+    ): String
+
+    /**
      * The newest profile a followed subject has published, as canonical JSON,
      * or empty.
      *

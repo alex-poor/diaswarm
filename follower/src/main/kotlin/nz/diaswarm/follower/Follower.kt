@@ -27,6 +27,25 @@ object Follower {
     /** One reading, as the vault gave it up. */
     data class Reading(val at: Long, val mgdl: Double, val trend: String)
 
+    /**
+     * One thing that was done, as the vault gave it up.
+     *
+     * **EVERY FIELD HERE WAS MEASURED AND SENT.** Nothing on this type is
+     * computed, inferred or defaulted, which is what makes it safe to draw
+     * beside somebody's glucose. [value] means units for a bolus, grams for
+     * carbs, and a rate for a `tbr` whose unit is decided by [flag].
+     */
+    data class Treatment(
+        val kind: String,
+        val at: Long,
+        val value: Double,
+        val dur: Long,
+        val flag: String
+    ) {
+        /** A `tbr` rate is U/h only when the emitter said so. */
+        val absolute: Boolean get() = flag == "abs"
+    }
+
     /** Somebody this phone follows. */
     data class Subject(val key: String, val purpose: String, val reached: Boolean) {
         /** Enough of the key to recognise, without pretending to be a name. */
@@ -93,6 +112,41 @@ object Follower {
     }
 
     /**
+     * What was delivered to this subject over the last [hours].
+     *
+     * **THIS IS NOT NEW DATA, IT IS DATA THAT WAS BEING DISCARDED.** The
+     * subject's phone has been sealing boluses, carbs and temporary basals
+     * since the first drain; a granted follower has been decrypting them and
+     * dropping them, because the only reader was `netGlucose` and it filters to
+     * `cgm`. So this costs one more pass over segments that were opened anyway.
+     *
+     * **AND IT STILL CANNOT SHOW A PREDICTION.** Loop telemetry is excluded at
+     * the emit boundary, so eventual-BG and the loop's own IOB are not late,
+     * they were never published. Anything of that kind on this screen would
+     * have to be computed here, and this app does not compute clinical numbers
+     * on somebody else's behalf.
+     */
+    fun treatments(context: Context, subject: Subject, hours: Int): List<Treatment> {
+        SwarmNative.check()
+        val since = System.currentTimeMillis() - hours * 3_600_000L
+        return SwarmNative.netTreatments(
+            SwarmPaths.store(context).absolutePath,
+            subject.key,
+            SwarmPaths.identity(context).absolutePath,
+            subject.purpose,
+            since,
+            MAX_TREATMENTS
+        ).lines().filter { it.isNotBlank() }.mapNotNull { row ->
+            val f = row.split('\t')
+            val kind = f.getOrNull(0) ?: return@mapNotNull null
+            val at = f.getOrNull(1)?.toLongOrNull() ?: return@mapNotNull null
+            val value = f.getOrNull(2)?.toDoubleOrNull() ?: return@mapNotNull null
+            if (at <= 0) null
+            else Treatment(kind, at, value, f.getOrNull(3)?.toDouble()?.toLong() ?: 0L, f.getOrNull(4).orEmpty())
+        }
+    }
+
+    /**
      * The target range this subject publishes, in mg/dL, or null.
      *
      * **THEIRS, NOT ONE THIS PHONE INVENTED.** A band is a clinical statement;
@@ -118,6 +172,94 @@ object Follower {
     }
 
     /**
+     * The scheduled basal rate, U/h, at [atMs] — the subject's own, published.
+     *
+     * **NEEDED BECAUSE A PERCENTAGE TEMP BASAL MEANS NOTHING WITHOUT IT.** A
+     * `tbr` carries `rate` plus `abs`, and when `abs` is false the rate is a
+     * percentage of whatever the profile was scheduling at that moment. The
+     * subject publishes their basal blocks precisely so a consumer can resolve
+     * that (spec §2: "without basal rates, ISF, IC and targets by time of day, a
+     * consumer cannot say what the loop was trying to do, and the insulin
+     * records become uninterpretable").
+     *
+     * So this is arithmetic on two published numbers, not a model of anybody's
+     * insulin. Blocks are in order with their own durations in milliseconds,
+     * covering the day from local midnight.
+     */
+    fun scheduledBasal(context: Context, subject: Subject, atMs: Long): Double {
+        SwarmNative.check()
+        val json = SwarmNative.netProfile(
+            SwarmPaths.store(context).absolutePath,
+            subject.key,
+            SwarmPaths.identity(context).absolutePath,
+            subject.purpose
+        )
+        if (json.isBlank()) return 0.0
+        return runCatching {
+            val blocks = org.json.JSONObject(json).optJSONArray("basal") ?: return 0.0
+            val zone = java.util.TimeZone.getDefault()
+            val cal = java.util.Calendar.getInstance(zone).apply { timeInMillis = atMs }
+            val msIntoDay = ((cal.get(java.util.Calendar.HOUR_OF_DAY) * 3_600_000L) +
+                (cal.get(java.util.Calendar.MINUTE) * 60_000L) +
+                (cal.get(java.util.Calendar.SECOND) * 1_000L))
+            var cursor = 0L
+            for (i in 0 until blocks.length()) {
+                val b = blocks.getJSONObject(i)
+                val dur = b.optLong("duration", 0L)
+                if (msIntoDay < cursor + dur || i == blocks.length() - 1) return b.optDouble("amount", 0.0)
+                cursor += dur
+            }
+            0.0
+        }.getOrDefault(0.0)
+    }
+
+    /** One step of effective basal delivery: [rate] U/h from [at] until the next. */
+    data class BasalStep(val at: Long, val rate: Double)
+
+    /**
+     * The effective delivery rate over time, SAMPLED rather than taken record by
+     * record.
+     *
+     * **TEMP BASALS OVERLAP AND SUPERSEDE EACH OTHER.** Each `tbr` carries the
+     * duration it was requested for — half an hour, typically — but a loop that
+     * re-decides every five minutes replaces it long before that expires.
+     * Drawing one step per record stacks six of them at once and doubles back on
+     * itself; it also implies rates that were never simultaneously in force.
+     * The subject's own graph samples for exactly this reason, and this is a
+     * port of that.
+     *
+     * A percentage rate is resolved against [scheduled] because that is what the
+     * percentage is of; an absolute one is already U/h and is taken as it is.
+     */
+    fun basalSteps(
+        treatments: List<Treatment>,
+        scheduled: Double,
+        from: Long,
+        to: Long,
+        sampleMs: Long = 300_000L
+    ): List<BasalStep> {
+        val tbrs = treatments.filter { it.kind == "tbr" }.sortedBy { it.at }
+        if (to <= from) return emptyList()
+        val out = ArrayList<BasalStep>()
+        var t = from
+        var last = Double.NaN
+        while (t <= to) {
+            val active = tbrs.lastOrNull { it.at <= t && (it.dur <= 0L || t < it.at + it.dur) }
+            val rate = when {
+                active == null -> scheduled
+                active.absolute -> active.value
+                else -> active.value / 100.0 * scheduled
+            }
+            if (last.isNaN() || kotlin.math.abs(rate - last) > 0.0001) {
+                out.add(BasalStep(t, rate))
+                last = rate
+            }
+            t += sampleMs
+        }
+        return out
+    }
+
+    /**
      * A reading's age is part of the reading.
      *
      * A follower's dangerous failure is not an error on screen: it is a number
@@ -137,4 +279,10 @@ object Follower {
 
     /** Bounds one read, and with it the string that crosses JNI. */
     private const val MAX_READINGS = 4_000
+
+    /**
+     * The same bound for treatments, and far smaller because they are far
+     * rarer: this subject's busiest day in 74 is well under a hundred.
+     */
+    private const val MAX_TREATMENTS = 1_000
 }
