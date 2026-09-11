@@ -22,8 +22,13 @@ android {
         // shared across its flavours; a published app needs a number that only
         // ever goes up, or the second release cannot be installed over the
         // first.
-        versionCode = 1
-        versionName = "0.1.0"
+        //
+        // 0.1.0 SHIPPED UNDER A DIFFERENT applicationId (nz.diaswarm.follower)
+        // and cannot be updated to this one — Android treats a changed
+        // applicationId as a different app entirely. That release stands as
+        // history; this is the first Ayni.
+        versionCode = 2
+        versionName = "0.1.1"
     }
 
     buildTypes {
