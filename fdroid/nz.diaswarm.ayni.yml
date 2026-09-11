@@ -11,7 +11,12 @@
 # publishes a loop's records is NOT distributed, here or anywhere — running a
 # loop means assembling a medical device yourself, from source you have read.
 
+# HEALTH MANAGER, NOT MEDICATION — asked on the merge request. `Medication` in
+# fdroiddata is pill reminders and dose logs; this records and reminds about
+# nothing. The only two diabetes apps already published there, `it.diab` and
+# `org.glucosio.android`, both carry exactly this pair.
 Categories:
+  - Health Manager
   - Sports & Health
 License: AGPL-3.0-only
 AuthorName: alex-poor
@@ -61,44 +66,6 @@ Repo: https://github.com/alex-poor/diaswarm.git
 # from the numbers declared here, this build fails rather than publishing an APK
 # that claims a version it does not have.
 Builds:
-  - versionName: 0.1.3
-    versionCode: 41
-    commit: follower-v0.1.3
-    subdir: follower
-    sudo:
-      - apt-get update
-      - apt-get install -y rustup gcc libc-dev
-    ndk: r29
-    gradle:
-      - yes
-    output: build/outputs/apk/release/ayni-armeabi-v7a-release-unsigned.apk
-    # The record core is Rust, compiled here into the .so the app loads. It is
-    # built from source in this repository and never committed — a checked-in
-    # binary would be an opaque second copy of a frozen specification, and the
-    # scanner would rightly reject it.
-    prebuild:
-      - echo "sdk.dir=$$SDK$$" > local.properties
-      - rustup default 1.98.1
-      - rustup target add aarch64-linux-android armv7-linux-androideabi
-      - cargo install cargo-ndk@4.1.2 --locked
-
-  - versionName: 0.1.3
-    versionCode: 42
-    commit: follower-v0.1.3
-    subdir: follower
-    sudo:
-      - apt-get update
-      - apt-get install -y rustup gcc libc-dev
-    ndk: r29
-    gradle:
-      - yes
-    output: build/outputs/apk/release/ayni-arm64-v8a-release-unsigned.apk
-    prebuild:
-      - echo "sdk.dir=$$SDK$$" > local.properties
-      - rustup default 1.98.1
-      - rustup target add aarch64-linux-android armv7-linux-androideabi
-      - cargo install cargo-ndk@4.1.2 --locked
-
   - versionName: 0.1.4
     versionCode: 51
     commit: follower-v0.1.4
