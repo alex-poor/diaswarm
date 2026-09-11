@@ -279,22 +279,6 @@ class SwarmPlugin @Inject constructor(
                     summary = R.string.swarm_shadow_spaces_summary
                 )
             )
-            // ONLY WHERE IT CAN DO ANYTHING. On a build that drives a pump
-            // this row would offer a thing [SwarmFollowerBg] refuses to do, and
-            // a setting that silently does nothing is worse than an absent one:
-            // somebody sets it, sees no graph, and goes looking for the bug in
-            // the network. The follower is a separate app — install the
-            // AAPSClient build and the row is there.
-            if (config.AAPSCLIENT) {
-                addPreference(
-                    AdaptiveStringPreference(
-                        ctx = context,
-                        stringKey = SwarmStringKey.FollowerGraphSubject,
-                        title = R.string.swarm_follower_graph,
-                        summary = R.string.swarm_follower_graph_summary
-                    )
-                )
-            }
             addPreference(
                 AdaptiveClickPreference(
                     ctx = context,
@@ -413,6 +397,10 @@ class SwarmPlugin @Inject constructor(
     private fun startServing() {
         if (serving != 0L) return
         SwarmNative.check()
+        // BEFORE THE ENDPOINT. Without it iroh's connectivity watcher panics in
+        // a tokio task, the task vanishes, and this phone stops noticing that
+        // the network changed — silently, on a phone driving a pump.
+        SwarmNative.initAndroid(context.applicationContext)
 
         // SERVE EVEN WITH NOTHING OF OUR OWN TO SERVE.
         //

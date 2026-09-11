@@ -36,6 +36,22 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     // about.
     LaunchedEffect(Unit) { while (true) { delay(15_000); tick++ } }
 
+    // AND ACTUALLY FETCH WHILE SOMEBODY IS WATCHING. The periodic job's floor is
+    // fifteen minutes, which is useless to a person looking at the screen: a
+    // reading arrives every minute or five and they would see it a quarter of an
+    // hour later. This was exactly the symptom — an app open in the hand,
+    // showing a number six minutes old and never moving.
+    //
+    // Driven from the UI rather than chained from inside the worker on purpose.
+    // A worker that re-enqueues its OWN unique name with REPLACE cancels itself,
+    // which is a silent stall that looks precisely like a quiet network.
+    LaunchedEffect(Unit) {
+        while (true) {
+            Sync.now(context)
+            delay(SyncWorker.EVERY_SECONDS * 1000)
+        }
+    }
+
     scanned?.let { text ->
         LaunchedEffect(text) {
             Invites.queue(context, text)

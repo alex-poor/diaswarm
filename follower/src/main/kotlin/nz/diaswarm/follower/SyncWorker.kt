@@ -55,6 +55,34 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
     companion object {
         const val TAG = "diaswarm"
         const val UNIQUE = "diaswarm-sync"
+
+        /**
+         * How often to ask while somebody is looking at the screen.
+         *
+         * A CGM produces a reading every one to five minutes, so asking faster
+         * mostly discovers that nothing changed — and still costs a connection.
+         */
         const val EVERY_SECONDS = 120L
+    }
+}
+
+/** The one place that asks for a pass, so there is one policy and not three. */
+object Sync {
+
+    private const val NOW = "diaswarm-sync-now"
+
+    /**
+     * Ask for a pass now.
+     *
+     * `KEEP`, so a pass already running is left to finish: it is about to do
+     * this work anyway, and cancelling it mid-fetch to start again is how a
+     * refresh loop becomes a refresh stall.
+     */
+    fun now(context: android.content.Context) {
+        androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+            NOW,
+            androidx.work.ExistingWorkPolicy.KEEP,
+            androidx.work.OneTimeWorkRequestBuilder<SyncWorker>().build()
+        )
     }
 }

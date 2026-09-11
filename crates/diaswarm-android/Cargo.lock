@@ -833,6 +833,7 @@ dependencies = [
  "diaswarm-spaces",
  "iroh",
  "jni 0.21.1",
+ "ndk-context",
  "p2panda-core",
  "serde_json",
  "tokio",

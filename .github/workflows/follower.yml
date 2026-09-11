@@ -1,64 +1,36 @@
-# Build the FOLLOWER apk, and only ever the follower.
+# Build the follower app.
 #
-# WHAT THIS MUST NEVER BUILD: the `full` flavour. That is the app that drives an
-# insulin pump, and this repository does not distribute it — see the README.
-# Every gradle invocation here names `Aapsclient` explicitly for that reason,
-# and the check job fails the run if a `full` artifact appears anyway.
+# ONE REPOSITORY, NO ANDROIDAPS. The follower used to be a flavour of AAPS with
+# the dosing stripped out, which meant this workflow checked out a second repo,
+# built a whole loop app, and had to actively refuse to publish the pump variant.
+# The follower is now its own application containing no AAPS code at all, so
+# none of that applies: there is nothing here that could build a loop.
 #
-# The follower is a different proposition: a separate `applicationId`, no pump
-# drivers compiled in, and structurally unable to dose (decision D22). It is a
-# viewer for somebody else's glucose. Handing that to a person as a file they
-# can install is reasonable in a way that handing them a loop is not.
-#
-# The APK contains AndroidAPS, which is AGPL-3.0. Distributing a binary
-# therefore obliges us to publish the corresponding source: the fork and branch
-# it was built from are recorded in the release notes, at the exact commit.
+# That is also what makes it publishable. F-Droid builds one repository from
+# source, and this is one repository whose only unusual need is a Rust toolchain
+# to compile the record core into a .so — which is built here, never committed.
 
 name: follower apk
 
 on:
   workflow_dispatch:
-    inputs:
-      aaps_ref:
-        description: "Branch or commit of the AAPS fork to build against"
-        default: diaswarm-addon
   push:
     tags: ["follower-v*"]
+  pull_request:
+    paths: ["follower/**", "crates/**", ".github/workflows/follower.yml"]
 
 permissions:
   contents: write   # only to attach the apk to a release
 
-env:
-  AAPS_REPO: alex-poor/AndroidAPS
-  NDK_VERSION: "28.2.13676358"
-
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Whether a signing key is configured, decided once. A step's own `env:`
-    # block is NOT visible to that step's `if:`, so testing the secret there
-    # silently never fires and every build comes out unsigned.
     env:
       HAS_KEY: ${{ secrets.FOLLOWER_KEYSTORE_B64 != '' }}
     steps:
-      - name: Check out diaswarm
-        uses: actions/checkout@v4
-        with:
-          path: diaswarm
+      - uses: actions/checkout@v4
 
-      # The follower is a build of this fork of AAPS, not of upstream: the
-      # screen it draws comes from the fork's own overview. AGPL means whatever
-      # is built here has to be publicly readable, so this checkout failing is
-      # a licence problem, not just a build problem.
-      - name: Check out the AAPS fork
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.AAPS_REPO }}
-          ref: ${{ github.event.inputs.aaps_ref || 'diaswarm-addon' }}
-          path: aaps
-
-      - name: JDK 21
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
@@ -66,70 +38,42 @@ jobs:
       - name: NDK
         run: |
           set -euo pipefail
-          # Prefer whatever the runner already ships: an NDK is ~1 GB and the
-          # version matters only to cargo-ndk, which is not fussy.
           NDK="${ANDROID_NDK_LATEST_HOME:-}"
-          if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
-            SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-            # `yes |` dies of SIGPIPE the moment sdkmanager stops reading, and
-            # under `pipefail` that fails the step even though the licences were
-            # accepted. Feed it a fixed number of yeses instead.
-            printf 'y\n%.0s' {1..50} | "$SDKM" --licenses >/dev/null 2>&1 || true
-            "$SDKM" "ndk;${NDK_VERSION}" >/dev/null
-            NDK="$ANDROID_HOME/ndk/${NDK_VERSION}"
-          fi
+          [ -n "$NDK" ] && [ -d "$NDK" ] || { echo "::error::no NDK on the runner"; exit 1; }
           echo "using NDK at $NDK"
           echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
 
-      # Pinned by rust-toolchain.toml in the diaswarm repo; the targets and
-      # cargo-ndk are what turn the record core into the .so the plugin packages.
       - name: Rust for Android
-        working-directory: diaswarm
         run: |
           set -euo pipefail
-          rustup show active-toolchain
           rustup target add aarch64-linux-android armv7-linux-androideabi
           cargo install cargo-ndk --locked
 
-      - name: Cache gradle and cargo
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
             ~/.cargo/registry
             ~/.cargo/git
-            diaswarm/crates/*/target
-          key: follower-${{ runner.os }}-${{ hashFiles('diaswarm/**/Cargo.lock', 'aaps/**/*.gradle*') }}
+            crates/*/target
+          key: follower-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'follower/**/*.gradle*') }}
           restore-keys: follower-${{ runner.os }}-
 
+      # The record core is asserted byte-identical to tools/canon.py over real
+      # data; if that is broken there is no point building an app around it.
       - name: Test the record core
-        working-directory: diaswarm/crates/diaswarm-core
+        working-directory: crates/diaswarm-core
         run: cargo test
 
-      # Unsigned on purpose: the `release` build type carries no signingConfig,
-      # so nothing here can accidentally reuse the debug keystore that the loop
-      # build depends on.
-      - name: Build the follower
-        working-directory: aaps
-        env:
-          DIASWARM_PLUGIN_DIR: ${{ github.workspace }}/diaswarm/plugin
-        run: ./gradlew :app:assembleAapsclientRelease -PappVersionSuffix=follower --console=plain
-
-      - name: Refuse to ship a pump build
-        run: |
-          set -euo pipefail
-          if compgen -G "aaps/app/build/outputs/apk/full/**/*.apk" > /dev/null; then
-            echo "::error::a 'full' (pump) APK was produced — this workflow must build the follower only"
-            exit 1
-          fi
-          ls -la aaps/app/build/outputs/apk/aapsclient/release/
+      - name: Build
+        working-directory: follower
+        run: ./gradlew assembleRelease --console=plain
 
       # Signed only when a key is configured. Without one the run still produces
-      # an unsigned artifact, which is installable by nobody and reviewable by
-      # anybody — the right outcome for a fork or a pull request.
+      # an artifact — unsigned, so installable by nobody and reviewable by
+      # anybody, which is right for a fork or a pull request.
       - name: Sign
-        id: sign
         if: env.HAS_KEY == 'true'
         env:
           KEYSTORE_B64: ${{ secrets.FOLLOWER_KEYSTORE_B64 }}
@@ -140,22 +84,21 @@ jobs:
           set -euo pipefail
           BT=$(ls -1d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
           echo "$KEYSTORE_B64" | base64 -d > /tmp/follower.jks
-          IN=aaps/app/build/outputs/apk/aapsclient/release/app-aapsclient-release-unsigned.apk
-          [ -f "$IN" ] || IN=$(ls aaps/app/build/outputs/apk/aapsclient/release/*.apk | head -1)
-          "${BT}zipalign" -p 4 "$IN" /tmp/follower-aligned.apk
+          IN=$(ls follower/build/outputs/apk/release/*.apk | head -1)
+          "${BT}zipalign" -f -p 4 "$IN" /tmp/aligned.apk
           "${BT}apksigner" sign \
             --ks /tmp/follower.jks --ks-pass "env:KS_PASS" \
             --ks-key-alias "$KEY_ALIAS" --key-pass "env:KEY_PASS" \
-            --out diaswarm-follower.apk /tmp/follower-aligned.apk
+            --out diaswarm-follower.apk /tmp/aligned.apk
           shred -u /tmp/follower.jks
           "${BT}apksigner" verify --print-certs diaswarm-follower.apk | tee signer.txt
+          ls -l diaswarm-follower.apk
 
       - name: Name the unsigned build for what it is
         if: env.HAS_KEY != 'true'
-        run: cp $(ls aaps/app/build/outputs/apk/aapsclient/release/*.apk | head -1) diaswarm-follower-UNSIGNED.apk
+        run: cp $(ls follower/build/outputs/apk/release/*.apk | head -1) diaswarm-follower-UNSIGNED.apk
 
-      - name: Upload
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: diaswarm-follower
           path: |
@@ -168,21 +111,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          AAPS_SHA=$(git -C aaps rev-parse HEAD)
           cat > notes.md <<EOF
-          Follower app — shows somebody else's glucose. **It cannot dose.**
+          Shows somebody else's glucose. **It cannot dose, and contains no loop code.**
 
-          Separate \`applicationId\` (\`info.nightscout.aapsclient\`), no pump drivers
-          compiled in, installs alongside AAPS rather than over it.
+          This is not AndroidAPS and does not contain it. To share your own data you
+          need the AAPS add-on, which you build yourself — this repository does not
+          distribute a loop and never will.
 
-          **This is not the loop app, and this repository does not distribute one.**
-
-          Built from:
-          * diaswarm \`${GITHUB_SHA}\`
-          * AndroidAPS \`${AAPS_REPO}@${AAPS_SHA}\`
-
-          AndroidAPS is AGPL-3.0. The corresponding source for this binary is the
-          two commits above; both repositories are public.
+          Built from \`${GITHUB_SHA}\`.
           EOF
           gh release create "${GITHUB_REF_NAME}" diaswarm-follower*.apk \
             --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes-file notes.md

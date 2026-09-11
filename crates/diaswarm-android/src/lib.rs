@@ -28,6 +28,46 @@ use std::path::{Path, PathBuf};
 use diaswarm_core::vault::{hex, Identity, Vault};
 use diaswarm_core::{epoch_of, header, Emitted, Record};
 
+/// Give the network stack Android's `Context`, once, before anything else.
+///
+/// **WITHOUT THIS, A TASK DIES EVERY RUN AND NOTHING SAYS SO.** iroh watches for
+/// network changes by asking Android for a ConnectivityManager through
+/// `ndk_context`, which panics with "android context was not initialized" if
+/// nobody has handed one over. That panic happens inside a tokio task, so tokio
+/// catches it, the task disappears, and the swarm carries on — without ever
+/// noticing that wifi dropped and mobile data took over. It was doing exactly
+/// that on a phone driving a pump for as long as this has existed, and it was
+/// only found because turning on `panic = "abort"` for a smaller binary turned
+/// the silence into a crash on launch.
+///
+/// The Context is held as a global ref for the life of the process on purpose:
+/// `ndk_context` keeps the raw pointer, so letting the JNI local reference lapse
+/// would leave it dangling.
+///
+/// Safe to call more than once; the second call does nothing rather than
+/// re-registering a second Context.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_initAndroid<'a>(
+    env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    context: jni::objects::JObject<'a>,
+) {
+    static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if DONE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let Ok(vm) = env.get_java_vm() else { return };
+    let Ok(global) = env.new_global_ref(context) else { return };
+    unsafe {
+        ndk_context::initialize_android_context(
+            vm.get_java_vm_pointer() as *mut std::ffi::c_void,
+            global.as_raw() as *mut std::ffi::c_void,
+        );
+    }
+    // The pointer above outlives this scope, so the reference has to as well.
+    std::mem::forget(global);
+}
+
 /// Which version of `spec/records.md` this build implements.
 ///
 /// The plugin should refuse to publish if this disagrees with what it expects:

@@ -20,6 +20,17 @@ package nz.diaswarm.jni
 object SwarmNative {
 
     /** Must match the spec version the plugin was written against. See [check]. */
+    /**
+     * Hand Android's `Context` to the network stack, once, before anything else.
+     *
+     * iroh watches for network changes through Android's ConnectivityManager;
+     * without a Context it panics inside a tokio task, the task vanishes, and
+     * the swarm keeps running with no idea that wifi dropped. Pass the
+     * APPLICATION context — an Activity would be leaked for the life of the
+     * process, because the native side keeps the reference for ever.
+     */
+    external fun initAndroid(context: android.content.Context)
+
     external fun specVersion(): Int
 
     /**

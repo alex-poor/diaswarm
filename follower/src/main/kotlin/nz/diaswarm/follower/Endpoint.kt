@@ -33,6 +33,9 @@ object Endpoint {
     fun start(context: Context) {
         if (handle != 0L) return
         SwarmNative.check()
+        // BEFORE THE ENDPOINT, because the network stack reaches for it as soon
+        // as it starts watching for connectivity changes.
+        SwarmNative.initAndroid(context.applicationContext)
         val h = SwarmNative.swarmJoin(
             SwarmPaths.store(context).absolutePath,
             SwarmPaths.nodeKey(context).absolutePath

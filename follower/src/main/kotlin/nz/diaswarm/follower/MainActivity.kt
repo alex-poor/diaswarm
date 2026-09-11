@@ -46,11 +46,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // Ask now rather than waiting for the poll: somebody opening the app is
         // the one moment they are definitely waiting for an answer.
-        WorkManager.getInstance(this).enqueueUniqueWork(
-            SyncWorker.UNIQUE + "-now",
-            ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<SyncWorker>().build()
-        )
+        Sync.now(this)
     }
 
     private fun scanOptions() = ScanOptions().apply {

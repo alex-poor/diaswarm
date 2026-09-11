@@ -54,7 +54,6 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private val preferences: Preferences,
     private val persistenceLayer: PersistenceLayer,
     private val context: Context,
-    private val followerBg: SwarmFollowerBg,
 ) : DataSyncSelector {
 
     /** Native dedupe state, held across the whole upload. */
@@ -108,18 +107,12 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 { persistenceLayer.getLastGlucoseValueId() },
                 { id -> persistenceLayer.getNextSyncElementGlucoseValue(id).blockingGet()
                     ?.let { it.first to it.second.id } },
-                // NOT MINE, NOT MINE TO PUBLISH. A follower mirrors somebody
-                // else's readings into this database so AAPS will draw them
-                // (see [SwarmFollowerBg]); without this line the drain would
-                // pick them straight back up and re-publish them as this
-                // subject's own glucose, and anyone following the follower
-                // would see the wrong person's blood under their name.
-                // `isValid` alone does not catch it — a mirrored row is a
-                // perfectly valid row, it just belongs to someone else.
-                {
-                    val gv = it as app.aaps.core.data.model.GV
-                    gv.isValid && gv.ids.nightscoutId?.startsWith(SwarmFollowerBg.MIRROR_TAG) != true
-                }),
+                // NOTHING TO GUARD AGAINST ANY MORE. This used to reject rows
+                // a follower had mirrored in from somebody else, so they were
+                // not re-published as this subject's own glucose. The follower
+                // is a separate app now and never writes here, so the only rows
+                // in this table are ones this phone measured.
+                { (it as app.aaps.core.data.model.GV).isValid }),
             Source("bolus", SwarmLongKey.BolusLastSyncedId,
                 { persistenceLayer.getLastBolusId() },
                 { id -> persistenceLayer.getNextSyncElementBolus(id).blockingGet()
@@ -577,16 +570,6 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         val reached = SwarmNative.netRefresh(SwarmEndpoint.handle, store)
         if (reached < 0) aapsLogger.debug(LTag.CORE, "swarm: refresh failed ($reached)")
         else if (reached > 0) aapsLogger.debug(LTag.CORE, "swarm: refreshed $reached followed subject(s)")
-
-        // AND THEN PUT IT ON THE GRAPH, which is the point of following anyone.
-        // Refuses outright on any build that can dose; see [SwarmFollowerBg].
-        // Wrapped because a follower failing to draw a line must never take
-        // down the pass that keeps the data arriving.
-        try {
-            followerBg.mirror()?.let { aapsLogger.info(LTag.CORE, it) }
-        } catch (e: Exception) {
-            aapsLogger.error(LTag.CORE, "swarm: mirroring followed glucose failed", e)
-        }
 
         scheduleNextPoll()
     }
