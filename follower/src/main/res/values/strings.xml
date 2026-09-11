@@ -1,3 +1,7 @@
 <resources>
-    <string name="app_name">diaswarm</string>
+    <!-- Quechua: reciprocity — I help you, you help me, over time.
+         It names what the pool actually is. Your phone carries other people's
+         sealed records so that yours are carried when your phone is off, and
+         neither side can read what it holds. -->
+    <string name="app_name">Ayni</string>
 </resources>

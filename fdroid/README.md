@@ -1,8 +1,8 @@
 # Submitting the follower to F-Droid
 
-`nz.diaswarm.follower.yml` is the build recipe. It belongs in
+`nz.diaswarm.ayni.yml` is the build recipe. It belongs in
 [fdroiddata](https://gitlab.com/fdroid/fdroiddata) as
-`metadata/nz.diaswarm.follower.yml`, submitted as a merge request. It lives here
+`metadata/nz.diaswarm.ayni.yml`, submitted as a merge request. It lives here
 so the recipe that produces a published binary is versioned beside the source it
 builds.
 

@@ -31,4 +31,4 @@ dependencyResolutionManagement {
         // not build against it.
     }
 }
-rootProject.name = "diaswarm-follower"
+rootProject.name = "ayni"

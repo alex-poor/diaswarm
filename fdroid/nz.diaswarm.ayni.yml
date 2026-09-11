@@ -1,7 +1,7 @@
 # F-Droid metadata for the follower.
 #
 # This file does not live here in the end — it belongs in fdroiddata as
-# `metadata/nz.diaswarm.follower.yml`, submitted as a merge request to
+# `metadata/nz.diaswarm.ayni.yml`, submitted as a merge request to
 # https://gitlab.com/fdroid/fdroiddata. It is kept in this repository so the
 # recipe that builds a published binary is versioned alongside the source it
 # builds, and so it can be reviewed here before being proposed there.
@@ -18,10 +18,17 @@ AuthorName: alex-poor
 SourceCode: https://github.com/alex-poor/diaswarm
 IssueTracker: https://github.com/alex-poor/diaswarm/issues
 
-AutoName: diaswarm
+AutoName: Ayni
+
+Summary: See the glucose of someone who shares it with you
 
 Description: |-
     Shows the glucose of somebody who has chosen to share it with you.
+
+    Ayni is a Quechua word for reciprocity — help given and returned over time.
+    It is the shape of the network underneath: your phone carries other people's
+    sealed records so that theirs carry yours when your phone is off or away,
+    and no phone can read what it holds for anyone else.
 
     It is a viewer and nothing else. It cannot deliver insulin, it contains no
     closed-loop code, and it does not talk to a pump. If you are looking for an

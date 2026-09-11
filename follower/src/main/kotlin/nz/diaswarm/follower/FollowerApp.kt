@@ -74,7 +74,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("diaswarm", color = Text2, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text("ayni", color = Text2, fontSize = 13.sp, modifier = Modifier.weight(1f))
                 Text("···", color = Text2, fontSize = 20.sp,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { showPeople = true }.padding(8.dp))
             }
@@ -167,8 +167,8 @@ private fun EmptyCard(onScan: () -> Unit, onShowInvite: () -> Unit) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Not following anyone yet.", color = Text1, fontSize = 17.sp)
             Text(
-                "Ask them to open diaswarm on their phone and show you their invite, " +
-                    "then scan it. They decide what you can read, and can stop at any time.",
+                "Ask them to show you their invite, then scan it. They decide what " +
+                    "you can read, and can stop at any time.",
                 color = Text2, fontSize = 14.sp
             )
             Button(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Text("Scan their invite") }

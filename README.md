@@ -13,11 +13,12 @@ a granted reader opens it from any of them.
 
 Done end to end on real hardware, with real data:
 
-* **A follower's graph.** A second phone, set up from nothing, scanned a QR code and
-  drew the subject's own trend line on its AAPS glucose graph — 5.0 mmol/L, 82
-  seconds old, against the subject's own 7.0 target band, which arrived in the
-  shared record rather than being typed in. 1,631 readings on first contact, then
-  two per sync pass. That is the Nightscout job, done with no Nightscout.
+* **A follower's graph.** A second phone, set up from nothing, showed its invite
+  once and drew the subject's own trend line — 5.7 mmol/L, two minutes old,
+  against the subject's own 7.0 target band, which arrived in the shared record
+  rather than being typed in. The history it was granted arrived on first contact
+  and then two readings per sync pass. That is the Nightscout job, done with no
+  Nightscout. It is a **separate app, Ayni**, that contains no AAPS at all.
 * **A carrier that cannot read.** A stranger peer, granted nothing, replicated 146
   segments and all 219 wraps, could open none of it, and served the complete
   history to a granted reader while the originating phone was switched off. 33,800
@@ -48,13 +49,17 @@ Not reviewed cryptography. See [Limits](#limits) before trusting it with anythin
 > running a medical device you assembled; you build it yourself, from source you
 > have read. Releases in this repository version *this project*, not AndroidAPS.
 >
-> **The follower is released as an APK**, and is a different proposition: a
-> separate `applicationId`, no pump drivers compiled into it, and structurally
-> unable to dose ([D22](docs/decisions.md)). It is a viewer for somebody else's
-> glucose, it installs alongside AAPS rather than over it, and handing a person a
-> file they can install is reasonable in a way that handing them a loop is not.
-> It is built by CI from the two public commits named in each release, and the
-> workflow refuses to produce a `full` build at all.
+> **The follower is released as an APK**, and is a different proposition. It is
+> its own app — **Ayni**, `nz.diaswarm.ayni`, in [follower/](follower) — built
+> from this repository alone, containing no AndroidAPS source, no pump driver and
+> no database AAPS would read. It is structurally unable to dose: there is nothing
+> in it to dose with. It is a viewer for somebody else's glucose, it installs
+> alongside AAPS rather than over it, and handing a person a file they can install
+> is reasonable in a way that handing them a loop is not. CI builds it and the
+> workflow refuses to produce a loop build at all.
+>
+> *Ayni* is Quechua for the reciprocal exchange that holds a community together —
+> you give because you will need, and someone else gives because they will too.
 
 ---
 
@@ -191,11 +196,16 @@ both directions**:
 
 | | Subject's phone | Follower's phone |
 |---|---|---|
-| 1 | | *Your invite* → show the code |
+| 1 | | *Show my invite* → show the code |
 | 2 | *Scan a code* → **Share with them** | |
-| 3 | *Your invite* → show the code | |
-| 4 | | *Scan a code* → **Follow them** |
-| 5 | | the trend line appears on the glucose graph |
+| 3 | grants them, then hands its own invite back over the wire | the trend line appears |
+
+**One scan, not two.** Showing the code is what opens a three-minute window in
+which this phone will accept an invite pushed back at it; outside that moment an
+uninvited offer is refused. So the subject's single scan finishes the job in both
+directions — it learns the reader's key *and* the address to hand its own invite
+to, because both were in the string it just read. Storing only the key is what
+used to make the other person scan a second code.
 
 Scanning never guesses which direction was meant — following someone and sharing
 with them are opposites, and both are ordinary — so it names the key and asks.
@@ -204,13 +214,13 @@ The phone doing the scanning is the one taking the action.
 A camera is not always in the room, so an invite can also be **pasted as text**:
 it is short enough to send in a message, and *Your invite* offers to copy it.
 
-**The follower is a different app.** Drawing somebody else's glucose means
-writing into AAPS's own database, and in the app that drives a pump that is not a
-display bug — a new glucose row triggers the loop. So it runs only in the
-`aapsclient` build, which has its own `applicationId`, installs *alongside* the
-loop app, and has no pump driver compiled into it ([D22](docs/decisions.md)). That
-build is stripped to one job: no profile editing, no CGM or pump setup, no
-Actions tab, no carbs or bolus. One screen, one instruction.
+**The follower is a different app.** Not a different build of the same app — a
+different app. Drawing somebody else's glucose inside the software that drives a
+pump is not a display bug: a new glucose row triggers the loop. The follower was
+once an `aapsclient` flavour of AAPS ([D22](docs/decisions.md)); it is now
+**Ayni**, which shares this repository's Rust core and nothing else. It has no
+AAPS classes, no pump driver, no profile editing and no database the loop would
+read — one screen, one instruction, and a reading always shown with its age.
 
 An invite is **not a secret and not a grant**. Anyone holding it can download your
 ciphertext and open none of it.
@@ -309,9 +319,8 @@ crates/diaswarm-core     Records, sealing, the vault, grants. The reference impl
 crates/diaswarm-net      The pool: membership and buckets (pool.rs, swarm.rs) over
                          p2panda-net, and the vault protocol they carry
 crates/diaswarm-android  The JNI surface the phone calls
-plugin/                  The AAPS add-on: settings screen, QR scanner, sync worker,
-                         and the follower that draws someone else's glucose on the
-                         graph (aapsclient builds only)
+plugin/                  The AAPS add-on: settings screen, QR scanner, sync worker
+follower/                Ayni — the standalone follower app. No AAPS in it at all
 
 tools/canon.py           AAPS SQLite → canonical records, with a dropped-and-why report
 tools/seal.py            The sealing construction in Python, byte-identical to Rust
@@ -338,14 +347,19 @@ CAMAPS=/path/to/your/aaps-checkout ./plugin/build-apk.sh --install
 It refuses to install if the signing certificate no longer matches the device,
 because on a looping phone a mismatch costs you a pump re-pairing.
 
-**The follower is a separate APK**, and a separate package, so it installs
-alongside the loop app rather than over it:
+## Building Ayni, the follower
+
+Its own gradle project, needing no AAPS checkout at all — only the SDK and the
+NDK, because it compiles the same Rust core the add-on uses:
 
 ```sh
-cd /path/to/your/aaps-checkout
-./gradlew :app:assembleAapsclientLoop -PappVersionSuffix=follower
-adb install -r app/build/outputs/apk/aapsclient/loop/app-aapsclient-loop.apk
+cd follower
+ANDROID_NDK_HOME=/path/to/ndk ./gradlew assembleRelease
+# build/outputs/apk/release/ayni-release-unsigned.apk — sign it before installing
 ```
+
+Released builds are signed by CI on a `follower-v*` tag; the workflow is
+[.github/workflows/ayni.yml](.github/workflows/ayni.yml).
 
 ## Limits
 

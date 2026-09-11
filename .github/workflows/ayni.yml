@@ -10,14 +10,14 @@
 # source, and this is one repository whose only unusual need is a Rust toolchain
 # to compile the record core into a .so — which is built here, never committed.
 
-name: follower apk
+name: ayni apk
 
 on:
   workflow_dispatch:
   push:
     tags: ["follower-v*"]
   pull_request:
-    paths: ["follower/**", "crates/**", ".github/workflows/follower.yml"]
+    paths: ["follower/**", "crates/**", ".github/workflows/ayni.yml"]
 
 permissions:
   contents: write   # only to attach the apk to a release
@@ -89,20 +89,20 @@ jobs:
           "${BT}apksigner" sign \
             --ks /tmp/follower.jks --ks-pass "env:KS_PASS" \
             --ks-key-alias "$KEY_ALIAS" --key-pass "env:KEY_PASS" \
-            --out diaswarm-follower.apk /tmp/aligned.apk
+            --out ayni.apk /tmp/aligned.apk
           shred -u /tmp/follower.jks
-          "${BT}apksigner" verify --print-certs diaswarm-follower.apk | tee signer.txt
-          ls -l diaswarm-follower.apk
+          "${BT}apksigner" verify --print-certs ayni.apk | tee signer.txt
+          ls -l ayni.apk
 
       - name: Name the unsigned build for what it is
         if: env.HAS_KEY != 'true'
-        run: cp $(ls follower/build/outputs/apk/release/*.apk | head -1) diaswarm-follower-UNSIGNED.apk
+        run: cp $(ls follower/build/outputs/apk/release/*.apk | head -1) ayni-UNSIGNED.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: diaswarm-follower
+          name: ayni
           path: |
-            diaswarm-follower*.apk
+            ayni*.apk
             signer.txt
 
       - name: Attach to the release
@@ -112,7 +112,9 @@ jobs:
         run: |
           set -euo pipefail
           cat > notes.md <<EOF
-          Shows somebody else's glucose. **It cannot dose, and contains no loop code.**
+          **Ayni** shows the glucose of somebody who shares it with you.
+
+          **It cannot dose, and contains no loop code.**
 
           This is not AndroidAPS and does not contain it. To share your own data you
           need the AAPS add-on, which you build yourself — this repository does not
@@ -120,5 +122,5 @@ jobs:
 
           Built from \`${GITHUB_SHA}\`.
           EOF
-          gh release create "${GITHUB_REF_NAME}" diaswarm-follower*.apk \
+          gh release create "${GITHUB_REF_NAME}" ayni*.apk \
             --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes-file notes.md

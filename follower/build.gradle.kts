@@ -14,7 +14,7 @@ android {
         // and start again. Derived from a domain rather than invented, and
         // deliberately nothing like `info.nightscout.*` — this is not AAPS and
         // should not be mistaken for it in a launcher or a package list.
-        applicationId = "nz.diaswarm.follower"
+        applicationId = "nz.diaswarm.ayni"
         minSdk = 31
         targetSdk = 36
 
