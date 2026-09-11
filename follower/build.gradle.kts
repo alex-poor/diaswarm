@@ -1,8 +1,25 @@
+import com.android.build.api.variant.FilterConfiguration
+
 plugins {
     id("com.android.application") version "8.13.2"
     id("org.jetbrains.kotlin.android") version "2.2.21"
     id("org.jetbrains.kotlin.plugin.compose") version "2.2.21"
 }
+
+/**
+ * The ABIs this app is built for, in preference order (last wins).
+ *
+ * ARM ONLY, AND DELIBERATELY. The record core is Rust cross-compiled for these
+ * two; nothing builds it for x86. Splitting on them is also what stops the app
+ * being offered to a device it cannot run on: the universal APK carried
+ * `lib/x86/` and `lib/x86_64/` folders from a Compose dependency, with no
+ * `libdiaswarm_android.so` in them, which was enough for Android to call an
+ * x86_64 device compatible, install, and fail at `System.loadLibrary`. (An
+ * `ndk.abiFilters` would say the same thing, but AGP refuses to accept both.)
+ *
+ * The index is also the versionCode offset: see [abiVersionOffset].
+ */
+val abis = listOf("armeabi-v7a", "arm64-v8a")
 
 android {
     namespace = "nz.diaswarm.follower"
@@ -26,9 +43,34 @@ android {
         // 0.1.0 SHIPPED UNDER A DIFFERENT applicationId (nz.diaswarm.follower)
         // and cannot be updated to this one — Android treats a changed
         // applicationId as a different app entirely. That release stands as
-        // history; this is the first Ayni.
-        versionCode = 2
-        versionName = "0.1.1"
+        // history; 0.1.1 was the first Ayni.
+        //
+        // THIS IS A BASE, NOT THE SHIPPED NUMBER. Each per-ABI APK gets
+        // `versionCode * 10 + abi index`, because two APKs of one release must
+        // not claim one number — see the androidComponents block below. Written
+        // as a bare literal because F-Droid's update check greps this line.
+        versionCode = 3
+        versionName = "0.1.2"
+    }
+
+    /**
+     * One APK per ABI instead of one carrying both.
+     *
+     * The native half is 15.7 MB for arm64 and 10.1 MB for armv7, stored
+     * uncompressed so it can be mapped straight from the APK — so a universal
+     * build made every phone download the other architecture's copy as well,
+     * about 10 MB of a 28 MB file that the device would never open.
+     *
+     * NO UNIVERSAL APK. It would have to be the one people reach for from a
+     * release page, which would hand everybody back the cost this removes.
+     */
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include(*abis.toTypedArray())
+            isUniversalApk = false
+        }
     }
 
     buildTypes {
@@ -86,8 +128,6 @@ dependencies {
  * it here means the Kotlin and the Rust cannot drift without the build noticing
  * — and F-Droid's scanner rejects prebuilt binaries in a source tree anyway.
  */
-val abis = listOf("arm64-v8a", "armeabi-v7a")
-
 val buildRustCore = tasks.register<Exec>("buildRustCore") {
     group = "build"
     description = "Cross-compile crates/diaswarm-android for $abis"
@@ -120,3 +160,33 @@ val buildRustCore = tasks.register<Exec>("buildRustCore") {
 
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }
     .configureEach { dependsOn(buildRustCore) }
+
+/**
+ * Give each per-ABI APK its own versionCode: `base * 10 + index`.
+ *
+ * TWO APKS OF ONE RELEASE CANNOT SHARE A NUMBER — a store offering both has no
+ * way to say which a device should take, and a device that has one cannot be
+ * updated to the other. Multiplying rather than adding an offset is what keeps
+ * the next release clear of this one: base 3 gives 31 and 32, base 4 gives 41
+ * and 42, and they can never collide however many ABIs are added.
+ *
+ * Higher wins where both apply, so arm64 is last in [abis] and a 64-bit phone
+ * offered the pair takes the 64-bit build.
+ *
+ * F-DROID REPRODUCES THIS ARITHMETIC in `VercodeOperation`, from the base it
+ * greps out of `defaultConfig`. Change the formula here and change it there, or
+ * their build will be rejected for producing a versionCode it did not expect.
+ */
+val abiVersionOffset = abis.withIndex().associate { (i, abi) -> abi to i + 1 }
+
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            val abi = output.filters
+                .firstOrNull { it.filterType == FilterConfiguration.FilterType.ABI }
+                ?.identifier ?: return@forEach
+            val base = requireNotNull(android.defaultConfig.versionCode) { "no versionCode" }
+            output.versionCode.set(base * 10 + abiVersionOffset.getValue(abi))
+        }
+    }
+}

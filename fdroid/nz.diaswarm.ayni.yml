@@ -58,15 +58,27 @@ Description: |-
 RepoType: git
 Repo: https://github.com/alex-poor/diaswarm.git
 
-# NOTE ON 0.1.0. There is a `follower-v0.1.0` tag and release in the source
-# repository, built before the app was named, under applicationId
-# nz.diaswarm.follower. It is a different application to Android and is
-# deliberately absent from this file: the first version F-Droid publishes is
-# 0.1.1, the first one that is Ayni.
+# EARLIER TAGS ARE DELIBERATELY ABSENT. The source repository has
+# `follower-v0.1.0` (built before the app was named, under a different
+# applicationId — a different application as far as Android is concerned) and
+# `follower-v0.1.1` (one APK carrying both ABIs). Neither is offered here; the
+# first version F-Droid publishes is 0.1.2.
+#
+# TWO APKS PER RELEASE, ONE PER ABI. The app's native half is a Rust library
+# that is 15.7 MB for arm64 and 10.1 MB for armv7, stored uncompressed so it can
+# be mapped straight out of the APK. Carrying both made every phone download
+# about 10 MB of an architecture it would never run, so `assembleRelease`
+# produces one APK per ABI and each build entry below picks one with `output`.
+#
+# The versionCodes are the app's base versionCode (3, the number in
+# follower/build.gradle.kts) times ten, plus one per ABI — arm64 last, so that
+# a device offered both takes the 64-bit build. If that arithmetic ever drifts
+# from the numbers declared here, this build fails rather than publishing an APK
+# that claims a version it does not have.
 Builds:
-  - versionName: 0.1.1
-    versionCode: 2
-    commit: follower-v0.1.1
+  - versionName: 0.1.2
+    versionCode: 31
+    commit: follower-v0.1.2
     subdir: follower
     sudo:
       - apt-get update
@@ -77,13 +89,35 @@ Builds:
     ndk: 29.0.14206865
     gradle:
       - yes
+    output: build/outputs/apk/release/ayni-armeabi-v7a-release-unsigned.apk
     # The record core is Rust, compiled here into the .so the app loads. It is
     # built from source in this repository and never committed — a checked-in
     # binary would be an opaque second copy of a frozen specification, and the
     # scanner would rightly reject it.
     prebuild: echo "sdk.dir=$$SDK$$" > local.properties
 
-AutoUpdateMode: Version follower-v%v
+  - versionName: 0.1.2
+    versionCode: 32
+    commit: follower-v0.1.2
+    subdir: follower
+    sudo:
+      - apt-get update
+      - apt-get install -y rustup
+      - rustup default 1.98.1
+      - rustup target add aarch64-linux-android armv7-linux-androideabi
+      - cargo install cargo-ndk --locked
+    ndk: 29.0.14206865
+    gradle:
+      - yes
+    output: build/outputs/apk/release/ayni-arm64-v8a-release-unsigned.apk
+    prebuild: echo "sdk.dir=$$SDK$$" > local.properties
+
+# CHECKED AUTOMATICALLY, WRITTEN BY HAND. `UpdateCheckMode` still reports a new
+# tag, but auto-update is off: it would copy one build entry per
+# `VercodeOperation`, and every copy would carry the same `output` glob, so both
+# builds would pick the same ABI's APK. Two entries per release, added here, is
+# the honest version of that.
+AutoUpdateMode: None
 UpdateCheckMode: Tags ^follower-v
-CurrentVersion: 0.1.1
-CurrentVersionCode: 2
+CurrentVersion: 0.1.2
+CurrentVersionCode: 32

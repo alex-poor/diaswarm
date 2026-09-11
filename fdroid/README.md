@@ -36,13 +36,24 @@ confirmed by their own metadata rather than by hope.
 ## Releasing
 
 1. Bump `versionCode` and `versionName` in `follower/build.gradle.kts`.
-   `versionCode` must only ever increase; it is the follower's own sequence and
-   has nothing to do with the loop app's.
-2. Tag `follower-vX.Y.Z`. CI builds, signs and attaches the APK.
-3. Add a `Builds:` entry with the new tag, and update `CurrentVersion` /
-   `CurrentVersionCode`.
+   `versionCode` there is a **base**, not a shipped number: the build multiplies
+   it by ten and adds one per ABI. It must only ever increase; it is the
+   follower's own sequence and has nothing to do with the loop app's.
+2. Tag `follower-vX.Y.Z`. CI builds, signs and attaches **one APK per ABI**.
+3. Add **two** `Builds:` entries with the new tag — same `versionName`, one per
+   ABI, each with its own `versionCode` (`base × 10 + 1` for armv7, `+ 2` for
+   arm64) and its own `output:` — and set `CurrentVersion` /
+   `CurrentVersionCode` to the highest of them.
 
 `UpdateCheckMode: Tags ^follower-v` means F-Droid notices new tags by itself.
+`AutoUpdateMode` is deliberately `None`: it would write those entries for us
+from `VercodeOperation`, but every copy would inherit one `output:` glob and so
+both builds would pick the same ABI's APK. Step 3 is that, done honestly.
+
+If the arithmetic in the recipe ever stops matching the arithmetic in
+`build.gradle.kts`, F-Droid's build fails on the versionCode it did not expect
+rather than publishing an APK that misdeclares its version. That is the only
+check on it, so keep the two together.
 
 ## The signing key
 

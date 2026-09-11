@@ -355,8 +355,19 @@ NDK, because it compiles the same Rust core the add-on uses:
 ```sh
 cd follower
 ANDROID_NDK_HOME=/path/to/ndk ./gradlew assembleRelease
-# build/outputs/apk/release/ayni-release-unsigned.apk — sign it before installing
+# build/outputs/apk/release/ayni-arm64-v8a-release-unsigned.apk
+# build/outputs/apk/release/ayni-armeabi-v7a-release-unsigned.apk
+# — one per ABI; sign the one your phone needs before installing
 ```
+
+**One APK per architecture, not one carrying both.** The record core is a Rust
+library packaged uncompressed so Android can map it straight out of the APK —
+15.7 MB for arm64, 10.1 MB for armv7 — so a single APK made every phone download
+the other architecture's copy as well. Splitting takes arm64 from 28.2 MB to
+**18.0 MB** and armv7 to **12.4 MB**, and it stops the app being offered at all
+to an x86 device it could only have crashed on. Each gets its own versionCode
+(`base × 10 + ABI index`, arm64 higher) because two APKs of one release cannot
+share a number.
 
 Released builds are signed by CI on a `follower-v*` tag; the workflow is
 [.github/workflows/ayni.yml](.github/workflows/ayni.yml).

@@ -70,8 +70,12 @@ jobs:
         working-directory: follower
         run: ./gradlew assembleRelease --console=plain
 
+      # ONE APK PER ABI, so every one of them is signed. `head -1` here used to
+      # be harmless because there was only ever one file; with splits it would
+      # quietly publish a single architecture and drop the other.
+      #
       # Signed only when a key is configured. Without one the run still produces
-      # an artifact — unsigned, so installable by nobody and reviewable by
+      # artifacts — unsigned, so installable by nobody and reviewable by
       # anybody, which is right for a fork or a pull request.
       - name: Sign
         if: env.HAS_KEY == 'true'
@@ -84,19 +88,33 @@ jobs:
           set -euo pipefail
           BT=$(ls -1d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
           echo "$KEYSTORE_B64" | base64 -d > /tmp/follower.jks
-          IN=$(ls follower/build/outputs/apk/release/*.apk | head -1)
-          "${BT}zipalign" -f -p 4 "$IN" /tmp/aligned.apk
-          "${BT}apksigner" sign \
-            --ks /tmp/follower.jks --ks-pass "env:KS_PASS" \
-            --ks-key-alias "$KEY_ALIAS" --key-pass "env:KEY_PASS" \
-            --out ayni.apk /tmp/aligned.apk
+          for IN in follower/build/outputs/apk/release/*-release-unsigned.apk; do
+            NAME=$(basename "$IN")
+            case "$NAME" in
+              ayni-?*-release-unsigned.apk) ;;
+              *) echo "::error::unexpected apk name $NAME — refusing to guess its ABI"; exit 1 ;;
+            esac
+            ABI=${NAME#ayni-}; ABI=${ABI%-release-unsigned.apk}
+            "${BT}zipalign" -f -p 4 "$IN" "/tmp/aligned-$ABI.apk"
+            "${BT}apksigner" sign \
+              --ks /tmp/follower.jks --ks-pass "env:KS_PASS" \
+              --ks-key-alias "$KEY_ALIAS" --key-pass "env:KEY_PASS" \
+              --out "ayni-$ABI.apk" "/tmp/aligned-$ABI.apk"
+          done
           shred -u /tmp/follower.jks
-          "${BT}apksigner" verify --print-certs ayni.apk | tee signer.txt
-          ls -l ayni.apk
+          for A in ayni-*.apk; do
+            echo "== $A  $(stat -c%s "$A") bytes"
+            "${BT}apksigner" verify --print-certs "$A"
+          done | tee signer.txt
 
-      - name: Name the unsigned build for what it is
+      - name: Name the unsigned builds for what they are
         if: env.HAS_KEY != 'true'
-        run: cp $(ls follower/build/outputs/apk/release/*.apk | head -1) ayni-UNSIGNED.apk
+        run: |
+          set -euo pipefail
+          for IN in follower/build/outputs/apk/release/*-release-unsigned.apk; do
+            NAME=$(basename "$IN"); ABI=${NAME#ayni-}; ABI=${ABI%-release-unsigned.apk}
+            cp "$IN" "ayni-$ABI-UNSIGNED.apk"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -115,6 +133,13 @@ jobs:
           **Ayni** shows the glucose of somebody who shares it with you.
 
           **It cannot dose, and contains no loop code.**
+
+          **Which file?** \`ayni-arm64-v8a.apk\` — that is every Android phone sold
+          for years, and it is the one to take unless you know otherwise.
+          \`ayni-armeabi-v7a.apk\` is for older 32-bit ARM devices; if the first one
+          says the app is not compatible, take this one instead. They are one
+          release built for two architectures, not two versions. Installing from
+          F-Droid picks for you.
 
           This is not AndroidAPS and does not contain it. To share your own data you
           need the AAPS add-on, which you build yourself — this repository does not
