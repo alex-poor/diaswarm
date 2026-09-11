@@ -1,0 +1,11 @@
+The graph is now the one the loop app draws: the trace over every raw reading
+kept faintly beneath it, a target band, and delivered insulin in a panel of its
+own. Boluses, carbs and basal appear for the first time — they were always being
+sent, and were being discarded on arrival.
+
+Readings are coloured against a range this phone sets, because the person you
+follow publishes a target rather than a range. It is labelled on screen, and can
+be turned off.
+
+Requires a sharing phone updated on or after 11 September 2026. An older one is
+reported as unreachable.
