@@ -69,6 +69,8 @@ fun PeopleSheet(
     onShowInvite: () -> Unit,
     onChoose: (Follower.Subject) -> Unit,
     onUnits: () -> Unit,
+    onBand: () -> Unit,
+    bandLabel: String,
     mmol: Boolean,
     onClose: () -> Unit
 ) {
@@ -103,6 +105,22 @@ fun PeopleSheet(
                     modifier = Modifier.fillMaxWidth().clickable { onShowInvite() }.padding(vertical = 8.dp))
                 Text("Units: ${if (mmol) "mmol/L" else "mg/dL"}", color = Text1, fontSize = 15.sp,
                     modifier = Modifier.fillMaxWidth().clickable { onUnits() }.padding(vertical = 8.dp))
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                        .clickable { onBand() }.padding(vertical = 8.dp)
+                ) {
+                    Text("Colour readings against: $bandLabel", color = Text1, fontSize = 15.sp)
+                    // SAYS WHOSE THRESHOLD IT IS, every time it is shown. The
+                    // person you follow may loop to a single number and publish
+                    // no range at all; this is the viewer's choice of where to
+                    // draw high and low, and attributing it to them would be
+                    // putting a clinical threshold in their mouth.
+                    Text(
+                        "Your setting, not theirs — they publish a target, not a range. " +
+                            "The consensus bands, or no colouring at all.",
+                        color = Text2, fontSize = 12.sp
+                    )
+                }
             }
         }
     )
