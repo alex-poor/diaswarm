@@ -55,6 +55,22 @@ If the arithmetic in the recipe ever stops matching the arithmetic in
 rather than publishing an APK that misdeclares its version. That is the only
 check on it, so keep the two together.
 
+## Where the description and icon live
+
+Not here. F-Droid asks authors to keep them with the source so they can be
+corrected without a merge request, so they are in
+`fastlane/metadata/android/en-US/` at the root of this repository —
+`title.txt`, `short_description.txt`, `full_description.txt`,
+`images/icon.png`, and `changelogs/<versionCode>.txt`, one per ABI. F-Droid
+reads them out of the tagged commit at build time, so **a change to them only
+reaches F-Droid in the next release**.
+
+`images/icon.png` is not decoration. F-Droid's indexer refuses an icon that
+resolves to an adaptive-icon XML — `don't use 'anydpi' aka 0xFFFE aka 65534
+since it is XML`, in their own source — and with minSdk 31 the adaptive icon
+wins at every density, so the APK offers them nothing else. The 512px file is
+what they display.
+
 ## The signing key
 
 F-Droid builds from source and signs with **their** key, so the key in this

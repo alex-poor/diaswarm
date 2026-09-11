@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Two arcs that would be one ring: ayni, the exchange where neither half is
+    whole alone. Drawn rather than exported, so it is diffable text and the
+    scanner at F-Droid has no binary to object to.
+
+    THE 108dp CANVAS IS MOSTLY BLEED. A launcher masks an adaptive icon down to
+    roughly the middle 72dp and may shift it while animating, so nothing that
+    matters may leave the central 66dp. The ring is r=26 with a 9dp stroke —
+    61dp across the outside, which fits with room to move.
+
+    Each arc sweeps 138.8 degrees, leaving two 41-degree gaps on the diagonals.
+    The second path is the first turned half a circle, so the mark is the same
+    upside down.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M 72.38 35.62 A 26 26 0 0 1 52.28 79.94"
+        android:strokeColor="#35D08A"
+        android:strokeWidth="9"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M 35.62 72.38 A 26 26 0 0 1 55.72 28.06"
+        android:strokeColor="#35D08A"
+        android:strokeWidth="9"
+        android:strokeLineCap="round" />
+</vector>

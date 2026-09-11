@@ -18,42 +18,13 @@ AuthorName: alex-poor
 SourceCode: https://github.com/alex-poor/diaswarm
 IssueTracker: https://github.com/alex-poor/diaswarm/issues
 
+# NO Summary OR Description HERE. F-Droid asks authors to keep those with the
+# source, where they can be corrected without opening a merge request, so they
+# live in fastlane/metadata/android/en-US/ in the app's own repository and are
+# read out of the build. The same directory carries the 512px icon, which is
+# what F-Droid displays — the icon inside the APK is an adaptive-icon XML and
+# their indexer will not use one.
 AutoName: Ayni
-
-Summary: See the glucose of someone who shares it with you
-
-Description: |-
-    Shows the glucose of somebody who has chosen to share it with you.
-
-    Ayni is a Quechua word for reciprocity — help given and returned over time.
-    It is the shape of the network underneath: your phone carries other people's
-    sealed records so that theirs carry yours when your phone is off or away,
-    and no phone can read what it holds for anyone else.
-
-    It is a viewer and nothing else. It cannot deliver insulin, it contains no
-    closed-loop code, and it does not talk to a pump. If you are looking for an
-    artificial pancreas, this is not it and does not include one.
-
-    Readings travel directly between phones. There is no account, no server
-    holding your data, and nobody in the middle who can read it: records are
-    sealed on the sender's phone before they are sent, and only somebody they
-    have granted a key to can open them. Sharing is withdrawn by stopping the
-    key, not by asking a service to stop serving.
-
-    Pairing is one scan. The person sharing scans the follower's code; their
-    phone grants access and hands back its own address in the same movement.
-
-    Every reading is shown with its age. A follower's dangerous failure is not
-    an error on screen — it is a number that looks current and is nine hours
-    old.
-
-    To share your own data you need the AndroidAPS add-on from the project's
-    repository, which you build yourself. It is deliberately not distributed.
-
-    A relay is used to introduce two phones that are on different networks. It
-    carries encrypted traffic it cannot read and holds nothing, but it does see
-    which node identifiers exchange bytes and when. The relay is chosen by the
-    person sharing and travels in their invite, so it can be one they run.
 
 RepoType: git
 Repo: https://github.com/alex-poor/diaswarm.git
@@ -70,15 +41,15 @@ Repo: https://github.com/alex-poor/diaswarm.git
 # about 10 MB of an architecture it would never run, so `assembleRelease`
 # produces one APK per ABI and each build entry below picks one with `output`.
 #
-# The versionCodes are the app's base versionCode (3, the number in
+# The versionCodes are the app's base versionCode (4, the number in
 # follower/build.gradle.kts) times ten, plus one per ABI — arm64 last, so that
 # a device offered both takes the 64-bit build. If that arithmetic ever drifts
 # from the numbers declared here, this build fails rather than publishing an APK
 # that claims a version it does not have.
 Builds:
-  - versionName: 0.1.2
-    versionCode: 31
-    commit: follower-v0.1.2
+  - versionName: 0.1.3
+    versionCode: 41
+    commit: follower-v0.1.3
     subdir: follower
     sudo:
       - apt-get update
@@ -96,9 +67,9 @@ Builds:
     # scanner would rightly reject it.
     prebuild: echo "sdk.dir=$$SDK$$" > local.properties
 
-  - versionName: 0.1.2
-    versionCode: 32
-    commit: follower-v0.1.2
+  - versionName: 0.1.3
+    versionCode: 42
+    commit: follower-v0.1.3
     subdir: follower
     sudo:
       - apt-get update
@@ -112,12 +83,23 @@ Builds:
     output: build/outputs/apk/release/ayni-arm64-v8a-release-unsigned.apk
     prebuild: echo "sdk.dir=$$SDK$$" > local.properties
 
-# CHECKED AUTOMATICALLY, WRITTEN BY HAND. `UpdateCheckMode` still reports a new
-# tag, but auto-update is off: it would copy one build entry per
-# `VercodeOperation`, and every copy would carry the same `output` glob, so both
-# builds would pick the same ABI's APK. Two entries per release, added here, is
-# the honest version of that.
+# CHECKED AUTOMATICALLY, WRITTEN BY HAND.
+#
+# `VercodeOperation` IS NOT OPTIONAL, even with auto-update off. The update
+# check reads the versionCode out of build.gradle.kts — the base, 3 — and
+# compares it with `CurrentVersionCode`. Without these two operations to
+# reproduce the per-ABI arithmetic it reports `current version is newer: old
+# vercode=42, new vercode=4` and fails on every run. Measured with
+# `fdroid checkupdates`, not assumed.
+#
+# Auto-update is nevertheless off, because it would copy one build entry per
+# operation and every copy would carry the same `output` glob, so both builds
+# would pick the same ABI's APK. Two entries per release, added by hand, is the
+# honest version of that.
 AutoUpdateMode: None
 UpdateCheckMode: Tags ^follower-v
-CurrentVersion: 0.1.2
-CurrentVersionCode: 32
+VercodeOperation:
+  - "%c * 10 + 1"
+  - "%c * 10 + 2"
+CurrentVersion: 0.1.3
+CurrentVersionCode: 42

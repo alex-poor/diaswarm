@@ -1,0 +1,1 @@
+A launcher icon, and the app description now travels with the source.
