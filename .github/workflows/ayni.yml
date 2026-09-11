@@ -122,5 +122,9 @@ jobs:
 
           Built from \`${GITHUB_SHA}\`.
           EOF
+          # Titled by the app's name, not the tag's. The tag prefix stays
+          # `follower-v` because F-Droid's UpdateCheckMode matches on it and a
+          # changed prefix would silently stop it seeing new versions.
           gh release create "${GITHUB_REF_NAME}" ayni*.apk \
-            --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes-file notes.md
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Ayni ${GITHUB_REF_NAME#follower-v}" --notes-file notes.md
