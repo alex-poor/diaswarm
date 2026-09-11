@@ -35,6 +35,20 @@ Repo: https://github.com/alex-poor/diaswarm.git
 # `follower-v0.1.1` (one APK carrying both ABIs). Neither is offered here; the
 # first version F-Droid publishes is 0.1.2.
 #
+# BUILDING THE RUST CORE HERE, TWO THINGS THAT ARE EASY TO GET WRONG:
+#
+#   * `gcc` and `libc-dev` are for the HOST, not the phone. cargo-ndk is itself
+#     a Rust program with build scripts, and the buildserver image ships no C
+#     toolchain, so without them `cargo install` dies with "linker `cc` not
+#     found" before any Android code is reached. Measured, in a failed run.
+#   * The toolchain is set up in `prebuild`, not in `sudo`. `sudo:` runs as
+#     root, so a cargo-ndk installed there lands in root's ~/.cargo/bin and is
+#     not on the PATH of the user who runs gradle.
+#
+# The .so is built from source here and never committed: a checked-in binary
+# would be an opaque second copy of a frozen specification, and the scanner
+# would rightly reject it.
+#
 # TWO APKS PER RELEASE, ONE PER ABI. The app's native half is a Rust library
 # that is 15.7 MB for arm64 and 10.1 MB for armv7, stored uncompressed so it can
 # be mapped straight out of the APK. Carrying both made every phone download
@@ -53,11 +67,8 @@ Builds:
     subdir: follower
     sudo:
       - apt-get update
-      - apt-get install -y rustup
-      - rustup default 1.98.1
-      - rustup target add aarch64-linux-android armv7-linux-androideabi
-      - cargo install cargo-ndk --locked
-    ndk: 29.0.14206865
+      - apt-get install -y rustup gcc libc-dev
+    ndk: r29
     gradle:
       - yes
     output: build/outputs/apk/release/ayni-armeabi-v7a-release-unsigned.apk
@@ -65,7 +76,11 @@ Builds:
     # built from source in this repository and never committed — a checked-in
     # binary would be an opaque second copy of a frozen specification, and the
     # scanner would rightly reject it.
-    prebuild: echo "sdk.dir=$$SDK$$" > local.properties
+    prebuild:
+      - echo "sdk.dir=$$SDK$$" > local.properties
+      - rustup default 1.98.1
+      - rustup target add aarch64-linux-android armv7-linux-androideabi
+      - cargo install cargo-ndk@4.1.2 --locked
 
   - versionName: 0.1.3
     versionCode: 42
@@ -73,20 +88,21 @@ Builds:
     subdir: follower
     sudo:
       - apt-get update
-      - apt-get install -y rustup
-      - rustup default 1.98.1
-      - rustup target add aarch64-linux-android armv7-linux-androideabi
-      - cargo install cargo-ndk --locked
-    ndk: 29.0.14206865
+      - apt-get install -y rustup gcc libc-dev
+    ndk: r29
     gradle:
       - yes
     output: build/outputs/apk/release/ayni-arm64-v8a-release-unsigned.apk
-    prebuild: echo "sdk.dir=$$SDK$$" > local.properties
+    prebuild:
+      - echo "sdk.dir=$$SDK$$" > local.properties
+      - rustup default 1.98.1
+      - rustup target add aarch64-linux-android armv7-linux-androideabi
+      - cargo install cargo-ndk@4.1.2 --locked
 
 # CHECKED AUTOMATICALLY, WRITTEN BY HAND.
 #
 # `VercodeOperation` IS NOT OPTIONAL, even with auto-update off. The update
-# check reads the versionCode out of build.gradle.kts — the base, 3 — and
+# check reads the versionCode out of build.gradle.kts — the base, 4 — and
 # compares it with `CurrentVersionCode`. Without these two operations to
 # reproduce the per-ABI arithmetic it reports `current version is newer: old
 # vercode=42, new vercode=4` and fails on every run. Measured with
