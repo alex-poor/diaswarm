@@ -49,8 +49,8 @@ android {
         // `versionCode * 10 + abi index`, because two APKs of one release must
         // not claim one number — see the androidComponents block below. Written
         // as a bare literal because F-Droid's update check greps this line.
-        versionCode = 4
-        versionName = "0.1.3"
+        versionCode = 5
+        versionName = "0.1.4"
     }
 
     /**

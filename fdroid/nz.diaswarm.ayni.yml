@@ -55,7 +55,7 @@ Repo: https://github.com/alex-poor/diaswarm.git
 # about 10 MB of an architecture it would never run, so `assembleRelease`
 # produces one APK per ABI and each build entry below picks one with `output`.
 #
-# The versionCodes are the app's base versionCode (4, the number in
+# The versionCodes are the app's base versionCode (5, the number in
 # follower/build.gradle.kts) times ten, plus one per ABI — arm64 last, so that
 # a device offered both takes the 64-bit build. If that arithmetic ever drifts
 # from the numbers declared here, this build fails rather than publishing an APK
@@ -99,13 +99,51 @@ Builds:
       - rustup target add aarch64-linux-android armv7-linux-androideabi
       - cargo install cargo-ndk@4.1.2 --locked
 
+  - versionName: 0.1.4
+    versionCode: 51
+    commit: follower-v0.1.4
+    subdir: follower
+    sudo:
+      - apt-get update
+      - apt-get install -y rustup gcc libc-dev
+    ndk: r29
+    gradle:
+      - yes
+    output: build/outputs/apk/release/ayni-armeabi-v7a-release-unsigned.apk
+    # The record core is Rust, compiled here into the .so the app loads. It is
+    # built from source in this repository and never committed — a checked-in
+    # binary would be an opaque second copy of a frozen specification, and the
+    # scanner would rightly reject it.
+    prebuild:
+      - echo "sdk.dir=$$SDK$$" > local.properties
+      - rustup default 1.98.1
+      - rustup target add aarch64-linux-android armv7-linux-androideabi
+      - cargo install cargo-ndk@4.1.2 --locked
+
+  - versionName: 0.1.4
+    versionCode: 52
+    commit: follower-v0.1.4
+    subdir: follower
+    sudo:
+      - apt-get update
+      - apt-get install -y rustup gcc libc-dev
+    ndk: r29
+    gradle:
+      - yes
+    output: build/outputs/apk/release/ayni-arm64-v8a-release-unsigned.apk
+    prebuild:
+      - echo "sdk.dir=$$SDK$$" > local.properties
+      - rustup default 1.98.1
+      - rustup target add aarch64-linux-android armv7-linux-androideabi
+      - cargo install cargo-ndk@4.1.2 --locked
+
 # CHECKED AUTOMATICALLY, WRITTEN BY HAND.
 #
 # `VercodeOperation` IS NOT OPTIONAL, even with auto-update off. The update
 # check reads the versionCode out of build.gradle.kts — the base, 4 — and
 # compares it with `CurrentVersionCode`. Without these two operations to
 # reproduce the per-ABI arithmetic it reports `current version is newer: old
-# vercode=42, new vercode=4` and fails on every run. Measured with
+# vercode=52, new vercode=5` and fails on every run. Measured with
 # `fdroid checkupdates`, not assumed.
 #
 # Auto-update is nevertheless off, because it would copy one build entry per
@@ -117,5 +155,5 @@ UpdateCheckMode: Tags ^follower-v
 VercodeOperation:
   - "%c * 10 + 1"
   - "%c * 10 + 2"
-CurrentVersion: 0.1.3
-CurrentVersionCode: 42
+CurrentVersion: 0.1.4
+CurrentVersionCode: 52
