@@ -356,7 +356,14 @@ object SwarmNative {
     /** Close it. Safe with 0. */
     external fun keysClose(handle: Long)
 
-    /** The subject's own member tag, short form. Empty on failure. */
+    /**
+     * The key this vault's logs are authored under, hex. Empty on failure.
+     *
+     * **NOT THE MEMBER TAG, AND NOT THE INVITE'S `subject` EITHER.** This is
+     * the Ed25519 key `keysCarry`, the control log and the segment log are all
+     * keyed by. The invite's `subject` is the core vault's X25519 key, and
+     * neither can be derived from the other.
+     */
     external fun keysSubject(handle: Long): String
 
     /**
@@ -373,14 +380,14 @@ object SwarmNative {
     external fun keysSealChecked(handle: Long, epoch: Long, ndjson: String): String
 
     /**
-     * This vault's own key bundle as text, for putting in an invite.
+     * This vault's identity as text, for the `keys` field of an invite.
      *
-     * **THE HALF OF A PAIRING THE INVITE DOES NOT CARRY YET.** A grant needs
-     * both sides' bundles — the subject grants against the reader's, the reader
-     * needs the subject's to derive the same tag and open its welcome. Empty on
+     * **BOTH KEYS, BECAUSE NEITHER IMPLIES THE OTHER.** The Ed25519 key its
+     * logs are authored under — without which a follower cannot find anything
+     * to fetch — and the key bundle a grant is agreed against. Empty on
      * failure.
      */
-    external fun keysBundle(handle: Long): String
+    external fun keysIdentity(handle: Long): String
 
     /**
      * Grant a reader from the bundle they published. Returns their tag, or
@@ -424,8 +431,7 @@ object SwarmNative {
     external fun keysFollowRead(
         handle: Long,
         joinedDir: String,
-        subjectHex: String,
-        subjectBundle: String,
+        subjectKeys: String,
         purpose: String,
         tailDays: Long,
         fromEpoch: Long

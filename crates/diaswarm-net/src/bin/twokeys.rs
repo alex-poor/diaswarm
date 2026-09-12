@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use diaswarm_core::{EPOCH_MS, Record};
-use diaswarm_keys::{Vault, decode_bundle, encode_bundle, wire};
+use diaswarm_keys::{Vault, decode_bundle, encode_bundle, encode_identity, wire};
 use diaswarm_net::pool;
 use diaswarm_net::replicate::KeysReplicator;
 use diaswarm_net::swarm::{Swarm, network_id};
@@ -129,8 +129,10 @@ async fn bundle(root: &std::path::Path) -> Result<()> {
     let signing = signing_key(root)?;
     let store = open_store(root).await?;
     let vault = open_vault(root, &signing, &store).await?;
-    println!("SUBJECT={}", signing.verifying_key().to_hex());
-    println!("BUNDLE={}", encode_bundle(&vault.my_bundle()?)?);
+    // ONE FIELD, BOTH KEYS — the Ed25519 the logs are authored under and the
+    // bundle a grant is agreed against. Neither implies the other, and the
+    // invite's own `subject` field is a third key again.
+    println!("KEYS={}", encode_identity(&vault.identity()?)?);
     Ok(())
 }
 
@@ -145,8 +147,7 @@ async fn publish(root: &std::path::Path, reader_bundle: Option<String>) -> Resul
     let mut vault = open_vault(root, &signing, &store).await?;
 
     println!("  subject {}", &signing.verifying_key().to_hex()[..16]);
-    println!("SUBJECT={}", signing.verifying_key().to_hex());
-    println!("BUNDLE={}", encode_bundle(&vault.my_bundle()?)?);
+    println!("KEYS={}", encode_identity(&vault.identity()?)?);
 
     // ---- the grant ----
     let reader = decode_bundle(&reader_bundle).context("that is not a key bundle")?;

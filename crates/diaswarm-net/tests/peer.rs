@@ -148,7 +148,7 @@ async fn a_dead_first_endpoint_does_not_stop_a_refresh() {
         from: vec![dead.clone(), live.clone()],
         purpose: Some("follow".into()),
         relay: None,
-        bundle: None,
+        keys: None,
     };
     let r = refresh_one(&store, &follow, true).await;
 
@@ -208,7 +208,7 @@ async fn unreachable_is_reported_per_endpoint() {
     let a = format!("{}@127.0.0.1:1", SecretKey::generate().public());
     let b = format!("{}@127.0.0.1:2", SecretKey::generate().public());
     let follow =
-        Follow { subject: subject.clone(), from: vec![a.clone(), b.clone()], purpose: None, relay: None, bundle: None };
+        Follow { subject: subject.clone(), from: vec![a.clone(), b.clone()], purpose: None, relay: None, keys: None };
 
     let r = refresh_one(&store, &follow, true).await;
     assert!(!r.reached());
@@ -244,7 +244,7 @@ fn a_later_invite_without_a_bundle_does_not_erase_the_one_we_have() {
 
     add_follow_via(&store, &subject, &a, Some("follow"), Some(""), Some(first)).unwrap();
     let held = |s: &Path| {
-        load_follows(s).unwrap().into_iter().find(|f| f.subject == subject).unwrap().bundle
+        load_follows(s).unwrap().into_iter().find(|f| f.subject == subject).unwrap().keys
     };
     assert_eq!(held(&store).as_deref(), Some(first));
 

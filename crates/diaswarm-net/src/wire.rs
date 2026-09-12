@@ -117,7 +117,7 @@ fn take_offer(store: &Path, invite: &str) -> Vec<u8> {
         // bundle, so the reader's half of the D26 pairing needs no new request
         // and no ALPN bump — which is the whole reason for putting the bundle
         // in the invite rather than in a message of its own.
-        (!inv.bundle.is_empty()).then_some(inv.bundle.as_str()),
+        (!inv.keys.is_empty()).then_some(inv.keys.as_str()),
     ) {
         Ok(_) => serde_json::to_vec(&inv.subject).unwrap_or_default(),
         Err(_) => Vec::new(),

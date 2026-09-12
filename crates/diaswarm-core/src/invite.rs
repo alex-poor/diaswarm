@@ -11,7 +11,7 @@
 //! to be one thing you can hold up to a phone, not a procedure.
 //!
 //! ```text
-//! diaswarm:3:<subject-hex>:<endpoint-hex>:<purpose>:<relay>:<bundle-hex>:<check>
+//! diaswarm:3:<subject-hex>:<endpoint-hex>:<purpose>:<relay>:<keys-hex>:<check>
 //! diaswarm:2:<subject-hex>:<endpoint-hex>:<purpose>:<relay>:<check>
 //! ```
 //!
@@ -32,16 +32,17 @@
 //!   invite, not a release. Empty means "direct only": findable on the local
 //!   network and nowhere else. `:` is written `%3A` and `%` as `%25`, since
 //!   the fields are colon-separated; `/` needs no escaping and stays readable;
-//! * **bundle** is the subject's `p2panda-encryption` key bundle, and it is
-//!   what [D26](decisions.md)'s vault needs that the old one does not. A grant
-//!   there is agreed from a `LongTermKeyBundle`, and **both sides need the
-//!   other's before a grant can exist** — the subject grants against the
-//!   reader's, the reader needs the subject's to derive the same tag and open
-//!   its welcome. The `subject` field above is an X25519 key that serves the
-//!   same purpose for the old vault and is useless for the new one, so this is
-//!   an addition rather than a replacement. About 150 bytes; a QR code is
-//!   unbothered. **Empty, and the invite is emitted as v2**, so a subject with
-//!   no keys vault still hands out something every existing build understands;
+//! * **keys** is everything [D26](decisions.md)'s vault needs and the old one
+//!   does not: the **Ed25519 key that authors its logs**, and the
+//!   `p2panda-encryption` **key bundle** a grant is agreed against. Both,
+//!   because neither implies the other and the `subject` field above is a third
+//!   key again — `diaswarm-core`'s `Identity` keeps signing and encryption keys
+//!   separate on purpose, saying "deriving one from the other is possible and
+//!   is the kind of cleverness a review exists to object to". Without the
+//!   signer a follower cannot even find the log to fetch; without the bundle it
+//!   cannot be granted. About 190 bytes, which a QR code does not notice.
+//!   **Empty, and the invite is emitted as v2**, so a subject with no keys
+//!   vault still hands out something every existing build understands;
 //!   * **check** is four bytes of SHA-256 over everything before it, because the
 //!   failure this format exists to prevent is a silent one.
 //!
@@ -99,7 +100,7 @@ pub struct Invite {
     pub purpose: String,
     /// Empty means direct connections only — the local network and nothing else.
     pub relay: String,
-    /// The subject's `diaswarm-keys` bundle, hex. Empty on a v1 or v2 invite.
+    /// The subject's `diaswarm-keys` identity, hex. Empty on a v1 or v2 invite.
     ///
     /// **ITS PRESENCE IS WHAT MAKES AN INVITE v3**, so this is not a field that
     /// can be set carelessly: filling it in makes the invite unreadable to
@@ -107,7 +108,7 @@ pub struct Invite {
     /// invite in an older build says so rather than half-working — but it means
     /// a subject only publishes one once it actually has a keys vault to grant
     /// against.
-    pub bundle: String,
+    pub keys: String,
 }
 
 fn check_of(body: &str) -> String {
@@ -128,11 +129,11 @@ fn key_ok(k: &str) -> bool {
     k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// A bundle is hex of a CBOR structure, so its length is not fixed — only its
-/// alphabet and its parity. Decoding it properly is `diaswarm-keys`' job; this
-/// crate must not depend on that one, and a malformed bundle fails at key
-/// agreement with a message about key agreement.
-fn bundle_ok(b: &str) -> bool {
+/// A keys identity is hex of a CBOR structure, so its length is not fixed —
+/// only its alphabet and its parity. Decoding it properly is `diaswarm-keys`'
+/// job; this crate must not depend on that one, and a malformed one fails at
+/// key agreement with a message about key agreement.
+fn keys_ok(b: &str) -> bool {
     !b.is_empty()
         && b.len() % 2 == 0
         && b.len() <= 4096
@@ -182,23 +183,23 @@ impl Invite {
             endpoint,
             purpose: purpose.to_string(),
             relay,
-            bundle: String::new(),
+            keys: String::new(),
         })
     }
 
-    /// The same invite, carrying the subject's keys bundle.
+    /// The same invite, carrying the subject's keys identity.
     ///
     /// Separate from [`Invite::new_via`] rather than a parameter on it, because
     /// every existing caller wants the invite it already got and adding an
     /// argument would silently make all of them emit v3.
-    pub fn with_bundle(mut self, bundle: &str) -> Result<Self, VaultError> {
-        let bundle = bundle.trim().to_ascii_lowercase();
-        if !bundle.is_empty() && !bundle_ok(&bundle) {
+    pub fn with_keys(mut self, keys: &str) -> Result<Self, VaultError> {
+        let keys = keys.trim().to_ascii_lowercase();
+        if !keys.is_empty() && !keys_ok(&keys) {
             return Err(VaultError::Malformed(
-                "a key bundle is an even number of hex characters".into(),
+                "a keys identity is an even number of hex characters".into(),
             ));
         }
-        self.bundle = bundle;
+        self.keys = keys;
         Ok(self)
     }
 
@@ -210,7 +211,7 @@ impl Invite {
     /// subject that has a keys vault emits v3 and says so; one that does not
     /// emits exactly what it emitted before.
     pub fn encode(&self) -> String {
-        let body = if self.bundle.is_empty() {
+        let body = if self.keys.is_empty() {
             format!(
                 "{PREFIX}:2:{}:{}:{}:{}",
                 self.subject,
@@ -225,7 +226,7 @@ impl Invite {
                 self.endpoint,
                 self.purpose,
                 esc(&self.relay),
-                self.bundle
+                self.keys
             )
         };
         let check = check_of(&body);
@@ -283,7 +284,7 @@ impl Invite {
         let mut invite =
             Invite::new_via(parts[2], parts[3], &parts[4].to_ascii_lowercase(), &relay)?;
         if shown == "3" {
-            invite = invite.with_bundle(parts[6])?;
+            invite = invite.with_keys(parts[6])?;
         }
 
         // CHECK LAST, so the specific complaints above are what a person sees.
@@ -302,7 +303,7 @@ impl Invite {
                 invite.endpoint,
                 invite.purpose,
                 parts[5].to_ascii_lowercase(),
-                invite.bundle
+                invite.keys
             )
         } else {
             format!(
@@ -389,12 +390,12 @@ mod tests {
     #[test]
     fn a_bundle_survives_the_round_trip_and_the_checksum_covers_it() {
         let bundle = "a36c6964656e746974795f6b6579582000112233445566778899aabbccddeeff";
-        let invite = Invite::new(S, E, "follow").unwrap().with_bundle(bundle).unwrap();
+        let invite = Invite::new(S, E, "follow").unwrap().with_keys(bundle).unwrap();
         let text = invite.encode();
         assert!(text.starts_with("diaswarm:3:"), "a bundle should make it v3: {text}");
 
         let back = Invite::parse(&text).unwrap();
-        assert_eq!(back.bundle, bundle);
+        assert_eq!(back.keys, bundle);
         assert_eq!(back, invite);
 
         // Shouted by a chat client, and still the same invite.
@@ -422,12 +423,12 @@ mod tests {
         assert_eq!(Invite::parse(&text).unwrap(), invite);
 
         // And an empty bundle is the same as no bundle, not a v3 with a hole.
-        let explicit = Invite::new(S, E, "follow").unwrap().with_bundle("").unwrap();
+        let explicit = Invite::new(S, E, "follow").unwrap().with_keys("").unwrap();
         assert_eq!(explicit.encode(), text);
 
         // Rubbish in the bundle is refused at the point it is set.
-        assert!(Invite::new(S, E, "follow").unwrap().with_bundle("zz").is_err());
-        assert!(Invite::new(S, E, "follow").unwrap().with_bundle("abc").is_err());
+        assert!(Invite::new(S, E, "follow").unwrap().with_keys("zz").is_err());
+        assert!(Invite::new(S, E, "follow").unwrap().with_keys("abc").is_err());
     }
 
     /// **INVITES ALREADY HANDED OUT DO NOT STOP EXISTING** because the format

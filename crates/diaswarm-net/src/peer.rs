@@ -99,19 +99,21 @@ pub struct Follow {
     /// "however this build reaches people by default".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay: Option<String>,
-    /// The subject's `diaswarm-keys` bundle, as it arrived in their invite.
+    /// The subject's `diaswarm-keys` identity, as it arrived in their invite:
+    /// the key that authors their logs, and the bundle a grant is agreed
+    /// against.
     ///
     /// **KEPT BECAUSE JOINING HAPPENS LATER THAN PAIRING.** A reader needs this
-    /// to derive the tag the subject granted it under and to open its welcome,
-    /// and the welcome may not have replicated yet when the invite is scanned —
-    /// or for hours, if the subject's phone is asleep. Throwing the bundle away
-    /// at pairing time would mean the one moment it is available is the one
-    /// moment it is not needed.
+    /// to find the subject's logs at all, to derive the tag it was granted
+    /// under, and to open its welcome — and the welcome may not have replicated
+    /// yet when the invite is scanned, or for hours if the subject's phone is
+    /// asleep. Throwing it away at pairing time would mean the one moment it is
+    /// available is the one moment it is not needed.
     ///
     /// `None` is a v1 or v2 invite: a subject with no keys vault, or one from
     /// before the field existed. Nothing about the old vault needs it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bundle: Option<String>,
+    pub keys: Option<String>,
 }
 
 impl Follow {
@@ -164,7 +166,7 @@ pub fn add_follow_via(
     from: &str,
     purpose: Option<&str>,
     relay: Option<&str>,
-    bundle: Option<&str>,
+    keys: Option<&str>,
 ) -> Result<bool> {
     let subject = subject.to_ascii_lowercase();
     if subject.len() != 64 || !subject.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -200,8 +202,8 @@ pub fn add_follow_via(
             // back, because the invite that carried it has been scanned and
             // thrown away. Rotation is a real change and takes effect; absence
             // is not a statement.
-            if bundle.is_some() && existing.bundle.as_deref() != bundle {
-                existing.bundle = bundle.map(str::to_string);
+            if keys.is_some() && existing.keys.as_deref() != keys {
+                existing.keys = keys.map(str::to_string);
                 changed = true;
             }
             if changed {
@@ -215,7 +217,7 @@ pub fn add_follow_via(
                 from: vec![from.to_string()],
                 purpose: purpose.map(str::to_string),
                 relay: relay.map(str::to_string),
-                bundle: bundle.map(str::to_string),
+                keys: keys.map(str::to_string),
             });
             save_follows(store, &follows)?;
             Ok(true)

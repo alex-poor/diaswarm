@@ -665,7 +665,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netFollow<'a>(
         Some(inv.relay.as_str()),
         // Kept for when this reader joins the subject's keys group — which
         // happens when the welcome replicates, not when the invite is scanned.
-        (!inv.bundle.is_empty()).then_some(inv.bundle.as_str()),
+        (!inv.keys.is_empty()).then_some(inv.keys.as_str()),
     ) {
         Ok(true) => 1,
         Ok(false) => 0,
@@ -1607,7 +1607,11 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSubject<'a>(
     let Some(v) = keys_vault(handle) else {
         return to_jstring(env, String::new());
     };
-    to_jstring(env, format!("{}", v.vault.subject()))
+    // **THE LOG AUTHOR, NOT THE MEMBER TAG.** This used to return
+    // `GrantTag::own(..)` through its `Display`, which truncates to eight bytes
+    // and names nothing anybody can fetch by. Every caller — `keysCarry`,
+    // `control_from`, `segments_tail` — wants the key the logs are under.
+    to_jstring(env, v.vault.signer().to_hex())
 }
 
 /// Seal a batch into one epoch, read it back, and say whether it survived.
@@ -1654,12 +1658,16 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSealChecked<'a>(
     to_jstring(env, seal_checked(&mut v.vault, epoch, &body))
 }
 
-/// This vault's own key bundle as text, for putting in an invite. Empty on failure.
+/// This vault's identity as text, for putting in an invite. Empty on failure.
+///
+/// Both keys: the one its logs are authored under, and the bundle a grant is
+/// agreed against. See [`diaswarm_keys::KeysIdentity`] for why neither implies
+/// the other.
 ///
 /// **THE HALF OF A PAIRING THE INVITE DOES NOT CARRY YET.** A grant needs both
 /// sides' bundles — see [D27](../../docs/decisions.md) — and this is ours.
 #[no_mangle]
-pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysBundle<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysIdentity<'a>(
     env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -1667,7 +1675,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysBundle<'a>(
     let Some(v) = keys_vault(handle) else {
         return to_jstring(env, String::new());
     };
-    match v.vault.my_bundle().and_then(|b| diaswarm_keys::encode_bundle(&b)) {
+    match v.vault.identity().and_then(|i| diaswarm_keys::encode_identity(&i)) {
         Ok(text) => to_jstring(env, text),
         Err(_) => to_jstring(env, String::new()),
     }
@@ -1829,13 +1837,18 @@ pub fn join_subject(
     store: &diaswarm_keys::SqliteStore,
     runtime: &tokio::runtime::Handle,
     signing: &p2panda_core::SigningKey,
-    subject: &p2panda_core::VerifyingKey,
-    subject_bundle_hex: &str,
+    keys_hex: &str,
     purpose: &str,
     offset_ms: i64,
-) -> Result<diaswarm_keys::Vault, String> {
-    let subject_bundle =
-        diaswarm_keys::decode_bundle(subject_bundle_hex).map_err(|e| format!("bundle {e}"))?;
+) -> Result<(diaswarm_keys::Vault, p2panda_core::VerifyingKey), String> {
+    // **ONE FIELD, BOTH KEYS.** Taking the author and the bundle separately let
+    // a caller pair one subject's log with another's bundle — a mismatch that
+    // produces no error, just a reader that never finds a welcome. They arrive
+    // together in the invite and they stay together here.
+    let identity =
+        diaswarm_keys::decode_identity(keys_hex).map_err(|e| format!("identity {e}"))?;
+    let subject = &identity.signer;
+    let subject_bundle = identity.bundle.clone();
 
     // The identity this device published, not a fresh one.
     let own = diaswarm_keys::Vault::open(own_dir, offset_ms, signing)
@@ -1864,7 +1877,7 @@ pub fn join_subject(
             .join(manager.clone(), registry.clone(), &subject_bundle, purpose, message)
             .is_ok()
         {
-            return Ok(candidate);
+            return Ok((candidate, *subject));
         }
     }
     Err(format!("none of the {} control messages welcome us", control.len()))
@@ -1946,13 +1959,17 @@ pub fn follow_read(
     store: &diaswarm_keys::SqliteStore,
     runtime: &tokio::runtime::Handle,
     signing: &p2panda_core::SigningKey,
-    subject: &p2panda_core::VerifyingKey,
-    subject_bundle_hex: &str,
+    keys_hex: &str,
     purpose: &str,
     tail_days: u64,
     from_epoch: i64,
     offset_ms: i64,
 ) -> String {
+    let Ok(identity) = diaswarm_keys::decode_identity(keys_hex) else {
+        return "error identity not-a-keys-identity".to_string();
+    };
+    let subject = identity.signer;
+
     let existing = diaswarm_keys::Vault::open(joined_dir, offset_ms, signing)
         .ok()
         .filter(|v| v.is_welcomed());
@@ -1965,17 +1982,16 @@ pub fn follow_read(
             store,
             runtime,
             signing,
-            subject,
-            subject_bundle_hex,
+            keys_hex,
             purpose,
             offset_ms,
         ) {
-            Ok(v) => v,
+            Ok((v, _)) => v,
             Err(e) => return format!("error join {e}"),
         },
     };
 
-    match read_followed(&vault, store, runtime, subject, tail_days, from_epoch) {
+    match read_followed(&vault, store, runtime, &subject, tail_days, from_epoch) {
         Ok((ndjson, opened, unreadable)) => format!("ok {opened} {unreadable}\n{ndjson}"),
         Err(e) => format!("error read {e}"),
     }
@@ -1989,26 +2005,18 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysFollowRead<'a>(
     _class: JClass<'a>,
     handle: jlong,
     joined_dir: JString<'a>,
-    subject_hex: JString<'a>,
-    subject_bundle: JString<'a>,
+    subject_keys: JString<'a>,
     purpose: JString<'a>,
     tail_days: jlong,
     from_epoch: jlong,
 ) -> JString<'a> {
-    let (Ok(joined), Ok(subject), Ok(bundle), Ok(purpose)) = (
-        env.get_string(&joined_dir),
-        env.get_string(&subject_hex),
-        env.get_string(&subject_bundle),
-        env.get_string(&purpose),
-    ) else {
+    let (Ok(joined), Ok(keys), Ok(purpose)) =
+        (env.get_string(&joined_dir), env.get_string(&subject_keys), env.get_string(&purpose))
+    else {
         return to_jstring(env, "error bad-argument".to_string());
     };
-    let (joined, subject, bundle, purpose) =
-        (String::from(joined), String::from(subject), String::from(bundle), String::from(purpose));
+    let (joined, keys, purpose) = (String::from(joined), String::from(keys), String::from(purpose));
 
-    let Some(author) = verifying_key(&subject) else {
-        return to_jstring(env, "error subject not-a-key".to_string());
-    };
     let Some(v) = keys_vault(handle) else {
         return to_jstring(env, "error no-vault".to_string());
     };
@@ -2021,8 +2029,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysFollowRead<'a>(
         &v.store,
         &v.handle,
         &v.signing,
-        &author,
-        &bundle,
+        &keys,
         &purpose,
         tail_days.max(0) as u64,
         from_epoch,
@@ -2104,7 +2111,8 @@ mod shadow_tests {
         let (s_mgr, _sb) = Vault::key_bundle(&rng).unwrap();
         let create = subject.create(s_mgr).unwrap();
         rt.block_on(wire::publish_control(&store, &subject_key, &create)).unwrap();
-        let subject_bundle = encode_bundle(&subject.my_bundle().unwrap()).unwrap();
+        let subject_keys =
+            diaswarm_keys::encode_identity(&subject.identity().unwrap()).unwrap();
 
         // A day before the grant, and two after. **ALL THREE OPEN** — see the
         // assertion below and the note on `Vault::grant`.
@@ -2127,12 +2135,12 @@ mod shadow_tests {
             &store,
             rt.handle(),
             &me,
-            &author,
-            &subject_bundle,
+            &subject_keys,
             "follow",
             12 * 3_600_000,
         )
         .expect("the follower could not join");
+        let (joined, _author) = joined;
         assert!(joined.is_welcomed());
 
         let (ndjson, opened, _unreadable) =
@@ -2181,7 +2189,8 @@ mod shadow_tests {
         let (s_mgr, _sb) = Vault::key_bundle(&rng).unwrap();
         let create = subject.create(s_mgr).unwrap();
         rt.block_on(wire::publish_control(&store, &subject_key, &create)).unwrap();
-        let subject_bundle = encode_bundle(&subject.my_bundle().unwrap()).unwrap();
+        let subject_keys =
+            diaswarm_keys::encode_identity(&subject.identity().unwrap()).unwrap();
         let reader = diaswarm_keys::decode_bundle(&my_bundle).unwrap();
         let (welcome, _t) = subject.grant(reader, "follow").unwrap();
         rt.block_on(wire::publish_control(&store, &subject_key, &welcome)).unwrap();
@@ -2197,8 +2206,7 @@ mod shadow_tests {
                 &store,
                 rt.handle(),
                 &me,
-                &author,
-                &subject_bundle,
+                &subject_keys,
                 "follow",
                 0,
                 from,
@@ -2223,8 +2231,7 @@ mod shadow_tests {
             &pruned,
             rt.handle(),
             &me,
-            &author,
-            &subject_bundle,
+            &subject_keys,
             "follow",
             0,
             i64::MIN,
@@ -2269,7 +2276,8 @@ mod shadow_tests {
         let (s_mgr, _sb) = Vault::key_bundle(&rng).unwrap();
         let create = subject.create(s_mgr).unwrap();
         rt.block_on(wire::publish_control(&store, &subject_key, &create)).unwrap();
-        let subject_bundle = encode_bundle(&subject.my_bundle().unwrap()).unwrap();
+        let subject_keys =
+            diaswarm_keys::encode_identity(&subject.identity().unwrap()).unwrap();
         let reader = diaswarm_keys::decode_bundle(&my_bundle).unwrap();
         let (welcome, _t) = subject.grant(reader, "follow").unwrap();
         rt.block_on(wire::publish_control(&store, &subject_key, &welcome)).unwrap();
@@ -2289,8 +2297,7 @@ mod shadow_tests {
                 &store,
                 rt.handle(),
                 &me,
-                &author,
-                &subject_bundle,
+                &subject_keys,
                 "follow",
                 tail,
                 i64::MIN,

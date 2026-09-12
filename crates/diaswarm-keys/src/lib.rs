@@ -166,6 +166,55 @@ pub struct Segment {
     pub ciphertext: Vec<u8>,
 }
 
+/// Everything an invite must carry for somebody to follow this vault.
+///
+/// **TWO KEYS, BECAUSE THE VAULT USES TWO AND NEITHER IMPLIES THE OTHER.**
+/// `signer` is the Ed25519 key that authors the segment and control logs — it
+/// is what `wire::control_from` and `wire::segments_tail` look logs up by, so
+/// without it a follower cannot find anything. `bundle` is the X25519-based
+/// `p2panda-encryption` identity a grant is agreed against.
+///
+/// **AND THE INVITE'S OWN `subject` FIELD IS NEITHER OF THEM.** That is the
+/// core vault's X25519 key. `diaswarm-core`'s `Identity` holds a signing key
+/// and an encryption key and says why: "deriving one from the other is possible
+/// and is the kind of cleverness a review exists to object to". So the invite
+/// cannot compute this and has to be told.
+///
+/// Found by trying to call `keysCarry` from a pool pass and having no author to
+/// pass it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeysIdentity {
+    pub signer: p2panda_core::VerifyingKey,
+    pub bundle: LongTermKeyBundle,
+}
+
+/// A vault's identity as text, for the `keys` field of an invite.
+pub fn encode_identity(identity: &KeysIdentity) -> Result<String, Error> {
+    let bytes =
+        p2panda_core::cbor::encode_cbor(identity).map_err(|e| Error::Encode(e.to_string()))?;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in &bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    Ok(out)
+}
+
+/// The other direction. Refuses anything that is not one.
+pub fn decode_identity(text: &str) -> Result<KeysIdentity, Error> {
+    if text.len() % 2 != 0 || text.is_empty() {
+        return Err(Error::Encode("an identity is an even number of hex digits".into()));
+    }
+    let mut bytes = Vec::with_capacity(text.len() / 2);
+    for i in (0..text.len()).step_by(2) {
+        bytes.push(
+            u8::from_str_radix(&text[i..i + 2], 16)
+                .map_err(|_| Error::Encode("an identity is hex".into()))?,
+        );
+    }
+    p2panda_core::cbor::decode_cbor(&bytes[..])
+        .map_err(|e| Error::Encode(format!("not a keys identity: {e}")))
+}
+
 /// A key bundle as text, for an invite or a QR code.
 ///
 /// **HEX OF CBOR, AND BOTH HALVES ARE DELIBERATE.** CBOR because that is what
@@ -400,6 +449,19 @@ impl Vault {
     /// bundle published in an invite that is scanned months later may carry an
     /// expired prekey; `p2panda-spaces` has `key_bundle_expired` and a rotation
     /// path for exactly this, and nothing here does yet.
+    /// The key that authors this vault's logs.
+    ///
+    /// Everything that fetches from this vault looks it up by this, so it is
+    /// half of what an invite has to carry. See [`KeysIdentity`].
+    pub fn signer(&self) -> p2panda_core::VerifyingKey {
+        self.my_key
+    }
+
+    /// This vault's identity: both keys somebody needs to follow it.
+    pub fn identity(&self) -> Result<KeysIdentity, Error> {
+        Ok(KeysIdentity { signer: self.my_key, bundle: self.my_bundle()? })
+    }
+
     pub fn my_bundle(&self) -> Result<LongTermKeyBundle, Error> {
         let state = self.state.as_ref().ok_or(Error::NoSecret)?;
         KeyManager::prekey_bundle(&state.dcgka.my_keys)
