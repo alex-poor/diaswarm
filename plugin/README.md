@@ -25,9 +25,37 @@ worktree**, never in the working tree that builds the pump APK:
 
 ```sh
 git worktree add ../aaps-diaswarm diaswarm-addon
-cd ../aaps-diaswarm
-export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358
-./gradlew :app:assembleFullLoop -PappVersionSuffix=diaswarm
+./plugin/build-apk.sh            # build only
+./plugin/build-apk.sh --install  # build, verify the signer, install, relaunch
+```
+
+**USE THE SCRIPT. THE BARE `gradlew` LINE THAT USED TO BE HERE IS A TRAP**, and
+it cost most of a session. It named `ANDROID_NDK_HOME` and nothing else, which
+reads as though the rest of the toolchain is whatever the machine has. It is
+not:
+
+| | where it actually is | what the machine's default gives you |
+|---|---|---|
+| JDK | `$CAMAPS/tools/jdk-21.0.5+11` | the system JDK, currently 26 |
+| SDK | `$CAMAPS/tools/android-sdk` | `~/Android/Sdk`, a different install |
+| NDK | under that SDK | a different NDK, if any |
+
+AAPS builds against `compileSdk 36`, and JDK 26 cannot run the
+`androidJdkImage` transform over `core-for-system-modules.jar` — `jlink` fails
+inside `:core:ui:compileFullReleaseJavaWithJavac`, in an AAPS module, with an
+error that looks nothing like "wrong JDK". `build-apk.sh` sets all three, and
+delegates to camaps' `build-loop-apk.sh`, which owns the parts that matter: it
+**refuses to install if the signing certificate no longer matches the device**,
+which is the check protecting the pump key, and it saves a rollback APK.
+
+To compile just this module without packaging an APK — enough to check the
+Kotlin — the same environment applies:
+
+```sh
+export JAVA_HOME=$CAMAPS/tools/jdk-21.0.5+11 PATH="$JAVA_HOME/bin:$PATH"
+export ANDROID_HOME=$CAMAPS/tools/android-sdk
+export ANDROID_NDK_HOME=$(ls -1d $ANDROID_HOME/ndk/*/ | sort -V | tail -1)
+cd $CAMAPS/sdk/aaps-diaswarm && ./gradlew :plugins:sync:swarm:compileFullReleaseKotlin
 ```
 
 **A branch is not enough on its own, and this was learned the hard way.**
