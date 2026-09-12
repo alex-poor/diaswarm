@@ -142,3 +142,60 @@ fn reading_the_newest_day_does_not_care_how_much_came_before() {
         eprintln!("  {held:>10}  {:>13.3}ms", elapsed.as_secs_f64() * 1000.0);
     }
 }
+
+/// THE FAILURE THAT WOULD INVALIDATE EVERY GRANT EVER MADE.
+///
+/// `SecretKey::from_bytes` is `test_utils` only, so an encryption identity
+/// cannot be rebuilt from a signing key — it has to be persisted, secrets and
+/// all. [D20](../../../docs/decisions.md) records the same hazard for
+/// `diaswarm-spaces`, and shadow mode existed partly to catch it: a vault
+/// returning from a reboot as a new member is readable by nobody it was ever
+/// granted to, and nothing says so.
+#[test]
+fn a_vault_reopens_as_the_same_member() {
+    let rng = Rng::default();
+    let subject_key = SigningKey::from_bytes(&rand32());
+    let reader_key = SigningKey::from_bytes(&rand32());
+    let root = tmp("reopen");
+
+    let subject_id;
+    let secrets_before;
+    {
+        let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("vault");
+        let (_m, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
+        let (reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("bundle");
+        subject
+            .create(&subject_key, vec![(subject.subject(), subject_bundle.clone())])
+            .expect("create");
+        let welcome = subject.grant(reader_key.verifying_key(), reader_bundle).expect("grant");
+        subject.seal(20_000, &day(20_000)).expect("seal");
+        subject_id = subject.subject();
+        secrets_before = subject.secrets();
+
+        let mut reader = Vault::open(&root, OFFSET, &reader_key).expect("reader");
+        let registry = Vault::registry(&[(subject_id, subject_bundle)]).expect("registry");
+        reader.join(&reader_key, reader_mgr, registry, welcome).expect("join");
+        assert_eq!(reader.read_from(i64::MIN).expect("read").len(), 1);
+    }
+    // Both vaults dropped. Nothing in memory survives.
+
+    let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("reopen subject");
+    assert_eq!(subject.subject(), subject_id, "the subject came back as somebody else");
+    assert_eq!(subject.secrets(), secrets_before, "the secret bundle did not survive");
+
+    // The proof that matters: it can still seal under the same group, and a
+    // reader that was granted before the restart can still open what follows.
+    subject.seal(20_001, &day(20_001)).expect("seal after reopen");
+
+    let reader = Vault::open(&root, OFFSET, &reader_key).expect("reopen reader");
+    let got = reader.read_from(i64::MIN).expect("read after reopen");
+    assert_eq!(got.len(), 2, "a reader granted before the restart lost access: {:?}", got.keys());
+
+    // And the state file is not world-readable.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(root.join("group.cbor")).expect("state file").permissions().mode();
+        assert_eq!(mode & 0o077, 0, "group.cbor is readable by somebody else: {mode:o}");
+    }
+}

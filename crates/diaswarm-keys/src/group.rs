@@ -39,7 +39,7 @@ pub type OperationId = Hash;
 /// A set, and nothing else. Membership decisions are made where they belong —
 /// in the grant, by the subject — and this records the outcome so the key
 /// agreement knows who to encrypt a welcome towards.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Dgm;
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
@@ -178,7 +178,7 @@ impl GroupMessage<MemberId, OperationId, Dgm> for Message {
 /// Causal ordering is deliberately not here — upstream's equivalent says the
 /// same of itself. It belongs to whoever delivers messages, which in this
 /// project is `p2panda-store`'s `OrdererStore`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Order;
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]

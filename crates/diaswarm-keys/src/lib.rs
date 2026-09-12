@@ -86,13 +86,68 @@ pub struct Vault {
 }
 
 impl Vault {
-    /// Open or create a vault at `root`.
+    /// Open or create a vault at `root`, restoring its group state if it has one.
+    ///
+    /// **A VAULT THAT COMES BACK AS A NEW MEMBER INVALIDATES EVERY GRANT EVER
+    /// MADE TO IT**, which is why this is not optional and why the state file is
+    /// 0600. [D20](../../docs/decisions.md) records the same hazard for
+    /// `diaswarm-spaces`: `SecretKey::from_bytes` is `test_utils` only, so an
+    /// encryption identity cannot be rebuilt from a signing key — the manager
+    /// state itself has to survive, secrets and all.
     pub fn open(root: impl AsRef<Path>, offset: i64, signing: &SigningKey) -> Result<Self, Error> {
         let root = root.as_ref().to_path_buf();
         std::fs::create_dir_all(root.join("segments"))?;
         let rng = Rng::default();
         let me = signing.verifying_key();
-        Ok(Vault { root, offset, state: None, rng, me })
+        let state = Self::load(&root)?;
+        Ok(Vault { root, offset, state, rng, me })
+    }
+
+    /// Where the group state lives. One file, beside the segments it opens.
+    fn state_path(root: &Path) -> PathBuf {
+        root.join("group.cbor")
+    }
+
+    fn load(root: &Path) -> Result<Option<State>, Error> {
+        let path = Self::state_path(root);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let bytes = std::fs::read(&path)?;
+        let saved: Persisted = p2panda_core::cbor::decode_cbor(&bytes[..])
+            .map_err(|e| Error::Crypto(format!("state will not decode: {e}")))?;
+        Ok(Some(saved.into_state()))
+    }
+
+    /// Write the group state out, readable by nobody else.
+    ///
+    /// **IT HOLDS SECRET KEY MATERIAL** — the key manager's identity secret and
+    /// every group secret this vault has been told about — so it is written
+    /// 0600 and never anywhere but the vault's own directory. Losing it is
+    /// losing the ability to read anything; leaking it is handing over every
+    /// segment the vault can open.
+    fn save(&self) -> Result<(), Error> {
+        let Some(state) = self.state.as_ref() else { return Ok(()) };
+        let path = Self::state_path(&self.root);
+        let tmp = path.with_extension("cbor.tmp");
+        // **CBOR, NOT JSON, AND NOT BY PREFERENCE.** The state holds maps keyed
+        // by `VerifyingKey` — the 2SM handlers, the key registry — and a JSON
+        // object key must be a string, so `serde_json` refuses them with "key
+        // must be a string". CBOR has no such restriction and is what p2panda
+        // encodes with everywhere else.
+        let encoded = p2panda_core::cbor::encode_cbor(&PersistedRef::of(state))
+            .map_err(|e| Error::Crypto(format!("state will not encode: {e}")))?;
+        std::fs::write(&tmp, encoded)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        }
+        // Renamed rather than written in place: a vault interrupted mid-write
+        // would otherwise come back with a truncated state, which is the same
+        // as coming back as a stranger.
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
     }
 
     pub fn subject(&self) -> MemberId {
@@ -174,6 +229,7 @@ impl Vault {
         let (state, msg) =
             Group::create(state, ids, &self.rng).map_err(|e| Error::Group(e.to_string()))?;
         self.state = Some(state);
+        self.save()?;
         Ok(msg.stamp(self.me))
     }
 
@@ -233,6 +289,7 @@ impl Vault {
         let (state, msg) =
             Group::add(state, reader, &self.rng).map_err(|e| Error::Group(e.to_string()))?;
         self.state = Some(state);
+        self.save()?;
         Ok(msg.stamp(self.me))
     }
 
@@ -242,6 +299,7 @@ impl Vault {
         let (state, msg) =
             Group::remove(state, reader, &self.rng).map_err(|e| Error::Group(e.to_string()))?;
         self.state = Some(state);
+        self.save()?;
         Ok(msg.stamp(self.me))
     }
 
@@ -252,6 +310,7 @@ impl Vault {
             Group::receive(state, &message).map_err(|e| Error::Group(e.to_string()))?;
         state.orderer.saw(message.id());
         self.state = Some(state);
+        self.save()?;
         Ok(())
     }
 
@@ -281,6 +340,7 @@ impl Vault {
             Group::receive(state, &welcome).map_err(|e| Error::Group(e.to_string()))?;
         state.orderer.saw(welcome.id());
         self.state = Some(state);
+        self.save()?;
         Ok(())
     }
 
@@ -291,3 +351,88 @@ impl Vault {
 }
 
 
+
+/// The group state, written out field by field.
+///
+/// **BECAUSE `GroupState` CANNOT BE SERIALISED, DESPITE SAYING IT CAN.** Both it
+/// and `DcgkaState` are documented "Serializable state ... (for persistence)"
+/// and both derive `Serialize`/`Deserialize` — but serde's derive puts the
+/// bounds on the *marker* type parameters rather than on their `::State`
+/// associated types, and upstream's markers (`KeyManager`, `KeyRegistry<ID>`)
+/// derive only `Clone, Debug`. So `serde_json::to_vec(&group_state)` does not
+/// compile with production types.
+///
+/// Every field of `DcgkaState` is public and every one is a concrete
+/// serialisable type, so the way through is to take it apart and put it back
+/// together. That is what this is. It is a workaround for an upstream defect,
+/// not a design, and it should be deleted the day those markers gain a derive.
+///
+/// In the same family as the three `test_utils`-only escapes
+/// [D20](../../docs/decisions.md) had to document for `p2panda-spaces`: the
+/// public API returning state the public API cannot store.
+#[derive(Deserialize)]
+struct Persisted {
+    my_id: MemberId,
+    pki: p2panda_encryption::key_registry::KeyRegistryState<MemberId>,
+    my_keys: p2panda_encryption::key_manager::KeyManagerState,
+    two_party: std::collections::HashMap<
+        MemberId,
+        p2panda_encryption::two_party::TwoPartyState<LongTermKeyBundle>,
+    >,
+    dgm: group::DgmState,
+    orderer: group::OrderState,
+    secrets: p2panda_encryption::data_scheme::SecretBundleState,
+    is_welcomed: bool,
+}
+
+/// **WRITTEN BY REFERENCE, BECAUSE HALF OF IT CANNOT BE CLONED.**
+/// `TwoPartyState` and `SecretBundleState` are `Clone` only under `test_utils`,
+/// so an owned snapshot is not available to a production build. Borrowing costs
+/// nothing and is the only option.
+#[derive(Serialize)]
+struct PersistedRef<'a> {
+    my_id: &'a MemberId,
+    pki: &'a p2panda_encryption::key_registry::KeyRegistryState<MemberId>,
+    my_keys: &'a p2panda_encryption::key_manager::KeyManagerState,
+    two_party: &'a std::collections::HashMap<
+        MemberId,
+        p2panda_encryption::two_party::TwoPartyState<LongTermKeyBundle>,
+    >,
+    dgm: &'a group::DgmState,
+    orderer: &'a group::OrderState,
+    secrets: &'a p2panda_encryption::data_scheme::SecretBundleState,
+    is_welcomed: bool,
+}
+
+impl<'a> PersistedRef<'a> {
+    fn of(y: &'a State) -> Self {
+        PersistedRef {
+            my_id: &y.my_id,
+            pki: &y.dcgka.pki,
+            my_keys: &y.dcgka.my_keys,
+            two_party: &y.dcgka.two_party,
+            dgm: &y.dcgka.dgm,
+            orderer: &y.orderer,
+            secrets: &y.secrets,
+            is_welcomed: y.is_welcomed,
+        }
+    }
+}
+
+impl Persisted {
+    fn into_state(self) -> State {
+        State {
+            my_id: self.my_id,
+            dcgka: p2panda_encryption::data_scheme::dcgka::DcgkaState {
+                pki: self.pki,
+                my_keys: self.my_keys,
+                my_id: self.my_id,
+                two_party: self.two_party,
+                dgm: self.dgm,
+            },
+            orderer: self.orderer,
+            secrets: self.secrets,
+            is_welcomed: self.is_welcomed,
+        }
+    }
+}

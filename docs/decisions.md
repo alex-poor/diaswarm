@@ -390,10 +390,28 @@ grant. `KeyManager::init_and_generate_prekey` is also test-only; `init` then
 implementations, identical** — sorted, deduplicated, counts equal. In 0.77
 seconds for both together, against the 22.97 s `diaswarm-spaces` took for 1,496.
 
-⚠️ **What is still not built.** No persistence of group state across a reopen,
-no replication, no auth layer, and the reader in the tests shares the subject's
-directory rather than having replicated it. Those are the port's remaining work,
-not unknowns about the design.
+✅ **It survives a reopen**, which is the failure that would invalidate every
+grant ever made to a vault. `a_vault_reopens_as_the_same_member` drops both
+vaults, reopens from disk, and checks the subject is the same member with the
+same secret bundle, that it can still seal, and that a reader granted *before*
+the restart still opens what came after. The state file is 0600.
+
+⚠️ **`GroupState` cannot be serialised, despite being documented as
+"Serializable state ... (for persistence)".** serde's derive bounds the *marker*
+type parameters rather than their `::State` associated types, and upstream's
+markers — `KeyManager`, `KeyRegistry<ID>` — derive only `Clone, Debug`. Every
+field of `DcgkaState` is public and concretely serialisable, so `PersistedRef`
+takes the state apart and `Persisted` puts it back. Written **by reference**,
+because `TwoPartyState` and `SecretBundleState` are `Clone` only under
+`test_utils`, and encoded as **CBOR**, because the state holds maps keyed by
+`VerifyingKey` and a JSON object key must be a string. Three workarounds for one
+upstream defect, all deletable the day those markers gain a derive — and squarely
+in the family [D20](#) documented for spaces: the public API returning state the
+public API cannot store.
+
+⚠️ **What is still not built.** No replication, no auth layer, and the reader in
+the tests shares the subject's directory rather than having replicated it. Those
+are the port's remaining work, not unknowns about the design.
 
 ✅ **Read, 2026-09-12, and they are bookkeeping.** The reopens-if above asked
 whether those 242 lines need judgement about concurrent membership. They do not.
