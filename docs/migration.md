@@ -236,10 +236,49 @@ output distinguishes those. Worth fixing before the decision, not after.
    day**, from six weeks of one subject. Half way to the pathological figure,
    with no bulk data involved. Every one of those also replicates.
 
-   Not fan-out: `windows` is 1. The fix is to batch live seals the way the
-   backfill already does — accumulate until a size or an epoch boundary rather
-   than sealing per pass — and it should land before any cutover, because the
-   operation count is what a follower catching up pays for.
+   Not fan-out: `windows` is 1.
+
+   **BATCHING IS NOT THE FIX, AND MEASURING IT SAID SO.**
+   `crates/diaswarm-spaces/src/bin/opcost.rs`, one seal per operation, which is
+   the live shape:
+
+   | ops | read | per op | process | persist |
+   |---|---|---|---|---|
+   | 125 | 0.24 s | 1.92 ms | 0.15 s | 0.06 s |
+   | 250 | 0.62 s | 2.49 ms | 0.40 s | 0.17 s |
+   | 500 | 2.36 s | 4.71 ms | 1.54 s | 0.69 s |
+   | 1000 | 9.80 s | 9.80 ms | 6.44 s | 3.03 s |
+   | 2000 | **43.77 s** | **21.88 ms** | 27.59 s | 15.28 s |
+
+   Per-operation cost doubles as the count doubles, so the total is quadratic,
+   and roughly two thirds of it is inside `p2panda-spaces`' own `process`.
+
+   The decisive run is the second one. Delivering the same 2,000 operations in
+   ten chunks of 200 took **42.98 s against 43.60 s all at once** — no
+   improvement — and each chunk cost strictly more than the one before it, 0.43 s
+   climbing evenly to 8.55 s. So this is not a per-call cost that incremental
+   catch-up avoids. **The cost of processing an operation rises with how much
+   history the vault already holds.** Every operation is dearer than the last,
+   permanently, whatever schedule it arrives on.
+
+   What that means for the three candidate fixes:
+
+   * **Batching live seals** is still worth doing — cost is quadratic in the
+     count, so cutting 1,400 operations a day to 288 is about a 24× saving. But
+     it moves the wall by weeks, it does not remove it.
+   * **Chunked or incremental catch-up** buys nothing. Measured.
+   * **Pruning** is the only one that bounds the count, and therefore the only
+     structural answer. `LogStore::prune_entries` is implemented on
+     `SqliteStore` and callable today; the README's "there is no pruning" is
+     wrong about the local half. What it must never touch is the auth and grant
+     operations — [D13](decisions.md) makes their permanence the thing that
+     stops a subject quietly shortening their own grant history.
+
+   For scale: the loop phone holds 5,516 operations after six weeks and gains
+   about 1,400 a day. At that depth a single day's catch-up is already tens of
+   seconds on a laptop and minutes on a phone, and it grows. This is a
+   cutover blocker, and it is worth reporting upstream, since most of the time
+   is theirs.
 
    ~~Out-of-order arrival loses records silently.~~ **Closed 2026-09-12.**
    `ingest` used to process in arrival order and catch the resulting
