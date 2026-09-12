@@ -520,6 +520,52 @@ signed, hash-chained grant log is not obviously the thing to replace here.
 reader in the tests shares the subject's directory rather than having replicated
 it. Those are the port's remaining work, not unknowns about the design.
 
+✅ **Grants now travel, and they are authenticated — 2026-09-12.** The crate
+shipped with a red note in its module doc: `group::Message` is a plain struct
+with a settable `sender`, `Vault::receive` processed one without checking, and
+`wire` carried segments but not control messages. The second half is why the
+first was not exploitable — there was no transport for a forged grant because
+there was no transport for a grant — and it is also why it had to be fixed
+before anything replicated.
+
+`wire::publish_control` puts a control message in the **body** of a signed
+`p2panda_core::Operation`, in its **own log** (`CONTROL_LOG_ID = 1`).
+`wire::open_control` is the only constructor of `Authentic`, which is the only
+thing `Vault::receive` and `Vault::join` will take — so "was this checked?" is
+answered by the type rather than by reading the function. It checks three
+things: `validate_operation` (signature, and body against the hash the header
+committed to), that the author is the key the caller named, and that the
+message's `sender` equals `GrantTag::own(author)`. The vault then adds a fourth
+— that the author is *this* vault's subject — because a follower of two
+children holds two vaults and both subjects sign real messages.
+
+That last check is only this simple because **only the subject grants**.
+`GrantTag::own` is deliberately a public function of a public key (D13 hides who
+a *reader* is; the subject of a log is named by the log), so anyone can compute
+the single sender a control message is allowed to claim, while every reader tag
+in it still comes from ECDH and stays unlinkable.
+
+**Separate logs, and not for tidiness.** `wire::segments_tail` asks for the last
+N entries and calls them the last N days, which holds only if every entry in
+that log is a day. A grant in the middle of a week would have made "the last
+seven entries" mean six days, and the symptom would have looked like a follower
+missing data.
+
+🐛 **And it found a live bug in the segment path.** `p2panda_store`'s
+`LogEntries<T>` is `Vec<(T, Vec<u8>)>` and reads exactly like `(operation,
+body)`. It is not — the second half is the encoded **header**; the body is on
+the operation. `wire::collect` took the tuple at its word, so every segment read
+back out of a log carried an encoded header where its ciphertext should have
+been. `tests/wire.rs` did not notice because it counted segments and timed
+reads, and a wrong ciphertext counts and times exactly like a right one.
+Verifying a signature against a payload is a comparison, so the control path hit
+it on the first run.
+
+The fix is `op.body`, and the missing test is
+`a_segment_out_of_a_log_still_decrypts_to_the_records_that_went_in` —
+which needed `Vault::open_segment`, the API a follower will need anyway, since
+its segments arrive as operation bodies and never touch a directory.
+
 ✅ **Read, 2026-09-12, and they are bookkeeping.** The reopens-if above asked
 whether those 242 lines need judgement about concurrent membership. They do not.
 

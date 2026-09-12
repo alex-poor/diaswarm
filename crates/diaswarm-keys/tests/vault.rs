@@ -9,9 +9,10 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use diaswarm_core::{EPOCH_MS, Record};
-use diaswarm_keys::Vault;
+use diaswarm_keys::{Vault, wire};
 use p2panda_core::SigningKey;
 use p2panda_encryption::Rng;
+use p2panda_store::{SqliteStore, SqliteStoreBuilder};
 
 const OFFSET: i64 = 12 * 3_600_000;
 
@@ -38,13 +39,14 @@ fn day(epoch: i64) -> Vec<Record> {
 /// A subject seals days into segments, a reader is granted and opens them, the
 /// recent end stays cheap as history grows, and a revoked reader is cut off from
 /// what comes next while keeping what it already had.
-#[test]
-fn a_granted_reader_opens_segments_and_a_revoked_one_stops() {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_granted_reader_opens_segments_and_a_revoked_one_stops() {
     let rng = Rng::default();
     let subject_key = SigningKey::from_bytes(&rand32());
     let reader_key = SigningKey::from_bytes(&rand32());
 
     let root = tmp("shared");
+    let store = SqliteStoreBuilder::memory().build().await.expect("store");
     let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("subject vault");
     let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("subject bundle");
     let (reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("reader bundle");
@@ -58,7 +60,8 @@ fn a_granted_reader_opens_segments_and_a_revoked_one_stops() {
 
     let mut reader = Vault::open(&root, OFFSET, &reader_key).expect("reader vault");
     let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("registry");
-    reader.join(reader_mgr, registry, &subject_bundle, "follow", welcome).expect("join");
+    let welcome = deliver(&store, &subject_key, &welcome).await;
+    reader.join(reader_mgr, registry, &subject_bundle, "follow", &welcome).expect("join");
 
     // More days, after the grant.
     for e in 1..180i64 {
@@ -107,14 +110,15 @@ fn rand32() -> [u8; 32] {
 ///
 /// A separate vault per history size, because the question is what a reader pays
 /// when the subject has been sealing for longer — not what it pays to read more.
-#[test]
-fn reading_the_newest_day_does_not_care_how_much_came_before() {
+#[tokio::test(flavor = "multi_thread")]
+async fn reading_the_newest_day_does_not_care_how_much_came_before() {
     let rng = Rng::default();
     eprintln!("  {:>10}  {:>16}", "days held", "newest day");
     for held in [7i64, 30, 90, 180] {
         let subject_key = SigningKey::from_bytes(&rand32());
         let reader_key = SigningKey::from_bytes(&rand32());
         let root = tmp(&format!("depth-{held}"));
+        let store = SqliteStoreBuilder::memory().build().await.expect("store");
 
         let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("vault");
         let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
@@ -124,7 +128,8 @@ fn reading_the_newest_day_does_not_care_how_much_came_before() {
 
         let mut reader = Vault::open(&root, OFFSET, &reader_key).expect("vault");
         let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("registry");
-        reader.join(reader_mgr, registry, &subject_bundle, "follow", welcome).expect("join");
+        let welcome = deliver(&store, &subject_key, &welcome).await;
+    reader.join(reader_mgr, registry, &subject_bundle, "follow", &welcome).expect("join");
 
         for e in 0..held {
             subject.seal(20_000 + e, &day(20_000 + e)).expect("seal");
@@ -147,8 +152,8 @@ fn reading_the_newest_day_does_not_care_how_much_came_before() {
 /// `diaswarm-spaces`, and shadow mode existed partly to catch it: a vault
 /// returning from a reboot as a new member is readable by nobody it was ever
 /// granted to, and nothing says so.
-#[test]
-fn a_vault_reopens_as_the_same_member() {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_vault_reopens_as_the_same_member() {
     let rng = Rng::default();
     let subject_key = SigningKey::from_bytes(&rand32());
     let reader_key = SigningKey::from_bytes(&rand32());
@@ -157,6 +162,7 @@ fn a_vault_reopens_as_the_same_member() {
     let subject_id;
     let secrets_before;
     {
+        let store = SqliteStoreBuilder::memory().build().await.expect("store");
         let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("vault");
         let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
         let (reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("bundle");
@@ -168,7 +174,8 @@ fn a_vault_reopens_as_the_same_member() {
 
         let mut reader = Vault::open(&root, OFFSET, &reader_key).expect("reader");
         let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("registry");
-        reader.join(reader_mgr, registry, &subject_bundle, "follow", welcome).expect("join");
+        let welcome = deliver(&store, &subject_key, &welcome).await;
+    reader.join(reader_mgr, registry, &subject_bundle, "follow", &welcome).expect("join");
         assert_eq!(reader.read_from(i64::MIN).expect("read").len(), 1);
     }
     // Both vaults dropped. Nothing in memory survives.
@@ -208,7 +215,6 @@ fn a_vault_reopens_as_the_same_member() {
 #[test]
 fn one_reader_is_a_different_member_to_every_subject() {
     let rng = Rng::default();
-    let reader_key = SigningKey::from_bytes(&rand32());
     let (_reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("reader bundle");
 
     let mut tags = Vec::new();
@@ -245,12 +251,13 @@ fn one_reader_is_a_different_member_to_every_subject() {
 /// architecture working. Before `read_reporting` they were indistinguishable
 /// from the outside: all three produced "fewer days than you expected" and no
 /// way to tell which.
-#[test]
-fn a_read_says_what_it_could_not_open() {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_read_says_what_it_could_not_open() {
     let rng = Rng::default();
     let subject_key = SigningKey::from_bytes(&rand32());
     let reader_key = SigningKey::from_bytes(&rand32());
     let root = tmp("skipped");
+    let store = SqliteStoreBuilder::memory().build().await.expect("store");
 
     let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("vault");
     let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
@@ -264,7 +271,8 @@ fn a_read_says_what_it_could_not_open() {
 
     let mut reader = Vault::open(&root, OFFSET, &reader_key).expect("reader");
     let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("registry");
-    reader.join(reader_mgr, registry, &subject_bundle, "follow", welcome).expect("join");
+    let welcome = deliver(&store, &subject_key, &welcome).await;
+    reader.join(reader_mgr, registry, &subject_bundle, "follow", &welcome).expect("join");
 
     let (got, skipped) = reader.read_reporting(i64::MIN).expect("read");
     assert!(!got.is_empty(), "the reader opened nothing at all");
@@ -283,4 +291,23 @@ fn a_read_says_what_it_could_not_open() {
         "a segment that will not decrypt was not reported: {skipped:?}"
     );
     assert!(skipped.lost() > 0, "lost() did not notice real loss");
+}
+
+/// Put a control message on the wire and take it off again.
+///
+/// **THE ONLY WAY INTO A VAULT NOW, AND THAT IS THE POINT.** `join` and
+/// `receive` take an `Authentic`, and the only constructor of one is
+/// `wire::open_control`. A test that wants to hand a welcome over has to sign
+/// it and verify it exactly as the network would, which is what this does.
+async fn deliver(
+    store: &SqliteStore,
+    signing: &SigningKey,
+    message: &diaswarm_keys::group::Message,
+) -> diaswarm_keys::Authentic {
+    wire::publish_control(store, signing, message).await.expect("publish control");
+    wire::control_from(store, &signing.verifying_key(), None)
+        .await
+        .expect("read control")
+        .pop()
+        .expect("a control message came back")
 }

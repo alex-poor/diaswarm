@@ -85,3 +85,45 @@ async fn reading_the_newest_segment_out_of_a_log_stays_flat() {
         );
     }
 }
+
+/// WHAT COMES BACK OUT OF THE LOG MUST BE THE SEGMENT THAT WENT IN.
+///
+/// **THE TEST THAT WAS MISSING, AND THE BUG IT WOULD HAVE CAUGHT.**
+/// `p2panda_store`'s `LogEntries<T>` is `Vec<(T, Vec<u8>)>` and reads exactly
+/// like `(operation, body)`. It is not: the second half is the encoded
+/// *header*, and the body is on the operation. `wire::collect` took the tuple
+/// at its word, so every segment it returned carried an encoded header where
+/// its ciphertext should have been.
+///
+/// The test above did not notice because it counts segments and times reads,
+/// and a wrong ciphertext is exactly as long-lived and exactly as countable as
+/// a right one. Decrypting is what tells them apart.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_segment_out_of_a_log_still_decrypts_to_the_records_that_went_in() {
+    let rng = Rng::default();
+    let signing = SigningKey::from_bytes(&rand32());
+    let root = tmp("roundtrip");
+    let store = SqliteStoreBuilder::memory().build().await.expect("store");
+
+    let mut vault = Vault::open(&root, OFFSET, &signing).expect("vault");
+    let (mgr, _bundle) = Vault::key_bundle(&rng).expect("bundle");
+    vault.create(mgr).expect("create");
+
+    let sent = day(20_000);
+    let segment = vault.seal(20_000, &sent).expect("seal");
+    wire::publish(&store, &signing, &segment).await.expect("publish");
+
+    let author = signing.verifying_key();
+    let back = wire::segments_tail(&store, &author, 1).await.expect("tail");
+    assert_eq!(back.len(), 1);
+    assert_eq!(back[0].ciphertext, segment.ciphertext, "the log returned different bytes");
+
+    let (records, unparseable) = vault.open_segment(&back[0]).expect("open the segment from the log");
+    assert_eq!(unparseable, 0, "records came back unparseable");
+    assert_eq!(records.len(), sent.len(), "the log lost records");
+    assert_eq!(
+        records.iter().map(|r| r.get("t").cloned()).collect::<Vec<_>>(),
+        sent.iter().map(|r| r.get("t").cloned()).collect::<Vec<_>>(),
+        "the records that came back are not the ones that went in"
+    );
+}

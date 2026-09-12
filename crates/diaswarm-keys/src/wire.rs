@@ -25,13 +25,26 @@ use p2panda_encryption::crypto::xchacha20::XAeadNonce;
 use p2panda_encryption::data_scheme::GroupSecretId;
 use p2panda_store::logs::LogStore;
 use p2panda_store::operations::OperationStore;
-use p2panda_store::{SqliteError, SqliteStore, tx};
+use p2panda_store::{SqliteStore, tx};
 use serde::{Deserialize, Serialize};
 
-use crate::Segment;
+use crate::group::{GrantTag, Message};
+use crate::{Authentic, Error, Segment};
 
 /// One log per subject: a device publishes its own records and nobody else's.
 pub const LOG_ID: u32 = 0;
+
+/// Control messages go in a **separate log**, and that is not tidiness.
+///
+/// [`segments_tail`] asks for the last N entries of [`LOG_ID`] and calls them
+/// the last N days. That holds only because every entry in that log is one
+/// day's segment. Interleaving grants would quietly make "the last seven
+/// entries" mean fewer than seven days, and the failure would look like a
+/// follower missing data rather than like a log-id decision.
+///
+/// Separate logs also mean a carrier can replicate segments without
+/// replicating grants, and the other way round.
+pub const CONTROL_LOG_ID: u32 = 1;
 
 type LogId = u32;
 type SeqNum = u32;
@@ -56,7 +69,7 @@ pub async fn publish(
     store: &SqliteStore,
     signing_key: &SigningKey,
     segment: &Segment,
-) -> Result<SegmentOperation, SqliteError> {
+) -> Result<SegmentOperation, Error> {
     let args = SegmentArgs {
         epoch: segment.epoch,
         secret_id: segment.secret_id,
@@ -108,7 +121,7 @@ pub async fn segments_tail(
     store: &SqliteStore,
     author: &VerifyingKey,
     count: u64,
-) -> Result<Vec<Segment>, SqliteError> {
+) -> Result<Vec<Segment>, Error> {
     let heights = <SqliteStore as LogStore<
         SegmentOperation,
         VerifyingKey,
@@ -129,7 +142,7 @@ pub async fn segments_tail(
         Hash,
     >>::get_log_entries(store, author, &LOG_ID, after, None)
     .await?;
-    Ok(collect(entries))
+    collect(entries)
 }
 
 /// Every segment in a log from `from_epoch` onwards.
@@ -141,7 +154,7 @@ pub async fn segments_from(
     store: &SqliteStore,
     author: &VerifyingKey,
     from_epoch: i64,
-) -> Result<Vec<Segment>, SqliteError> {
+) -> Result<Vec<Segment>, Error> {
     // NO `tx!` HERE, AND THAT IS NOT AN OVERSIGHT. The permit `tx!` takes is
     // for read-then-append; wrapping a plain read in one exhausts the pool and
     // the symptom is `PoolTimedOut`, which reads like a hung database rather
@@ -154,19 +167,191 @@ pub async fn segments_from(
         Hash,
     >>::get_log_entries(store, author, &LOG_ID, None, None)
     .await?;
-    Ok(collect(entries).into_iter().filter(|s| s.epoch >= from_epoch).collect())
+    Ok(collect(entries)?.into_iter().filter(|s| s.epoch >= from_epoch).collect())
 }
 
-fn collect(entries: Option<Vec<(SegmentOperation, Vec<u8>)>>) -> Vec<Segment> {
-    entries
-        .map(|e| e.into_iter())
-        .into_iter()
-        .flatten()
-        .map(|(op, body)| Segment {
+/// **THE SECOND HALF OF A `LogEntries` TUPLE IS THE HEADER, NOT THE BODY.**
+///
+/// `p2panda_store`'s type is `Vec<(T, Vec<u8>)>` and its SQL selects `hash,
+/// header, body` — and then pushes `(operation, header)`. The body is not
+/// dropped; it is on the operation, as `op.body`. But the tuple reads exactly
+/// like `(op, body)` and this function took it as one, so every `Segment` this
+/// returned carried an encoded header where its ciphertext should have been.
+///
+/// Nothing caught it because nothing decrypted what came back out of the log:
+/// `tests/wire.rs` counted segments and timed the read. The control path found
+/// it immediately, because verifying a signature against the payload is a
+/// comparison and counting is not — which is the argument for doing the
+/// verification at all, quite apart from forgery.
+fn collect(entries: Option<Vec<(SegmentOperation, Vec<u8>)>>) -> Result<Vec<Segment>, Error> {
+    let mut out = Vec::new();
+    for (op, _encoded_header) in entries.into_iter().flatten() {
+        let body = op.body.ok_or_else(|| {
+            Error::Forged(format!(
+                "segment operation at seq {} has no body",
+                op.header.seq_num
+            ))
+        })?;
+        out.push(Segment {
             epoch: op.header.extensions.epoch,
             secret_id: op.header.extensions.secret_id,
             nonce: op.header.extensions.nonce,
-            ciphertext: body,
-        })
-        .collect()
+            ciphertext: body.to_bytes(),
+        });
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Control messages
+// ---------------------------------------------------------------------------
+
+/// What rides in a control operation's header.
+///
+/// A version byte and nothing else. The message itself goes in the **body**,
+/// for the same reason a segment's ciphertext does: `p2panda-core` decodes
+/// headers with a 512-byte limit, and a welcome carrying a whole secret bundle
+/// is not small.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ControlArgs {
+    pub v: u8,
+}
+
+/// The only version there has been.
+pub const CONTROL_V1: u8 = 1;
+
+pub type ControlOperation = p2panda_core::Operation<ControlArgs>;
+
+/// Append a control message to the subject's control log, signed.
+///
+/// **THE SIGNATURE IS THE AUTHENTICATION.** Nothing else in the message says
+/// who wrote it that cannot be typed by hand; `sender` is a field in a struct.
+/// What makes it checkable is that the bytes are the body of an operation whose
+/// header is signed, and [`open_control`] refuses anything else.
+pub async fn publish_control(
+    store: &SqliteStore,
+    signing_key: &SigningKey,
+    message: &Message,
+) -> Result<ControlOperation, Error> {
+    // The sender the message claims must be the one this key can prove. A
+    // subject publishing somebody else's message would produce an operation
+    // that `open_control` rejects, and catching it here says so plainly rather
+    // than at the far end of a network.
+    let expected = GrantTag::own(&signing_key.verifying_key());
+    if message.sender() != expected {
+        return Err(Error::Forged(format!(
+            "message says it is from {} but this key is {expected}",
+            message.sender()
+        )));
+    }
+    let payload = p2panda_core::cbor::encode_cbor(message)
+        .map_err(|e| Error::Encode(e.to_string()))?;
+
+    // ONE TRANSACTION, for the reason `publish` gives: read-then-append.
+    let operation = tx!(store, {
+        let (seq_num, backlink) = <SqliteStore as LogStore<
+            ControlOperation,
+            VerifyingKey,
+            LogId,
+            SeqNum,
+            Hash,
+        >>::get_latest_entry_tx(store, &signing_key.verifying_key(), &CONTROL_LOG_ID)
+        .await?
+        .map(|op| (op.header.seq_num + 1, Some(op.hash)))
+        .unwrap_or((0, None));
+
+        let header = Header::builder()
+            .seq_num(seq_num)
+            .backlink(backlink)
+            .body(&payload)
+            .build(signing_key, ControlArgs { v: CONTROL_V1 });
+        let operation = ControlOperation::from_parts(header, Some(Body::from_bytes(payload)));
+        store.insert_operation(&operation.hash, &operation, &CONTROL_LOG_ID).await?;
+        operation
+    });
+    Ok(operation)
+}
+
+/// Check a control operation and, if it holds up, vouch for its message.
+///
+/// **THE ONLY CONSTRUCTOR OF [`Authentic`]**, which is what makes
+/// [`crate::Vault::receive`] safe by construction rather than by inspection.
+///
+/// Three things are checked and they are not interchangeable:
+///
+/// 1. `validate_operation` — the header's signature verifies, and the body is
+///    the one the header committed to. The operation is reassembled from the
+///    body bytes first, because the store hands back header and payload
+///    separately and validating a header with no payload attached would check
+///    the signature without checking what it was over.
+/// 2. the author is the key the caller named. A valid signature by *somebody*
+///    is not authentication; it has to be the subject being followed.
+/// 3. the `sender` inside the message is `GrantTag::own(author)`. Without this
+///    a subject could sign a message claiming to be from one of its own
+///    readers, and the group state would apply it as that reader's.
+pub fn open_control(
+    operation: ControlOperation,
+    expected: &VerifyingKey,
+) -> Result<Authentic, Error> {
+    let author = operation.header.verifying_key;
+    if &author != expected {
+        return Err(Error::Forged(format!(
+            "signed by {} not {}",
+            &author.to_hex()[..16],
+            &expected.to_hex()[..16]
+        )));
+    }
+
+    // **THE BODY MUST BE PRESENT FOR THE CHECK TO MEAN ANYTHING.**
+    // `validate_operation` compares the header's payload hash and size against
+    // the payload it is given, and a `None` payload is not a mismatch — it is
+    // nothing to compare. An operation whose body was pruned would sail through
+    // and then decode as whatever the caller happened to pass.
+    let body = operation
+        .body
+        .as_ref()
+        .ok_or_else(|| Error::Forged("control operation arrived with no body".to_string()))?
+        .to_bytes();
+    p2panda_core::validate_operation(&operation).map_err(|e| Error::Forged(e.to_string()))?;
+
+    let message: Message = p2panda_core::cbor::decode_cbor(&body[..])
+        .map_err(|e| Error::Encode(format!("control message will not decode: {e}")))?;
+
+    let claimed = message.sender();
+    let actual = GrantTag::own(&author);
+    if claimed != actual {
+        return Err(Error::Forged(format!(
+            "signed by {actual} but the message says it is from {claimed}"
+        )));
+    }
+
+    Ok(Authentic::vouched(author, message))
+}
+
+/// Every control message in `subject`'s log after `after`, each authenticated.
+///
+/// `after` is a sequence number, so catching up is "what has arrived since",
+/// not "fetch everything and work out what is new". A vault that has processed
+/// up to seq 3 asks for `Some(3)`.
+pub async fn control_from(
+    store: &SqliteStore,
+    subject: &VerifyingKey,
+    after: Option<SeqNum>,
+) -> Result<Vec<Authentic>, Error> {
+    // NO `tx!`: a plain read, and wrapping one exhausts the pool — see the note
+    // in `segments_from`.
+    let entries = <SqliteStore as LogStore<
+        ControlOperation,
+        VerifyingKey,
+        LogId,
+        SeqNum,
+        Hash,
+    >>::get_log_entries(store, subject, &CONTROL_LOG_ID, after, None)
+    .await?;
+
+    let mut out = Vec::new();
+    for (operation, _encoded_header) in entries.into_iter().flatten() {
+        out.push(open_control(operation, subject)?);
+    }
+    Ok(out)
 }

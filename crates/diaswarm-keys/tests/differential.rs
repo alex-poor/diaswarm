@@ -27,7 +27,8 @@ use std::path::PathBuf;
 
 use diaswarm_core::vault::{Identity, Vault as CoreVault};
 use diaswarm_core::{EPOCH_MS, Record, epoch_of, kind};
-use diaswarm_keys::Vault as KeysVault;
+use diaswarm_keys::{Vault as KeysVault, wire};
+use p2panda_store::{SqliteStore, SqliteStoreBuilder};
 use p2panda_core::SigningKey;
 use p2panda_encryption::Rng;
 
@@ -91,8 +92,8 @@ fn canonical(records: &[Record]) -> Vec<String> {
 }
 
 /// THE SAME RECORDS COME OUT OF BOTH.
-#[test]
-fn both_vaults_give_a_reader_the_same_history() {
+#[tokio::test(flavor = "multi_thread")]
+async fn both_vaults_give_a_reader_the_same_history() {
     let (all, source) = records();
     let mut by_epoch: BTreeMap<i64, Vec<Record>> = BTreeMap::new();
     for r in &all {
@@ -140,7 +141,9 @@ fn both_vaults_give_a_reader_the_same_history() {
     }
     let mut keys_reader = KeysVault::open(&keys_root, OFFSET, &reader_key).expect("reader vault");
     let registry = KeysVault::registry(&[(keys.subject(), subject_bundle.clone())]).expect("registry");
-    keys_reader.join(reader_mgr, registry, &subject_bundle, "follow", welcome).expect("join");
+    let store = SqliteStoreBuilder::memory().build().await.expect("store");
+    let welcome = deliver(&store, &subject_key, &welcome).await;
+    keys_reader.join(reader_mgr, registry, &subject_bundle, "follow", &welcome).expect("join");
     let from_keys: Vec<Record> =
         keys_reader.read_from(i64::MIN).expect("keys read").into_values().flatten().collect();
 
@@ -151,4 +154,23 @@ fn both_vaults_give_a_reader_the_same_history() {
     assert!(!a.is_empty(), "the shipping vault read nothing");
     assert_eq!(a.len(), b.len(), "the two vaults returned different counts");
     assert_eq!(a, b, "the two vaults disagreed about the records themselves");
+}
+
+/// Put a control message on the wire and take it off again.
+///
+/// **THE ONLY WAY INTO A VAULT NOW, AND THAT IS THE POINT.** `join` and
+/// `receive` take an `Authentic`, and the only constructor of one is
+/// `wire::open_control`. A test that wants to hand a welcome over has to sign
+/// it and verify it exactly as the network would, which is what this does.
+async fn deliver(
+    store: &SqliteStore,
+    signing: &SigningKey,
+    message: &diaswarm_keys::group::Message,
+) -> diaswarm_keys::Authentic {
+    wire::publish_control(store, signing, message).await.expect("publish control");
+    wire::control_from(store, &signing.verifying_key(), None)
+        .await
+        .expect("read control")
+        .pop()
+        .expect("a control message came back")
 }

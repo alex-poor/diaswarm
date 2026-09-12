@@ -174,6 +174,17 @@ impl Message {
         }
     }
 
+    /// Who this message says it is from.
+    ///
+    /// A claim until [`crate::wire::open_control`] has checked it against a
+    /// signature — which is why [`crate::Vault::receive`] will not take a bare
+    /// `Message`.
+    pub fn sender(&self) -> MemberId {
+        match self {
+            Message::Control { sender, .. } | Message::Application { sender, .. } => *sender,
+        }
+    }
+
     /// Stamp the sender and a content-derived id, which the orderer cannot do
     /// because it does not hold the identity.
     ///
@@ -183,19 +194,66 @@ impl Message {
     /// subjects each creating a group, say — derived the *same* id. The
     /// orderer keys its `messages` map and its seen-set on that id, so one
     /// would have silently displaced the other.
-    pub fn stamp(mut self, sender: MemberId) -> Self {
+    pub fn stamp(mut self, sender: MemberId) -> Result<Self, crate::Error> {
         match &mut self {
             Message::Control { sender: s, .. } | Message::Application { sender: s, .. } => {
                 *s = sender;
             }
         }
-        let bytes = serde_json::to_vec(&self).unwrap_or_default();
-        let id = Hash::digest(&bytes);
+        let id = self.content_id()?;
         match &mut self {
             Message::Control { id: i, .. } | Message::Application { id: i, .. } => *i = id,
         }
-        self
+        Ok(self)
     }
+
+    /// The id: a hash over the sender, the dependencies and the content.
+    ///
+    /// **CBOR, AND THE ERROR IS NOT SWALLOWED — BOTH WERE WRONG BEFORE.** This
+    /// was `serde_json::to_vec(&self).unwrap_or_default()`, which has two
+    /// faults that compound. JSON cannot encode a map with a non-string key,
+    /// and a `DirectMessage` carries exactly that — the same wall
+    /// [`crate::Vault::save`] hit and switched to CBOR for. And
+    /// `unwrap_or_default()` turns that failure into empty bytes, so *every*
+    /// message would have come out with `Hash::digest(b"")` as its id: one id
+    /// for the whole group, silently, with the orderer keying its map and its
+    /// seen-set on it.
+    ///
+    /// **THE ID FIELD IS EXCLUDED RATHER THAN ZEROED**, so the hash is over a
+    /// shape that has no id in it at all. Hashing `self` with a placeholder id
+    /// would have made the result depend on which placeholder the orderer
+    /// happened to use, which is not a property anything should rest on.
+    pub fn content_id(&self) -> Result<OperationId, crate::Error> {
+        let canonical = match self {
+            Message::Control { sender, dependencies, control, direct, .. } => {
+                Canonical::Control { sender, dependencies, control, direct }
+            }
+            Message::Application { sender, dependencies, secret_id, nonce, ciphertext, .. } => {
+                Canonical::Application { sender, dependencies, secret_id, nonce, ciphertext }
+            }
+        };
+        let bytes = p2panda_core::cbor::encode_cbor(&canonical)
+            .map_err(|e| crate::Error::Encode(e.to_string()))?;
+        Ok(Hash::digest(&bytes))
+    }
+}
+
+/// [`Message`] without its id, which is what the id is a hash of.
+#[derive(Serialize)]
+enum Canonical<'a> {
+    Control {
+        sender: &'a MemberId,
+        dependencies: &'a [OperationId],
+        control: &'a ControlMessage<MemberId>,
+        direct: &'a [DirectMessage<MemberId, OperationId, Dgm>],
+    },
+    Application {
+        sender: &'a MemberId,
+        dependencies: &'a [OperationId],
+        secret_id: &'a GroupSecretId,
+        nonce: &'a XAeadNonce,
+        ciphertext: &'a [u8],
+    },
 }
 
 impl GroupMessage<MemberId, OperationId, Dgm> for Message {
@@ -204,9 +262,7 @@ impl GroupMessage<MemberId, OperationId, Dgm> for Message {
     }
 
     fn sender(&self) -> MemberId {
-        match self {
-            Message::Control { sender, .. } | Message::Application { sender, .. } => *sender,
-        }
+        Message::sender(self)
     }
 
     fn content(&self) -> GroupMessageContent<MemberId> {

@@ -21,19 +21,36 @@
 //! Auth — who may grant, and the tamper-evident record of grants ([D13]) — is a
 //! separate question this crate does not answer.
 //!
-//! 🔴 **CONTROL MESSAGES ARE NOT AUTHENTICATED, AND NOTHING HERE CARRIES THEM
-//! YET.** [`group::Message`] is a plain struct with a `sender` field anybody can
-//! set, and [`Vault::receive`] processes one without checking who sent it.
-//! `p2panda-spaces` avoids this by making every message a signed
-//! `p2panda_core::Operation`; [`wire`] does that for *segments* and not for
-//! control messages, so there is currently no transport for a grant at all.
+//! **CONTROL MESSAGES ARE SIGNED, AND THE TYPE SYSTEM SAYS SO.**
+//! [`group::Message`] is a plain struct whose `sender` field anybody can set, so
+//! [`Vault::receive`] and [`Vault::join`] do not take one: they take an
+//! [`Authentic`], and the only way to make an `Authentic` is
+//! [`wire::open_control`], which will not return one unless a
+//! `p2panda_core::Operation` carrying the message was signed by the key the
+//! caller named and the message's `sender` is that key's [`group::GrantTag`].
 //!
-//! That makes it incomplete rather than exploitable as it stands — a forged
-//! message has to reach `receive`, and nothing delivers one — but it is the
-//! next thing to fix and it must be fixed before anything replicates grants.
-//! The shape is the same as `wire::publish`: put the control message in an
-//! operation, let the signature say who sent it, and check it against the
-//! member the message claims to be from.
+//! Three claims are checked, and the third is the one that matters:
+//!
+//! 1. the signature verifies and the body is the one the header committed to —
+//!    `p2panda_core::validate_operation`;
+//! 2. the author is the subject the caller expected, not merely *some* valid
+//!    author;
+//! 3. the `sender` inside the message equals `GrantTag::own(author)`, so a
+//!    signed message cannot claim to come from a different member than the one
+//!    that signed it.
+//!
+//! This is the same construction `p2panda-spaces` uses — every message is a
+//! signed operation — reached by the same route, and [`wire`] now carries
+//! control messages as well as segments. They go in **their own log**: mixing
+//! them into the segment log would break the invariant `wire::segments_tail`
+//! rests on, that the last N entries are the last N days.
+//!
+//! **ONLY THE SUBJECT GRANTS**, which is what makes the check that simple.
+//! `GrantTag::own` is a public function of a public key, so anyone can compute
+//! the one identifier a control message is allowed to carry as its sender;
+//! every *other* tag in the message — the reader being added — stays
+//! unlinkable, because those come from ECDH and this one deliberately does
+//! not.
 
 pub mod group;
 pub mod wire;
@@ -72,6 +89,20 @@ pub enum Error {
     Crypto(String),
     #[error("no group secret yet — open a group first")]
     NoSecret,
+    /// A message did not prove it came from who it says it came from.
+    #[error("unauthenticated control message: {0}")]
+    Forged(String),
+    #[error("encoding: {0}")]
+    Encode(String),
+    /// Sealed under a secret this vault was never given — access control
+    /// working, not a failure. Counted as `not_ours`.
+    #[error("sealed under a secret this vault was not given")]
+    NotGranted,
+    /// The secret was held and the ciphertext still would not open. A failure.
+    #[error("held the secret and the segment still would not open")]
+    Undecryptable,
+    #[error(transparent)]
+    Store(#[from] p2panda_store::SqliteError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -115,12 +146,52 @@ pub struct Segment {
     pub ciphertext: Vec<u8>,
 }
 
+/// A control message whose sender has been proved against a signature.
+///
+/// **THE POINT IS THAT THERE IS NO OTHER CONSTRUCTOR.** The field is private
+/// and [`wire::open_control`] is the only thing in the crate that fills it, so
+/// "did anybody check who sent this?" is answered by the type rather than by
+/// reading [`Vault::receive`] carefully. A bare [`group::Message`] cannot be
+/// received at all.
+///
+/// It carries the author it was verified against, not just the message, so
+/// [`Vault::receive`] can also refuse a message that is perfectly valid but
+/// from the wrong subject.
+#[derive(Debug, Clone)]
+pub struct Authentic {
+    author: p2panda_core::VerifyingKey,
+    message: Message,
+}
+
+impl Authentic {
+    /// The key whose signature was checked.
+    pub fn author(&self) -> &p2panda_core::VerifyingKey {
+        &self.author
+    }
+
+    /// The message, now that it has been vouched for.
+    pub fn message(&self) -> &Message {
+        &self.message
+    }
+
+    /// Only [`wire::open_control`] calls this, and only after checking.
+    pub(crate) fn vouched(author: p2panda_core::VerifyingKey, message: Message) -> Self {
+        Authentic { author, message }
+    }
+}
+
 pub struct Vault {
     root: PathBuf,
     offset: i64,
     state: Option<State>,
     rng: Rng,
     me: MemberId,
+    /// Whose control messages this vault will accept: itself if it created the
+    /// group, the subject if it joined one. `None` until either happens.
+    subject_key: Option<p2panda_core::VerifyingKey>,
+    /// This vault's own signing identity, so a subject vault can vouch for the
+    /// messages it produced itself without a round trip through the store.
+    my_key: p2panda_core::VerifyingKey,
 }
 
 impl Vault {
@@ -137,8 +208,12 @@ impl Vault {
         std::fs::create_dir_all(root.join("segments"))?;
         let rng = Rng::default();
         let me = GrantTag::own(&signing.verifying_key());
-        let state = Self::load(&root)?;
-        Ok(Vault { root, offset, state, rng, me })
+        let my_key = signing.verifying_key();
+        let (state, subject_key) = match Self::load(&root)? {
+            Some((state, key)) => (Some(state), key),
+            None => (None, None),
+        };
+        Ok(Vault { root, offset, state, rng, me, subject_key, my_key })
     }
 
     /// Where the group state lives. One file, beside the segments it opens.
@@ -146,7 +221,8 @@ impl Vault {
         root.join("group.cbor")
     }
 
-    fn load(root: &Path) -> Result<Option<State>, Error> {
+    #[allow(clippy::type_complexity)]
+    fn load(root: &Path) -> Result<Option<(State, Option<p2panda_core::VerifyingKey>)>, Error> {
         let path = Self::state_path(root);
         if !path.exists() {
             return Ok(None);
@@ -154,7 +230,8 @@ impl Vault {
         let bytes = std::fs::read(&path)?;
         let saved: Persisted = p2panda_core::cbor::decode_cbor(&bytes[..])
             .map_err(|e| Error::Crypto(format!("state will not decode: {e}")))?;
-        Ok(Some(saved.into_state()))
+        let subject_key = saved.subject_key;
+        Ok(Some((saved.into_state(), subject_key)))
     }
 
     /// Write the group state out, readable by nobody else.
@@ -173,7 +250,7 @@ impl Vault {
         // object key must be a string, so `serde_json` refuses them with "key
         // must be a string". CBOR has no such restriction and is what p2panda
         // encodes with everywhere else.
-        let encoded = p2panda_core::cbor::encode_cbor(&PersistedRef::of(state))
+        let encoded = p2panda_core::cbor::encode_cbor(&PersistedRef::of(state, self.subject_key.as_ref()))
             .map_err(|e| Error::Crypto(format!("state will not encode: {e}")))?;
         std::fs::write(&tmp, encoded)?;
         #[cfg(unix)]
@@ -288,8 +365,10 @@ impl Vault {
         let (state, msg) = Group::create(state, vec![self.me], &self.rng)
             .map_err(|e| Error::Group(e.to_string()))?;
         self.state = Some(state);
+        // A subject's own control messages are the ones this vault will accept.
+        self.subject_key = Some(self.my_key);
         self.save()?;
-        Ok(msg.stamp(self.me))
+        msg.stamp(self.me)
     }
 
     /// Seal a day into its own segment.
@@ -308,6 +387,37 @@ impl Vault {
         let path = self.root.join("segments").join(format!("{epoch}.json"));
         std::fs::write(path, serde_json::to_vec(&segment)?)?;
         Ok(segment)
+    }
+
+    /// Open one segment, wherever it came from.
+    ///
+    /// **SEGMENTS DO NOT ONLY COME FROM DISK.** [`read_reporting`] walks a
+    /// directory, but a follower's arrive as operation bodies over
+    /// `p2panda-net` and never touch one. Both paths need the same three steps
+    /// — find the secret this segment names, decrypt, parse — so they are
+    /// here once rather than twice.
+    ///
+    /// Returns the records and how many lines inside would not parse, which the
+    /// caller must not drop: see [`Skipped`].
+    ///
+    /// [`read_reporting`]: Vault::read_reporting
+    pub fn open_segment(&self, segment: &Segment) -> Result<(Vec<Record>, usize), Error> {
+        let state = self.state.as_ref().ok_or(Error::NoSecret)?;
+        let secret = state.secrets.get(&segment.secret_id).ok_or(Error::NotGranted)?;
+        let plain = decrypt_data(&segment.ciphertext, secret, segment.nonce)
+            .map_err(|_| Error::Undecryptable)?;
+        let mut records = Vec::new();
+        let mut unparseable = 0;
+        for line in String::from_utf8_lossy(&plain).lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match Record::from_json(line) {
+                Ok(r) => records.push(r),
+                Err(_) => unparseable += 1,
+            }
+        }
+        Ok((records, unparseable))
     }
 
     /// Everything this vault can open from `from_epoch` onwards.
@@ -333,7 +443,7 @@ impl Vault {
     /// silently received four days out of five is precisely the failure this
     /// project keeps being bitten by". This is that, for segments.
     pub fn read_reporting(&self, from_epoch: i64) -> Result<(BTreeMap<i64, Vec<Record>>, Skipped), Error> {
-        let state = self.state.as_ref().ok_or(Error::NoSecret)?;
+        let _ = self.state.as_ref().ok_or(Error::NoSecret)?;
         let mut out = BTreeMap::new();
         let mut skipped = Skipped::default();
         for entry in std::fs::read_dir(self.root.join("segments"))? {
@@ -351,28 +461,18 @@ impl Vault {
                 skipped.unreadable += 1;
                 continue;
             };
-            // NOT AN ERROR. A segment sealed under a secret this vault was never
-            // given is the access control working — a day from before a grant,
-            // or after a revocation.
-            let Some(secret) = state.secrets.get(&segment.secret_id) else {
-                skipped.not_ours += 1;
-                continue;
-            };
-            let Ok(plain) = decrypt_data(&segment.ciphertext, secret, segment.nonce) else {
-                skipped.undecryptable += 1;
-                continue;
-            };
-            let mut records = Vec::new();
-            for line in String::from_utf8_lossy(&plain).lines() {
-                if line.trim().is_empty() {
-                    continue;
+            match self.open_segment(&segment) {
+                Ok((records, unparseable)) => {
+                    skipped.unparseable += unparseable;
+                    out.insert(epoch, records);
                 }
-                match Record::from_json(line) {
-                    Ok(r) => records.push(r),
-                    Err(_) => skipped.unparseable += 1,
-                }
+                // NOT AN ERROR. A segment sealed under a secret this vault was
+                // never given is the access control working — a day from before
+                // a grant, or after a revocation.
+                Err(Error::NotGranted) => skipped.not_ours += 1,
+                Err(Error::Undecryptable) => skipped.undecryptable += 1,
+                Err(e) => return Err(e),
             }
-            out.insert(epoch, records);
         }
         Ok((out, skipped))
     }
@@ -396,7 +496,7 @@ impl Vault {
             Group::add(state, tag, &self.rng).map_err(|e| Error::Group(e.to_string()))?;
         self.state = Some(state);
         self.save()?;
-        Ok((msg.stamp(self.me), tag))
+        Ok((msg.stamp(self.me)?, tag))
     }
 
     /// Remove a reader. Rotates the secret, so the next segment is not theirs.
@@ -406,15 +506,38 @@ impl Vault {
             Group::remove(state, reader, &self.rng).map_err(|e| Error::Group(e.to_string()))?;
         self.state = Some(state);
         self.save()?;
-        Ok(msg.stamp(self.me))
+        msg.stamp(self.me)
     }
 
-    /// Take in a control message from somebody else.
-    pub fn receive(&mut self, message: Message) -> Result<(), Error> {
+    /// Take in a control message from the subject of this vault's group.
+    ///
+    /// **IT WILL NOT TAKE A BARE [`Message`].** An [`Authentic`] can only come
+    /// from [`wire::open_control`], which has already checked the signature, the
+    /// author and the claimed sender. What is left for this to check is the one
+    /// thing `open_control` cannot know on its own: that the author is *this*
+    /// vault's subject, and not some other perfectly valid one. A follower of
+    /// two children holds two vaults, and a grant from one is not a grant from
+    /// the other.
+    pub fn receive(&mut self, message: &Authentic) -> Result<(), Error> {
+        match self.subject_key {
+            Some(expected) if expected == message.author => {}
+            Some(expected) => {
+                return Err(Error::Forged(format!(
+                    "signed by {} but this vault follows {}",
+                    &message.author.to_hex()[..16],
+                    &expected.to_hex()[..16]
+                )));
+            }
+            None => {
+                return Err(Error::Forged(
+                    "this vault has no group yet, so it follows nobody".to_string(),
+                ));
+            }
+        }
         let state = self.state.take().ok_or(Error::NoSecret)?;
-        let (mut state, _out) =
-            Group::receive(state, &message).map_err(|e| Error::Group(e.to_string()))?;
-        state.orderer.saw(message.id());
+        let (mut state, _out) = Group::receive(state, &message.message)
+            .map_err(|e| Error::Group(e.to_string()))?;
+        state.orderer.saw(message.message.id());
         self.state = Some(state);
         self.save()?;
         Ok(())
@@ -433,9 +556,11 @@ impl Vault {
         registry: p2panda_encryption::key_registry::KeyRegistryState<MemberId>,
         subject_bundle: &LongTermKeyBundle,
         purpose: &str,
-        welcome: Message,
+        welcome: &Authentic,
     ) -> Result<(), Error> {
         self.me = Self::tag_for(&manager, subject_bundle, purpose)?;
+        // Everything afterwards must come from whoever signed the welcome.
+        self.subject_key = Some(welcome.author);
         let dcgka = p2panda_encryption::data_scheme::dcgka::Dcgka::init(
             self.me,
             manager,
@@ -449,9 +574,9 @@ impl Vault {
             secrets: p2panda_encryption::data_scheme::SecretBundle::init(),
             is_welcomed: false,
         };
-        let (mut state, _out) =
-            Group::receive(state, &welcome).map_err(|e| Error::Group(e.to_string()))?;
-        state.orderer.saw(welcome.id());
+        let (mut state, _out) = Group::receive(state, &welcome.message)
+            .map_err(|e| Error::Group(e.to_string()))?;
+        state.orderer.saw(welcome.message.id());
         self.state = Some(state);
         self.save()?;
         Ok(())
@@ -486,6 +611,11 @@ impl Vault {
 #[derive(Deserialize)]
 struct Persisted {
     my_id: MemberId,
+    /// Whose control messages this vault accepts. `default` so a vault written
+    /// before this field existed still opens — as one that follows nobody,
+    /// which is the safe reading of "we did not record it".
+    #[serde(default)]
+    subject_key: Option<p2panda_core::VerifyingKey>,
     pki: p2panda_encryption::key_registry::KeyRegistryState<MemberId>,
     my_keys: p2panda_encryption::key_manager::KeyManagerState,
     two_party: std::collections::HashMap<
@@ -505,6 +635,7 @@ struct Persisted {
 #[derive(Serialize)]
 struct PersistedRef<'a> {
     my_id: &'a MemberId,
+    subject_key: Option<&'a p2panda_core::VerifyingKey>,
     pki: &'a p2panda_encryption::key_registry::KeyRegistryState<MemberId>,
     my_keys: &'a p2panda_encryption::key_manager::KeyManagerState,
     two_party: &'a std::collections::HashMap<
@@ -518,9 +649,10 @@ struct PersistedRef<'a> {
 }
 
 impl<'a> PersistedRef<'a> {
-    fn of(y: &'a State) -> Self {
+    fn of(y: &'a State, subject_key: Option<&'a p2panda_core::VerifyingKey>) -> Self {
         PersistedRef {
             my_id: &y.my_id,
+            subject_key,
             pki: &y.dcgka.pki,
             my_keys: &y.dcgka.my_keys,
             two_party: &y.dcgka.two_party,
