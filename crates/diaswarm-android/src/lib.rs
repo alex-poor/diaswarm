@@ -378,6 +378,23 @@ struct Pooled {
     runtime: tokio::runtime::Runtime,
     swarm: diaswarm_net::swarm::Swarm,
     node_id: String,
+    /// **THE ONE KEYS STORE ON THIS PHONE, AND IT LIVES HERE FOR A REASON.**
+    ///
+    /// `p2panda-store` builds its pool with `max_connections(1)` and sets no
+    /// busy timeout. Two independent pools on one SQLite file is therefore not
+    /// a tidiness question but a writer-contention bug: sealing and replication
+    /// would take turns failing, on a phone that may be driving an insulin
+    /// pump. So there is exactly one, shared by cloning the handle — and it
+    /// belongs to the pool because the pool is the long-lived object. Every
+    /// other keys handle is opened and closed within a pass.
+    ///
+    /// `None` when the phone joined without a keys directory, which is what a
+    /// build with the keys vault switched off looks like.
+    keys_store: Option<diaswarm_keys::SqliteStore>,
+    /// Replication for that store. Holding it here keeps its subscription
+    /// alive: dropping a `KeysReplicator` unsubscribes, and a follower that
+    /// re-subscribed every pass would be catching up for ever.
+    keys_replicator: Option<diaswarm_net::replicate::KeysReplicator>,
 }
 
 /// Join the pool. Returns a handle, or 0.
@@ -392,7 +409,16 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmJoin<'a>(
     _class: JClass<'a>,
     store_path: JString<'a>,
     node_key_path: JString<'a>,
+    keys_path: JString<'a>,
 ) -> jlong {
+    // Empty means this build has no keys vault: it pools, serves and follows
+    // exactly as before, which is what keeps D26 switch-off-able.
+    let keys_dir = env
+        .get_string(&keys_path)
+        .ok()
+        .map(String::from)
+        .filter(|p| !p.trim().is_empty())
+        .map(PathBuf::from);
     let (Ok(store), Ok(key_path)) = (env.get_string(&store_path), env.get_string(&node_key_path))
     else {
         return 0;
@@ -410,8 +436,83 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmJoin<'a>(
     let Ok(swarm) = joined else { return 0 };
     let Ok(node_id) = runtime.block_on(swarm.node_id()) else { return 0 };
 
-    Box::into_raw(Box::new(Pooled { runtime, swarm, node_id })) as jlong
+    // The keys store and its replication, on this same runtime. Failure here is
+    // not fatal: a phone with no keys vault still pools, serves and follows
+    // exactly as it did before, which is what keeps this switch-off-able.
+    let (keys_store, keys_replicator) = match keys_dir {
+        Some(dir) => {
+            let url = format!("sqlite://{}", dir.join("keys.sqlite").display());
+            match runtime.block_on(async {
+                let store = diaswarm_keys::SqliteStoreBuilder::new()
+                    .database_url(&url)
+                    .create_database(true)
+                    .build()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let (endpoint, gossip) = swarm.parts();
+                let replicator = diaswarm_net::replicate::KeysReplicator::keys(
+                    store.clone(),
+                    endpoint,
+                    gossip,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                Ok::<_, String>((store, replicator))
+            }) {
+                Ok((store, repl)) => (Some(store), Some(repl)),
+                Err(_) => (None, None),
+            }
+        }
+        None => (None, None),
+    };
+
+    Box::into_raw(Box::new(Pooled { runtime, swarm, node_id, keys_store, keys_replicator }))
+        as jlong
 }
+
+/// Carry a subject's keys logs on the bucket topic they fall in.
+///
+/// Idempotent: a pool pass calls it for everything it should hold and most of
+/// that is already known. Returns 0, or negative.
+///
+/// **BOTH LOGS, ONE CALL.** `KeysReplicator` associates the segment log and the
+/// control log together, because a follower with segments and no grants cannot
+/// open them and one with grants and no segments has nothing to open.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarry<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    subject_hex: JString<'a>,
+) -> jlong {
+    if handle == 0 {
+        return -1;
+    }
+    let Ok(subject) = env.get_string(&subject_hex) else { return -2 };
+    let subject = String::from(subject).to_ascii_lowercase();
+    if verifying_key(&subject).is_none() {
+        return -2;
+    }
+    let pooled = unsafe { &*(handle as *const Pooled) };
+    let Some(replicator) = pooled.keys_replicator.as_ref() else { return -3 };
+
+    let members = pooled
+        .runtime
+        .block_on(pooled.swarm.pool_members())
+        .map(|m| m.len())
+        .unwrap_or(2)
+        .max(2);
+    let depth = diaswarm_net::pool::depth_for(members);
+    let topic = diaswarm_net::pool::bucket_topic(
+        depth,
+        diaswarm_net::pool::bucket_of(&subject, depth),
+    );
+    match pooled.runtime.block_on(replicator.carry(topic, &subject)) {
+        Ok(()) => 0,
+        Err(_) => -4,
+    }
+}
+
 
 /// This phone's id in the pool. Empty on a bad handle.
 #[no_mangle]
@@ -1396,7 +1497,14 @@ struct KeysVault {
     /// `Vault::grant` returns a message; until `wire::publish_control` has put
     /// it in the control log, no reader can ever receive it and no peer can
     /// replicate it. A vault without a store can seal and nothing else.
-    runtime: tokio::runtime::Runtime,
+    ///
+    /// **BORROWED FROM THE POOL, NOT OPENED HERE.** `p2panda-store` builds its
+    /// pool with `max_connections(1)` and no busy timeout, so a second pool on
+    /// the same file would make sealing and replication take turns failing. The
+    /// runtime is borrowed for the same reason in reverse: a handle that is
+    /// opened and closed within a pass must not own the runtime a long-lived
+    /// sync subscription is running on.
+    handle: tokio::runtime::Handle,
     store: diaswarm_keys::SqliteStore,
     signing: p2panda_core::SigningKey,
     vault: diaswarm_keys::Vault,
@@ -1426,10 +1534,18 @@ fn keys_vault<'h>(handle: jlong) -> Option<&'h mut KeysVault> {
 pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysOpen<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
+    pool: jlong,
     dir: JString<'a>,
     identity_path: JString<'a>,
     offset_ms: jlong,
 ) -> jlong {
+    if pool == 0 {
+        return 0;
+    }
+    let pooled = unsafe { &*(pool as *const Pooled) };
+    let Some(store) = pooled.keys_store.clone() else { return 0 };
+    let handle = pooled.runtime.handle().clone();
+
     let (Ok(dir), Ok(id_s)) = (env.get_string(&dir), env.get_string(&identity_path)) else {
         return 0;
     };
@@ -1442,19 +1558,6 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysOpen<'a>(
     if std::fs::create_dir_all(&dir).is_err() {
         return 0;
     }
-    let Ok(runtime) = tokio::runtime::Runtime::new() else { return 0 };
-
-    let url = format!("sqlite://{}", dir.join("keys.sqlite").display());
-    let Ok(store) = runtime.block_on(async {
-        diaswarm_keys::SqliteStoreBuilder::new()
-            .database_url(&url)
-            .create_database(true)
-            .build()
-            .await
-    }) else {
-        return 0;
-    };
-
     let Ok(mut vault) = diaswarm_keys::Vault::open(&dir, offset_ms, &signing) else {
         return 0;
     };
@@ -1471,14 +1574,14 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysOpen<'a>(
         // and one that starts at the first grant cannot show that nothing came
         // before it. An earlier version of this dropped the message on the
         // floor, so every vault made by it has a log beginning mid-history.
-        if runtime
+        if handle
             .block_on(diaswarm_keys::wire::publish_control(&store, &signing, &create))
             .is_err()
         {
             return 0;
         }
     }
-    Box::into_raw(Box::new(KeysVault { tag: KEYS_TAG, runtime, store, signing, vault })) as jlong
+    Box::into_raw(Box::new(KeysVault { tag: KEYS_TAG, handle, store, signing, vault })) as jlong
 }
 
 /// Close it. Safe to call with 0.
@@ -1605,7 +1708,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGrant<'a>(
         Ok(pair) => pair,
         Err(e) => return to_jstring(env, format!("error grant {e}")),
     };
-    if let Err(e) = v.runtime.block_on(diaswarm_keys::wire::publish_control(
+    if let Err(e) = v.handle.block_on(diaswarm_keys::wire::publish_control(
         &v.store,
         &v.signing,
         &welcome,
@@ -1656,7 +1759,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRevoke<'a>(
     // carries the rotated secret as direct messages to everyone still in the
     // group; a remaining reader that never processes it stops opening days at
     // the moment somebody *else* was revoked, with nothing to say why.
-    if v.runtime
+    if v.handle
         .block_on(diaswarm_keys::wire::publish_control(&v.store, &v.signing, &message))
         .is_err()
     {
@@ -1724,7 +1827,7 @@ pub fn join_subject(
     own_dir: &Path,
     joined_dir: &Path,
     store: &diaswarm_keys::SqliteStore,
-    runtime: &tokio::runtime::Runtime,
+    runtime: &tokio::runtime::Handle,
     signing: &p2panda_core::SigningKey,
     subject: &p2panda_core::VerifyingKey,
     subject_bundle_hex: &str,
@@ -1767,23 +1870,39 @@ pub fn join_subject(
     Err(format!("none of the {} control messages welcome us", control.len()))
 }
 
-/// Everything a joined vault can open from `from_epoch` onwards, as NDJSON.
+/// What a joined vault can open, as NDJSON.
 ///
 /// **SEGMENTS COME FROM THE LOG, NOT A DIRECTORY.** A follower's arrive as
 /// operation bodies over `p2panda-net` and never touch the filesystem, which is
 /// the whole shape of D26 — so this reads them out of the store rather than
 /// calling `read_from`. What it cannot open it counts; a short answer must
 /// never be a silent one.
+///
+/// **`tail_days` IS THE FLAGSHIP'S PARAMETER, AND 0 IS NOT.** A parent needs 24
+/// hours (D11), and `segments_tail` answers that by sequence number so the
+/// store does the skipping — measured flat in `diaswarm-keys/tests/wire.rs` as
+/// the log grows. `segments_from` reads the whole log and filters, which is
+/// linear in everything the subject ever sealed: the right primitive for a
+/// research export and the wrong one for a follower refreshing every two
+/// minutes. Passing 0 asks for that linear read deliberately.
 pub fn read_followed(
     vault: &diaswarm_keys::Vault,
     store: &diaswarm_keys::SqliteStore,
-    runtime: &tokio::runtime::Runtime,
+    runtime: &tokio::runtime::Handle,
     subject: &p2panda_core::VerifyingKey,
+    tail_days: u64,
     from_epoch: i64,
 ) -> Result<(String, usize, usize), String> {
-    let segments = runtime
-        .block_on(diaswarm_keys::wire::segments_from(store, subject, from_epoch))
-        .map_err(|e| format!("segments {e}"))?;
+    let segments = if tail_days > 0 {
+        let tail = runtime
+            .block_on(diaswarm_keys::wire::segments_tail(store, subject, tail_days))
+            .map_err(|e| format!("segments {e}"))?;
+        tail.into_iter().filter(|s| s.epoch >= from_epoch).collect()
+    } else {
+        runtime
+            .block_on(diaswarm_keys::wire::segments_from(store, subject, from_epoch))
+            .map_err(|e| format!("segments {e}"))?
+    };
 
     let mut out = String::new();
     let mut opened = 0usize;
@@ -1825,11 +1944,12 @@ pub fn follow_read(
     own_dir: &Path,
     joined_dir: &Path,
     store: &diaswarm_keys::SqliteStore,
-    runtime: &tokio::runtime::Runtime,
+    runtime: &tokio::runtime::Handle,
     signing: &p2panda_core::SigningKey,
     subject: &p2panda_core::VerifyingKey,
     subject_bundle_hex: &str,
     purpose: &str,
+    tail_days: u64,
     from_epoch: i64,
     offset_ms: i64,
 ) -> String {
@@ -1855,7 +1975,7 @@ pub fn follow_read(
         },
     };
 
-    match read_followed(&vault, store, runtime, subject, from_epoch) {
+    match read_followed(&vault, store, runtime, subject, tail_days, from_epoch) {
         Ok((ndjson, opened, unreadable)) => format!("ok {opened} {unreadable}\n{ndjson}"),
         Err(e) => format!("error read {e}"),
     }
@@ -1872,6 +1992,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysFollowRead<'a>(
     subject_hex: JString<'a>,
     subject_bundle: JString<'a>,
     purpose: JString<'a>,
+    tail_days: jlong,
     from_epoch: jlong,
 ) -> JString<'a> {
     let (Ok(joined), Ok(subject), Ok(bundle), Ok(purpose)) = (
@@ -1898,11 +2019,12 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysFollowRead<'a>(
         &own_dir,
         Path::new(&joined),
         &v.store,
-        &v.runtime,
+        &v.handle,
         &v.signing,
         &author,
         &bundle,
         &purpose,
+        tail_days.max(0) as u64,
         from_epoch,
         offset,
     );
@@ -2003,7 +2125,7 @@ mod shadow_tests {
             &own_dir,
             &dir("joined"),
             &store,
-            &rt,
+            rt.handle(),
             &me,
             &author,
             &subject_bundle,
@@ -2014,7 +2136,7 @@ mod shadow_tests {
         assert!(joined.is_welcomed());
 
         let (ndjson, opened, _unreadable) =
-            super::read_followed(&joined, &store, &rt, &author, i64::MIN).expect("read");
+            super::read_followed(&joined, &store, rt.handle(), &author, 0, i64::MIN).expect("read");
 
         let lines = ndjson.lines().filter(|l| !l.trim().is_empty()).count();
 
@@ -2073,11 +2195,12 @@ mod shadow_tests {
                 &own_dir,
                 &joined_dir,
                 &store,
-                &rt,
+                rt.handle(),
                 &me,
                 &author,
                 &subject_bundle,
                 "follow",
+                0,
                 from,
                 12 * 3_600_000,
             )
@@ -2098,11 +2221,12 @@ mod shadow_tests {
             &own_dir,
             &joined_dir,
             &pruned,
-            &rt,
+            rt.handle(),
             &me,
             &author,
             &subject_bundle,
             "follow",
+            0,
             i64::MIN,
             12 * 3_600_000,
         );
@@ -2111,6 +2235,80 @@ mod shadow_tests {
             "a second read re-joined instead of reusing: {}",
             &second[..second.len().min(60)]
         );
+    }
+
+    /// A FOLLOWER ASKING FOR A DAY GETS A DAY, NOT A HISTORY.
+    ///
+    /// **THE FLAGSHIP'S READ, AND THE ONE THAT HAS TO STAY CHEAP.** A parent
+    /// needs 24 hours (D11) while the subject may hold months, and a grant
+    /// hands over secrets for all of it — so "what can I open" and "what do I
+    /// want" are very different sizes. `segments_tail` asks by sequence number
+    /// and lets the store skip; `diaswarm-keys/tests/wire.rs` measures that
+    /// staying flat as the log grows. This pins the correctness half: the right
+    /// days come back, and only those.
+    #[test]
+    fn a_tail_read_returns_the_newest_days_and_no_others() {
+        use diaswarm_keys::{Vault, encode_bundle, wire};
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store = rt.block_on(async {
+            diaswarm_keys::SqliteStoreBuilder::memory().build().await.unwrap()
+        });
+        let rng = diaswarm_keys::Rng::default();
+
+        let me = p2panda_core::SigningKey::generate();
+        let own_dir = dir("t-own");
+        let mut own = Vault::open(&own_dir, 12 * 3_600_000, &me).unwrap();
+        let (own_mgr, _b) = Vault::key_bundle(&rng).unwrap();
+        own.create(own_mgr).unwrap();
+        let my_bundle = encode_bundle(&own.my_bundle().unwrap()).unwrap();
+        drop(own);
+
+        let subject_key = p2panda_core::SigningKey::generate();
+        let mut subject = Vault::open(dir("t-subject"), 12 * 3_600_000, &subject_key).unwrap();
+        let (s_mgr, _sb) = Vault::key_bundle(&rng).unwrap();
+        let create = subject.create(s_mgr).unwrap();
+        rt.block_on(wire::publish_control(&store, &subject_key, &create)).unwrap();
+        let subject_bundle = encode_bundle(&subject.my_bundle().unwrap()).unwrap();
+        let reader = diaswarm_keys::decode_bundle(&my_bundle).unwrap();
+        let (welcome, _t) = subject.grant(reader, "follow").unwrap();
+        rt.block_on(wire::publish_control(&store, &subject_key, &welcome)).unwrap();
+
+        // Thirty days sealed, one record each so the counts are unambiguous.
+        for e in 0..30i64 {
+            let seg = subject.seal(32_000 + e, &records(32_000 + e, 1)).unwrap();
+            rt.block_on(wire::publish(&store, &subject_key, &seg)).unwrap();
+        }
+
+        let author = subject_key.verifying_key();
+        let joined_dir = dir("t-joined");
+        let read = |tail: u64| {
+            super::follow_read(
+                &own_dir,
+                &joined_dir,
+                &store,
+                rt.handle(),
+                &me,
+                &author,
+                &subject_bundle,
+                "follow",
+                tail,
+                i64::MIN,
+                12 * 3_600_000,
+            )
+        };
+
+        let one = read(1);
+        assert!(one.starts_with("ok 1 0"), "a one-day tail read {}", &one[..one.len().min(30)]);
+        let newest = records(32_029, 1)[0].to_canonical_json();
+        assert!(one.contains(&newest), "the newest day was not the one returned");
+
+        let two = read(2);
+        assert!(two.starts_with("ok 2 0"), "a two-day tail read {}", &two[..two.len().min(30)]);
+
+        // And 0 still means the whole history, for a research export.
+        let all = read(0);
+        assert!(all.starts_with("ok 30 0"), "a full read {}", &all[..all.len().min(30)]);
     }
 
     fn dir(tag: &str) -> std::path::PathBuf {

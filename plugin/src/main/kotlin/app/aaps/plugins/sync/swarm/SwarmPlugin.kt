@@ -2,6 +2,7 @@ package app.aaps.plugins.sync.swarm
 
 import nz.diaswarm.jni.SwarmNative
 import android.content.Context
+import java.io.File
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequest
@@ -425,7 +426,14 @@ class SwarmPlugin @Inject constructor(
         // p2panda's endpoint.
         serving = SwarmNative.swarmJoin(
             SwarmPaths.store(context).absolutePath,
-            SwarmPaths.nodeKey(context).absolutePath
+            SwarmPaths.nodeKey(context).absolutePath,
+            // **THE ONE KEYS STORE ON THIS PHONE.** It belongs to the pool
+            // because the pool is the long-lived object: p2panda's SQLite pool
+            // is max_connections(1) with no busy timeout, so a second pool on
+            // this file would make sealing and replication take turns failing.
+            // Everything else opens a handle, uses it and closes it within a
+            // pass; this outlives all of them.
+            File(SwarmPaths.base(context), "keys").absolutePath
         )
         if (serving == 0L) {
             aapsLogger.error(LTag.CORE, "swarm: could not start serving")

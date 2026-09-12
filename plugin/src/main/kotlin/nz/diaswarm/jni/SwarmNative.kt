@@ -158,7 +158,7 @@ object SwarmNative {
      *
      * Returns a handle, or 0 on failure.
      */
-    external fun swarmJoin(storePath: String, nodeKeyPath: String): Long
+    external fun swarmJoin(storePath: String, nodeKeyPath: String, keysPath: String): Long
 
     /** This phone's id in the pool. Empty on a bad handle. */
     external fun swarmNodeId(handle: Long): String
@@ -351,7 +351,7 @@ object SwarmNative {
      *
      * Returns a handle, or 0.
      */
-    external fun keysOpen(dir: String, identityPath: String, offsetMs: Long): Long
+    external fun keysOpen(pool: Long, dir: String, identityPath: String, offsetMs: Long): Long
 
     /** Close it. Safe with 0. */
     external fun keysClose(handle: Long)
@@ -427,8 +427,19 @@ object SwarmNative {
         subjectHex: String,
         subjectBundle: String,
         purpose: String,
+        tailDays: Long,
         fromEpoch: Long
     ): String
+
+    /**
+     * Carry a subject's keys logs on the bucket topic they fall in.
+     *
+     * Idempotent — a pool pass calls it for everything this phone should hold,
+     * and most of that is already known. Both logs in one call: a follower with
+     * segments and no grants cannot open them, and one with grants and no
+     * segments has nothing to open. 0 on success.
+     */
+    external fun keysCarry(poolHandle: Long, subjectHex: String): Long
 
     /** The spec version this Kotlin was written against. */
     const val EXPECTED_SPEC_VERSION = 3

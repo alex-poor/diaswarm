@@ -566,9 +566,14 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             // only the last day — so shadowing it was measuring the thing that
             // is not going to ship. Its JNI is still there and still measured;
             // nothing calls it from here.
+            // **THE POOL OWNS THE STORE**, so this borrows rather than opening
+            // a second connection to the same file — see SwarmPlugin's note.
+            // No pool means no keys store, and shadow mode simply does nothing.
+            val pool = SwarmEndpoint.handle
+            if (pool == 0L) return 0L
             val dir = File(SwarmPaths.base(context), "keys").absolutePath
             val identity = SwarmPaths.identity(context).absolutePath
-            SwarmNative.keysOpen(dir, identity, offsetMs).also {
+            SwarmNative.keysOpen(pool, dir, identity, offsetMs).also {
                 if (it == 0L) aapsLogger.error(LTag.CORE, "swarm: shadow vault would not open")
             }
         } catch (e: Throwable) {
