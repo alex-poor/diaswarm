@@ -264,7 +264,10 @@ async fn a_read_says_what_it_could_not_open() {
     let (reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("bundle");
     subject.create(subject_mgr).expect("create");
 
-    // A day before the grant: sealed under a secret the reader never gets.
+    // A day before the grant. **THE READER WILL OPEN IT ANYWAY** — a grant
+    // hands over the whole secret bundle, so it reaches back. This comment used
+    // to say "sealed under a secret the reader never gets", which was wrong and
+    // which nothing checked. See the note on `Vault::grant`.
     subject.seal(20_000, &day(20_000)).expect("seal");
     let (welcome, _tag) = subject.grant(reader_bundle, "follow").expect("grant");
     subject.seal(20_001, &day(20_001)).expect("seal");
@@ -596,4 +599,56 @@ async fn two_vaults_can_pair_through_nothing_but_text() {
     let (records, bad) = joined.open_segment(&segment).expect("open");
     assert_eq!(bad, 0);
     assert_eq!(records.len(), 288, "the paired reader could not read a day");
+}
+
+/// A GRANT REACHES BACK, AND THAT IS PINNED RATHER THAN ASSUMED.
+///
+/// **THE PROPERTY NOBODY HAD WRITTEN DOWN.** `EncryptionGroup::add` hands the
+/// joiner the whole secret bundle, so a reader granted today opens every day
+/// the subject still holds a secret for. Two tests in this file carried
+/// comments asserting the opposite and neither checked it, which is how an
+/// assumption survives.
+///
+/// It is asserted here so that if the library ever changes, or a `history`
+/// option is added, the change is a failing test rather than a surprise on
+/// somebody's phone. **`diaswarm-core` and D20's spaces vault can both express
+/// "from now on"; this cannot.**
+#[tokio::test(flavor = "multi_thread")]
+async fn a_grant_reaches_back_over_days_sealed_before_it() {
+    let rng = Rng::default();
+    let subject_key = SigningKey::from_bytes(&rand32());
+    let reader_key = SigningKey::from_bytes(&rand32());
+    let root = tmp("reach-back");
+    let store = SqliteStoreBuilder::memory().build().await.expect("store");
+
+    let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("subject");
+    let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
+    let (reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("bundle");
+    subject.create(subject_mgr).expect("create");
+
+    // Three days, all before anybody is granted anything.
+    let early: Vec<_> =
+        (0..3i64).map(|e| subject.seal(28_000 + e, &day(28_000 + e)).expect("seal")).collect();
+
+    let (welcome, _tag) = subject.grant(reader_bundle, "follow").expect("grant");
+    let welcome = deliver(&store, &subject_key, &welcome).await;
+    let mut reader = Vault::open(tmp("reach-back-reader"), OFFSET, &reader_key).expect("reader");
+    let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("reg");
+    reader.join(reader_mgr, registry, &subject_bundle, "follow", &welcome).expect("join");
+
+    for (n, segment) in early.iter().enumerate() {
+        assert!(
+            reader.open_segment(segment).is_ok(),
+            "day {n}, sealed before the grant, did not open — the reach-back behaviour changed"
+        );
+    }
+
+    // And a day sealed after a revocation still does not open, so this is
+    // reach-back rather than "everything always works".
+    subject.revoke(reader.subject()).expect("revoke");
+    let after = subject.seal(28_100, &day(28_100)).expect("seal after revoke");
+    assert!(
+        reader.open_segment(&after).is_err(),
+        "a revoked reader opened a day sealed after its revocation"
+    );
 }

@@ -644,6 +644,24 @@ impl Vault {
     /// accidentally hand a public key to something that publishes it. The
     /// returned tag is what the subject's own private book should file them
     /// under — the grant itself names nobody.
+    ///
+    /// ⚠️ **A GRANT REACHES BACK OVER EVERYTHING, AND CANNOT BE ASKED NOT TO.**
+    /// `EncryptionGroup::add` hands the joiner `&y.secrets` — the whole secret
+    /// bundle — so a reader granted today opens every day the subject still
+    /// holds a secret for, including days sealed long before they were granted.
+    /// There is no `history` flag and no way to pass a narrower bundle: the
+    /// library does not expose one.
+    ///
+    /// **THAT IS LESS THAN BOTH VAULTS THIS REPLACES.** `diaswarm-core` wraps
+    /// per segment, so the subject chooses what a reader can open;
+    /// [D20](../../docs/decisions.md)'s spaces grant takes an explicit
+    /// `history` boolean. For the flagship — a parent following a child —
+    /// reaching back is arguably what you want. For `clinician` or `cohort`,
+    /// which spec §7.2 makes separate key trees precisely so they can be
+    /// scoped differently, it is not obviously acceptable.
+    ///
+    /// Revocation is unaffected and still bites forward: see [`Vault::revoke`]
+    /// and `seal`'s note on re-sealing under the latest secret.
     pub fn grant(
         &mut self,
         bundle: LongTermKeyBundle,

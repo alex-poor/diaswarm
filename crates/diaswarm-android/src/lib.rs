@@ -1704,6 +1704,108 @@ pub fn seal_checked(vault: &mut diaswarm_keys::Vault, epoch: i64, body: &str) ->
     )
 }
 
+/// Join a subject's group from a control log somebody else replicated to us.
+///
+/// **ONE IDENTITY, SEVERAL VAULTS — WHICH IS WHY THIS TAKES TWO DIRECTORIES.**
+/// A `Vault` holds exactly one group state, so following three people means
+/// three vaults. But the bundle this device published — the one each subject
+/// granted against — belongs to *one* key manager, in this device's own vault.
+/// A joined vault that minted its own would be a different member to the one
+/// that was granted, and would read nothing while looking perfectly healthy: no
+/// error, no crash, an empty graph. So `own_dir` supplies the identity and
+/// `joined_dir` holds the group.
+///
+/// **AND THE READER FINDS ITS OWN WELCOME BY TRYING.** Nothing in a control
+/// message says in clear who it is for — a grant that announced its recipient
+/// would undo [D13](../../docs/decisions.md) — so every message in the log is
+/// offered to `join` and the one that opens is ours. `join` refuses anything
+/// that does not actually welcome us, which is what makes trying safe.
+pub fn join_subject(
+    own_dir: &Path,
+    joined_dir: &Path,
+    store: &diaswarm_keys::SqliteStore,
+    runtime: &tokio::runtime::Runtime,
+    signing: &p2panda_core::SigningKey,
+    subject: &p2panda_core::VerifyingKey,
+    subject_bundle_hex: &str,
+    purpose: &str,
+    offset_ms: i64,
+) -> Result<diaswarm_keys::Vault, String> {
+    let subject_bundle =
+        diaswarm_keys::decode_bundle(subject_bundle_hex).map_err(|e| format!("bundle {e}"))?;
+
+    // The identity this device published, not a fresh one.
+    let own = diaswarm_keys::Vault::open(own_dir, offset_ms, signing)
+        .map_err(|e| format!("own vault {e}"))?;
+    let manager = own.manager_state().map_err(|e| format!("own identity {e}"))?;
+    drop(own);
+
+    let control = runtime
+        .block_on(diaswarm_keys::wire::control_from(store, subject, None))
+        .map_err(|e| format!("control log {e}"))?;
+    if control.is_empty() {
+        return Err("no grant has arrived yet".to_string());
+    }
+
+    let registry = diaswarm_keys::Vault::registry(&[(
+        diaswarm_keys::group::GrantTag::own(subject),
+        subject_bundle.clone(),
+    )])
+    .map_err(|e| format!("registry {e}"))?;
+
+    for message in &control {
+        let Ok(mut candidate) = diaswarm_keys::Vault::open(joined_dir, offset_ms, signing) else {
+            continue;
+        };
+        if candidate
+            .join(manager.clone(), registry.clone(), &subject_bundle, purpose, message)
+            .is_ok()
+        {
+            return Ok(candidate);
+        }
+    }
+    Err(format!("none of the {} control messages welcome us", control.len()))
+}
+
+/// Everything a joined vault can open from `from_epoch` onwards, as NDJSON.
+///
+/// **SEGMENTS COME FROM THE LOG, NOT A DIRECTORY.** A follower's arrive as
+/// operation bodies over `p2panda-net` and never touch the filesystem, which is
+/// the whole shape of D26 — so this reads them out of the store rather than
+/// calling `read_from`. What it cannot open it counts; a short answer must
+/// never be a silent one.
+pub fn read_followed(
+    vault: &diaswarm_keys::Vault,
+    store: &diaswarm_keys::SqliteStore,
+    runtime: &tokio::runtime::Runtime,
+    subject: &p2panda_core::VerifyingKey,
+    from_epoch: i64,
+) -> Result<(String, usize, usize), String> {
+    let segments = runtime
+        .block_on(diaswarm_keys::wire::segments_from(store, subject, from_epoch))
+        .map_err(|e| format!("segments {e}"))?;
+
+    let mut out = String::new();
+    let mut opened = 0usize;
+    let mut unreadable = 0usize;
+    for segment in &segments {
+        match vault.open_segment(segment) {
+            Ok((records, bad)) => {
+                opened += 1;
+                unreadable += bad;
+                for record in records {
+                    out.push_str(&record.to_canonical_json());
+                    out.push('\n');
+                }
+            }
+            // NOT AN ERROR. A segment sealed before this reader was granted, or
+            // after it was revoked, is access control working.
+            Err(_) => unreadable += 1,
+        }
+    }
+    Ok((out, opened, unreadable))
+}
+
 #[cfg(test)]
 mod shadow_tests {
     use super::seal_checked;
@@ -1734,6 +1836,114 @@ mod shadow_tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// A FOLLOWER JOINS AND READS FROM A LOG SOMEBODY ELSE FILLED.
+    ///
+    /// **THE WHOLE FOLLOWER PATH, WITHOUT A NETWORK.** Replication is proven
+    /// elsewhere — `diaswarm-net`'s `keys_replicate` test, and `twokeys` on two
+    /// phones. What this pins is the part the app has to get right afterwards:
+    /// find our welcome among messages that name nobody, join with the identity
+    /// this device actually published, and open segments that arrived as
+    /// operation bodies rather than files.
+    ///
+    /// The trap it guards is the silent one. A joined vault that minted its own
+    /// key manager would be a different member to the one the subject granted,
+    /// and would read *nothing* — no error, no crash, an empty graph.
+    #[test]
+    fn a_follower_joins_from_a_log_and_reads_what_it_was_granted() {
+        use diaswarm_keys::{Vault, encode_bundle, wire};
+
+        // A PLAIN TEST WITH ITS OWN RUNTIME, because that is how the JNI calls
+        // these: `join_subject` and `read_followed` are synchronous, blocking
+        // on a runtime the vault handle owns. Testing them from inside an async
+        // context would be testing a shape no caller has.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store = rt.block_on(async {
+            diaswarm_keys::SqliteStoreBuilder::memory().build().await.unwrap()
+        });
+        let rng = diaswarm_keys::Rng::default();
+
+        // ---- the device that will follow, and the identity it publishes ----
+        let me = p2panda_core::SigningKey::generate();
+        let own_dir = dir("own");
+        let mut own = Vault::open(&own_dir, 12 * 3_600_000, &me).unwrap();
+        let (own_mgr, _b) = Vault::key_bundle(&rng).unwrap();
+        own.create(own_mgr).unwrap();
+        let my_bundle = encode_bundle(&own.my_bundle().unwrap()).unwrap();
+        drop(own);
+
+        // ---- the subject, granting that bundle ----
+        let subject_key = p2panda_core::SigningKey::generate();
+        let mut subject = Vault::open(dir("subject"), 12 * 3_600_000, &subject_key).unwrap();
+        let (s_mgr, _sb) = Vault::key_bundle(&rng).unwrap();
+        let create = subject.create(s_mgr).unwrap();
+        rt.block_on(wire::publish_control(&store, &subject_key, &create)).unwrap();
+        let subject_bundle = encode_bundle(&subject.my_bundle().unwrap()).unwrap();
+
+        // A day before the grant, and two after. **ALL THREE OPEN** — see the
+        // assertion below and the note on `Vault::grant`.
+        let before = subject.seal(30_000, &records(30_000, 4)).unwrap();
+        rt.block_on(wire::publish(&store, &subject_key, &before)).unwrap();
+
+        let reader = diaswarm_keys::decode_bundle(&my_bundle).unwrap();
+        let (welcome, _tag) = subject.grant(reader, "follow").unwrap();
+        rt.block_on(wire::publish_control(&store, &subject_key, &welcome)).unwrap();
+        for e in 1..3i64 {
+            let seg = subject.seal(30_000 + e, &records(30_000 + e, 4)).unwrap();
+            rt.block_on(wire::publish(&store, &subject_key, &seg)).unwrap();
+        }
+
+        // ---- and the follower, using nothing but what replication left ----
+        let author = subject_key.verifying_key();
+        let joined = super::join_subject(
+            &own_dir,
+            &dir("joined"),
+            &store,
+            &rt,
+            &me,
+            &author,
+            &subject_bundle,
+            "follow",
+            12 * 3_600_000,
+        )
+        .expect("the follower could not join");
+        assert!(joined.is_welcomed());
+
+        let (ndjson, opened, _unreadable) =
+            super::read_followed(&joined, &store, &rt, &author, i64::MIN).expect("read");
+
+        let lines = ndjson.lines().filter(|l| !l.trim().is_empty()).count();
+
+        // **A GRANT REACHES BACK, AND THAT IS NOT AN ACCIDENT OF THIS TEST.**
+        // `Group::add` hands the joiner `&y.secrets` — the whole bundle — so a
+        // reader granted today can open every day the subject still holds a
+        // secret for, including ones sealed before it was ever granted. This
+        // asserted 2 when it was written, because that is what the author
+        // assumed; the code has always done 3.
+        assert_eq!(opened, 3, "a grant should reach back over the whole bundle");
+        assert_eq!(lines, 12, "expected 12 records, got {lines}");
+    }
+
+    fn dir(tag: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "diaswarm-follow-{tag}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn records(epoch: i64, n: i64) -> Vec<diaswarm_core::Record> {
+        (0..n)
+            .map(|i| {
+                diaswarm_core::Record::new(epoch * 86_400_000 + i * 300_000, "cgm")
+                    .set("mgdl", Some((100.0 + i as f64).into()))
+            })
+            .collect()
     }
 
     /// THE LINE THE KOTLIN PARSES, PINNED.

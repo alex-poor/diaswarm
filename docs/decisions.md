@@ -564,6 +564,35 @@ clinician or research use cases ever need delegation.
 ✅ **All three of these are now built** — auth, replication, and a reader that
 does not share the subject's directory. See below.
 
+🔴 **A GRANT REACHES BACK OVER EVERYTHING, AND CANNOT BE ASKED NOT TO —
+found 2026-09-13.** `EncryptionGroup::add` hands the joiner `&y.secrets`, the
+whole secret bundle, so a reader granted today opens every day the subject still
+holds a secret for. There is no `history` flag and no way to pass a narrower
+bundle: `p2panda-encryption` does not expose one.
+
+**This is less than both vaults it replaces.** `diaswarm-core` wraps per
+segment, so the subject chooses what a reader can open; D20's spaces grant takes
+an explicit `history` boolean and a test named
+`a_grant_reaches_back_only_when_it_is_asked_to`. D26 can only do "everything".
+
+**Nobody had written it down, and two tests asserted the opposite.** Both
+`a_read_says_what_it_could_not_open` and the follower test in `diaswarm-android`
+carried comments saying a day sealed before a grant was "sealed under a secret
+the reader never gets", and neither checked it. It surfaced when the follower
+test asserted 2 days and got 3. `a_grant_reaches_back_over_days_sealed_before_it`
+now pins the real behaviour, so a future change is a failing test rather than a
+surprise on somebody's phone.
+
+**For the flagship this is arguably right** — a parent who starts following
+their child probably should see last week. For `clinician` and `cohort`, which
+spec §7.2 makes separate key trees precisely so they can be scoped differently,
+it is not obviously acceptable, and there is currently no mechanism to make it
+so. Revocation is unaffected and still bites forward.
+
+*Reopens if:* a purpose needs "from now on", which means either rotating the
+secret at grant time and accepting that every existing reader must process the
+rotation, or carrying the wrap-per-segment idea forward from `diaswarm-core`.
+
 ✅ **Replication, 2026-09-12.** `diaswarm-net`'s `Replicator` is now generic
 over the extension type and over *which logs a subject has*, so both vaults use
 it: `Replicator::spaces` keeps one log, `Replicator::keys` associates two.
