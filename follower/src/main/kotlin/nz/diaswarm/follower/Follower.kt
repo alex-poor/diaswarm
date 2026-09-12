@@ -137,6 +137,8 @@ object Follower {
                 val parsed =
                     if (failed || fromKeys.isBlank()) emptyList() else parseReadings(fromKeys)
                 if (failed) android.util.Log.i(SyncWorker.TAG, "keys read: $fromKeys")
+                fromKeys.lineSequence().firstOrNull { it.startsWith("#") }
+                    ?.let { android.util.Log.i(SyncWorker.TAG, "keys $it") }
                 // **SAY WHICH VAULT ANSWERED.** The fallback is deliberate and
                 // silent — a follower not yet granted on the new vault keeps
                 // seeing yesterday's readings rather than an empty graph — but
@@ -165,7 +167,7 @@ object Follower {
 
     /** One row shape, parsed in one place, whichever vault produced it. */
     private fun parseReadings(rows: String): List<Reading> =
-        rows.lines().filter { it.isNotBlank() }.mapNotNull { row ->
+        rows.lines().filter { it.isNotBlank() && !it.startsWith("#") }.mapNotNull { row ->
             val f = row.split('\t')
             val at = f.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
             val mgdl = f.getOrNull(1)?.toDoubleOrNull() ?: return@mapNotNull null

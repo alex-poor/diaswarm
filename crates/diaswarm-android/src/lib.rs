@@ -1793,13 +1793,20 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGlucose<'a>(
         rows.truncate(limit as usize);
     }
 
-    to_jstring(
-        env,
-        rows.iter()
+    // **THE COUNTS COME BACK TOO, AS A LEADING `#` LINE.** `follow_read` knows
+    // how many segments it opened and how many it could not; discarding that
+    // left "4 readings" indistinguishable from "one segment out of twenty
+    // opened". The caller logs this line and skips it.
+    // `body.0` is `follow_read`'s "<opened> <unreadable>" counts.
+    let mut out = format!("# opened {} rows {}\n", body.0, rows.len());
+    out.push_str(
+        &rows
+            .iter()
             .map(|(t, mgdl, trend, src)| format!("{t}\t{mgdl}\t{trend}\t{src}"))
             .collect::<Vec<_>>()
             .join("\n"),
-    )
+    );
+    to_jstring(env, out)
 }
 
 /// Carry every keys log this phone should hold: its own, and each it follows.
