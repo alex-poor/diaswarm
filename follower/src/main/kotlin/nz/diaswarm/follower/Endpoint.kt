@@ -39,11 +39,19 @@ object Endpoint {
         val h = SwarmNative.swarmJoin(
             SwarmPaths.store(context).absolutePath,
             SwarmPaths.nodeKey(context).absolutePath,
-            // **THE ONE KEYS STORE, OWNED BY THE POOL.** Passed even when the
-            // keys vault is switched off: the store costs an empty SQLite file
-            // and having it means turning the preference on does not require a
-            // restart to take effect. See SwarmKeys.
-            SwarmKeys.dir(context).absolutePath
+            // **NOTHING WHEN THE FEATURE IS OFF, AND THAT IS NOT AN
+            // OPTIMISATION.** This used to be passed unconditionally, so the
+            // pool built a KeysReplicator whatever the preference said. Once
+            // keysCarryAll had run — while the toggle was on — its log-sync
+            // subscriptions stayed live, because turning a preference off does
+            // not unsubscribe anything. p2panda sync then ran alongside the
+            // core vault's own polling on the same endpoint and the readings a
+            // follower showed went from seconds old to minutes old.
+            //
+            // The person watching a graph turned the feature off and it kept
+            // costing them. A switch that only takes effect on the next launch
+            // is not a switch.
+            if (Prefs.keysVault(context)) SwarmKeys.dir(context).absolutePath else ""
         )
         if (h == 0L) {
             Log.w(SyncWorker.TAG, "could not join the pool")

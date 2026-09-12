@@ -432,13 +432,20 @@ class SwarmPlugin @Inject constructor(
         serving = SwarmNative.swarmJoin(
             SwarmPaths.store(context).absolutePath,
             SwarmPaths.nodeKey(context).absolutePath,
-            // **THE ONE KEYS STORE ON THIS PHONE.** It belongs to the pool
-            // because the pool is the long-lived object: p2panda's SQLite pool
-            // is max_connections(1) with no busy timeout, so a second pool on
-            // this file would make sealing and replication take turns failing.
-            // Everything else opens a handle, uses it and closes it within a
-            // pass; this outlives all of them.
-            File(SwarmPaths.base(context), "keys").absolutePath
+            // **THE ONE KEYS STORE ON THIS PHONE**, and only when the feature
+            // is on. It belongs to the pool because the pool is the long-lived
+            // object: p2panda's SQLite pool is max_connections(1) with no busy
+            // timeout, so a second pool on this file would make sealing and
+            // replication take turns failing.
+            //
+            // Gated, because an ungated one cost a follower its latency. Once
+            // the replicator exists and something has carried a topic, the
+            // log-sync subscription is live until the process restarts —
+            // turning the preference off does not unsubscribe it. So the switch
+            // has to decide whether the replicator is built at all.
+            if (preferences.get(SwarmBooleanKey.ShadowSpacesVault))
+                SwarmKeys.dir(context).absolutePath
+            else ""
         )
         if (serving == 0L) {
             aapsLogger.error(LTag.CORE, "swarm: could not start serving")
