@@ -11,6 +11,7 @@
 //! to be one thing you can hold up to a phone, not a procedure.
 //!
 //! ```text
+//! diaswarm:3:<subject-hex>:<endpoint-hex>:<purpose>:<relay>:<bundle-hex>:<check>
 //! diaswarm:2:<subject-hex>:<endpoint-hex>:<purpose>:<relay>:<check>
 //! ```
 //!
@@ -31,7 +32,17 @@
 //!   invite, not a release. Empty means "direct only": findable on the local
 //!   network and nowhere else. `:` is written `%3A` and `%` as `%25`, since
 //!   the fields are colon-separated; `/` needs no escaping and stays readable;
-//! * **check** is four bytes of SHA-256 over everything before it, because the
+//! * **bundle** is the subject's `p2panda-encryption` key bundle, and it is
+//!   what [D26](decisions.md)'s vault needs that the old one does not. A grant
+//!   there is agreed from a `LongTermKeyBundle`, and **both sides need the
+//!   other's before a grant can exist** — the subject grants against the
+//!   reader's, the reader needs the subject's to derive the same tag and open
+//!   its welcome. The `subject` field above is an X25519 key that serves the
+//!   same purpose for the old vault and is useless for the new one, so this is
+//!   an addition rather than a replacement. About 150 bytes; a QR code is
+//!   unbothered. **Empty, and the invite is emitted as v2**, so a subject with
+//!   no keys vault still hands out something every existing build understands;
+//!   * **check** is four bytes of SHA-256 over everything before it, because the
 //!   failure this format exists to prevent is a silent one.
 //!
 //! WHAT AN INVITE IS NOT: a secret, and not a grant. Anyone holding it can
@@ -45,7 +56,9 @@ use sha2::{Digest, Sha256};
 use crate::vault::{hex, unhex, VaultError};
 
 const PREFIX: &str = "diaswarm";
-const VERSION: &str = "2";
+/// The newest version this build *emits*, which is only reached when there is a
+/// bundle to carry. See [`Invite::encode`].
+const VERSION: &str = "3";
 pub const DEFAULT_PURPOSE: &str = "follow";
 
 /// Where a peer is reachable when it is not on your wifi.
@@ -86,6 +99,15 @@ pub struct Invite {
     pub purpose: String,
     /// Empty means direct connections only — the local network and nothing else.
     pub relay: String,
+    /// The subject's `diaswarm-keys` bundle, hex. Empty on a v1 or v2 invite.
+    ///
+    /// **ITS PRESENCE IS WHAT MAKES AN INVITE v3**, so this is not a field that
+    /// can be set carelessly: filling it in makes the invite unreadable to
+    /// every build that predates it. That is the intended behaviour — a newer
+    /// invite in an older build says so rather than half-working — but it means
+    /// a subject only publishes one once it actually has a keys vault to grant
+    /// against.
+    pub bundle: String,
 }
 
 fn check_of(body: &str) -> String {
@@ -104,6 +126,17 @@ fn purpose_ok(p: &str) -> bool {
 
 fn key_ok(k: &str) -> bool {
     k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// A bundle is hex of a CBOR structure, so its length is not fixed — only its
+/// alphabet and its parity. Decoding it properly is `diaswarm-keys`' job; this
+/// crate must not depend on that one, and a malformed bundle fails at key
+/// agreement with a message about key agreement.
+fn bundle_ok(b: &str) -> bool {
+    !b.is_empty()
+        && b.len() % 2 == 0
+        && b.len() <= 4096
+        && b.bytes().all(|c| c.is_ascii_hexdigit())
 }
 
 impl Invite {
@@ -149,18 +182,52 @@ impl Invite {
             endpoint,
             purpose: purpose.to_string(),
             relay,
+            bundle: String::new(),
         })
     }
 
+    /// The same invite, carrying the subject's keys bundle.
+    ///
+    /// Separate from [`Invite::new_via`] rather than a parameter on it, because
+    /// every existing caller wants the invite it already got and adding an
+    /// argument would silently make all of them emit v3.
+    pub fn with_bundle(mut self, bundle: &str) -> Result<Self, VaultError> {
+        let bundle = bundle.trim().to_ascii_lowercase();
+        if !bundle.is_empty() && !bundle_ok(&bundle) {
+            return Err(VaultError::Malformed(
+                "a key bundle is an even number of hex characters".into(),
+            ));
+        }
+        self.bundle = bundle;
+        Ok(self)
+    }
+
     /// The string that goes in a QR code, or a message.
+    ///
+    /// **v2 UNLESS THERE IS A BUNDLE, AND THAT IS THE WHOLE MIGRATION STORY.**
+    /// Emitting v3 unconditionally would make every invite unreadable to every
+    /// build already installed, for a field most of them have no use for. A
+    /// subject that has a keys vault emits v3 and says so; one that does not
+    /// emits exactly what it emitted before.
     pub fn encode(&self) -> String {
-        let body = format!(
-            "{PREFIX}:{VERSION}:{}:{}:{}:{}",
-            self.subject,
-            self.endpoint,
-            self.purpose,
-            esc(&self.relay)
-        );
+        let body = if self.bundle.is_empty() {
+            format!(
+                "{PREFIX}:2:{}:{}:{}:{}",
+                self.subject,
+                self.endpoint,
+                self.purpose,
+                esc(&self.relay)
+            )
+        } else {
+            format!(
+                "{PREFIX}:{VERSION}:{}:{}:{}:{}:{}",
+                self.subject,
+                self.endpoint,
+                self.purpose,
+                esc(&self.relay),
+                self.bundle
+            )
+        };
         let check = check_of(&body);
         format!("{body}:{check}")
     }
@@ -186,6 +253,12 @@ impl Invite {
                 7usize,
                 "2",
             ),
+            // v3 is v2 plus the subject's keys bundle.
+            Some("3") => (
+                unesc(&parts.get(5).copied().unwrap_or_default().to_ascii_lowercase()),
+                8usize,
+                "3",
+            ),
             Some(v) => {
                 // Named explicitly: a newer invite pasted into an older build
                 // must say so, not fail as though the person mistyped it.
@@ -196,13 +269,22 @@ impl Invite {
             None => return Err(VaultError::Malformed("not a diaswarm invite".into())),
         };
         if parts.len() != want {
-            return Err(VaultError::Malformed(
-                "not an invite — expected                  diaswarm:2:<subject>:<endpoint>:<purpose>:<relay>:<check>"
-                    .into(),
-            ));
+            // **THE SHAPE IT NAMES IS THE ONE IT WAS ASKED FOR.** This used to
+            // print the v2 form whatever version was being parsed, so a v3
+            // invite with a field missing was told to look like a v2 invite —
+            // advice that would have made it wrong in a second way.
+            let shape = match shown {
+                "1" => "diaswarm:1:<subject>:<endpoint>:<purpose>:<check>",
+                "3" => "diaswarm:3:<subject>:<endpoint>:<purpose>:<relay>:<bundle>:<check>",
+                _ => "diaswarm:2:<subject>:<endpoint>:<purpose>:<relay>:<check>",
+            };
+            return Err(VaultError::Malformed(format!("not an invite — expected {shape}")));
         }
-        let invite =
+        let mut invite =
             Invite::new_via(parts[2], parts[3], &parts[4].to_ascii_lowercase(), &relay)?;
+        if shown == "3" {
+            invite = invite.with_bundle(parts[6])?;
+        }
 
         // CHECK LAST, so the specific complaints above are what a person sees.
         // A bad checksum can only say "something is wrong", which is the least
@@ -213,6 +295,15 @@ impl Invite {
         // its own checksum, which is the kind of error nobody could act on.
         let body = if shown == "1" {
             format!("{PREFIX}:1:{}:{}:{}", invite.subject, invite.endpoint, invite.purpose)
+        } else if shown == "3" {
+            format!(
+                "{PREFIX}:3:{}:{}:{}:{}:{}",
+                invite.subject,
+                invite.endpoint,
+                invite.purpose,
+                parts[5].to_ascii_lowercase(),
+                invite.bundle
+            )
         } else {
             format!(
                 "{PREFIX}:2:{}:{}:{}:{}",
@@ -283,9 +374,60 @@ mod tests {
 
     #[test]
     fn a_future_version_says_so_rather_than_looking_like_a_typo() {
-        let e = Invite::parse(&format!("diaswarm:3:{S}:{E}:follow:x:00000000")).unwrap_err();
+        // 4 rather than 3: 3 is a format this build emits now, so using it
+        // here stopped testing the future and started testing the present.
+        let e = Invite::parse(&format!("diaswarm:4:{S}:{E}:follow:x:00000000")).unwrap_err();
         let msg = format!("{e:?}");
-        assert!(msg.contains("version 3"), "unhelpful message: {msg}");
+        assert!(msg.contains("version 4"), "unhelpful message: {msg}");
+    }
+
+    /// A v3 INVITE CARRIES THE BUNDLE AND SURVIVES BEING SHOUTED.
+    ///
+    /// The checksum covers the bundle, so a transposed character in 300 hex
+    /// digits is an error message rather than a key agreement that fails much
+    /// later for no visible reason.
+    #[test]
+    fn a_bundle_survives_the_round_trip_and_the_checksum_covers_it() {
+        let bundle = "a36c6964656e746974795f6b6579582000112233445566778899aabbccddeeff";
+        let invite = Invite::new(S, E, "follow").unwrap().with_bundle(bundle).unwrap();
+        let text = invite.encode();
+        assert!(text.starts_with("diaswarm:3:"), "a bundle should make it v3: {text}");
+
+        let back = Invite::parse(&text).unwrap();
+        assert_eq!(back.bundle, bundle);
+        assert_eq!(back, invite);
+
+        // Shouted by a chat client, and still the same invite.
+        assert_eq!(Invite::parse(&text.to_ascii_uppercase()).unwrap(), invite);
+
+        // One wrong character anywhere in the bundle is caught.
+        let mut broken: Vec<char> = text.chars().collect();
+        let at = text.find(bundle).unwrap() + 10;
+        broken[at] = if broken[at] == 'a' { 'b' } else { 'a' };
+        let broken: String = broken.into_iter().collect();
+        assert!(Invite::parse(&broken).is_err(), "a damaged bundle was accepted");
+    }
+
+    /// **A SUBJECT WITH NO KEYS VAULT STILL EMITS WHAT EVERY BUILD UNDERSTANDS.**
+    ///
+    /// The version is a consequence of having a bundle, not a build flag. If
+    /// this emitted v3 unconditionally, every invite from an updated phone
+    /// would be unreadable to every phone that had not updated — for a field
+    /// those phones have no use for.
+    #[test]
+    fn no_bundle_means_a_version_2_invite() {
+        let invite = Invite::new(S, E, "follow").unwrap();
+        let text = invite.encode();
+        assert!(text.starts_with("diaswarm:2:"), "expected v2 without a bundle: {text}");
+        assert_eq!(Invite::parse(&text).unwrap(), invite);
+
+        // And an empty bundle is the same as no bundle, not a v3 with a hole.
+        let explicit = Invite::new(S, E, "follow").unwrap().with_bundle("").unwrap();
+        assert_eq!(explicit.encode(), text);
+
+        // Rubbish in the bundle is refused at the point it is set.
+        assert!(Invite::new(S, E, "follow").unwrap().with_bundle("zz").is_err());
+        assert!(Invite::new(S, E, "follow").unwrap().with_bundle("abc").is_err());
     }
 
     /// **INVITES ALREADY HANDED OUT DO NOT STOP EXISTING** because the format
