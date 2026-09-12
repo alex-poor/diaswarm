@@ -345,6 +345,14 @@ impl Vault {
         Ok(GrantTag(diaswarm_core::seal::grant_tag_from_shared(&shared, purpose)))
     }
 
+    /// Where this vault lives. A caller that holds one vault and needs to open
+    /// another beside it — a follower joining a second subject — would
+    /// otherwise have to be told the path twice and could be told two
+    /// different ones.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn offset(&self) -> i64 {
         self.offset
     }

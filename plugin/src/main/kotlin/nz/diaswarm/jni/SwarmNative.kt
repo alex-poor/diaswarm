@@ -402,6 +402,34 @@ object SwarmNative {
      */
     external fun keysRevoke(handle: Long, tagHex: String): Long
 
+    /**
+     * Join a subject we have been granted access to, and read what they shared.
+     *
+     * **ONE CALL, BECAUSE A FOLLOWER WANTS RECORDS AND NOT A HANDLE.** Joining
+     * is a one-off; a vault that is already welcomed skips straight to reading.
+     * That is correctness rather than speed — joining replaces the group state,
+     * so doing it on every refresh would throw away a secret bundle that took a
+     * replication round trip to acquire.
+     *
+     * [handle] is this device's OWN keys vault: it supplies the identity each
+     * subject granted against, and the store replication writes into. A joined
+     * vault that minted its own identity would be a different member to the one
+     * that was granted and would read nothing, without an error.
+     *
+     * Returns `ok <segments> <unreadable>` then a newline then NDJSON, or
+     * `error <what>` — never a bare count, because a follower that read nothing
+     * needs to know whether it was never granted, never replicated, or simply
+     * has no days yet.
+     */
+    external fun keysFollowRead(
+        handle: Long,
+        joinedDir: String,
+        subjectHex: String,
+        subjectBundle: String,
+        purpose: String,
+        fromEpoch: Long
+    ): String
+
     /** The spec version this Kotlin was written against. */
     const val EXPECTED_SPEC_VERSION = 3
 

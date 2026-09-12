@@ -1806,6 +1806,109 @@ pub fn read_followed(
     Ok((out, opened, unreadable))
 }
 
+/// Join if we have not yet, then read everything we can from `from_epoch`.
+///
+/// **ONE CALL, BECAUSE A FOLLOWER WANTS RECORDS AND NOT A HANDLE.** Joining is
+/// a one-off that leaves `group.cbor` behind, so a vault that is already
+/// welcomed skips straight to reading — which matters, because `join` replaces
+/// the group state and doing it on every refresh would throw away a secret
+/// bundle that took a replication round trip to acquire.
+///
+/// **THE STORE IS THE DEVICE'S, NOT THE SUBJECT'S.** Logs are keyed by author,
+/// so one SQLite file holds this device's own log and every subject it follows;
+/// that is what `KeysReplicator` writes into and what this reads out of.
+///
+/// Returns `ok <opened> <unreadable>\n<ndjson>` or `error <what>`. Not a
+/// negative number: a follower that read nothing needs to know whether it was
+/// never granted, never replicated, or simply has no days yet.
+pub fn follow_read(
+    own_dir: &Path,
+    joined_dir: &Path,
+    store: &diaswarm_keys::SqliteStore,
+    runtime: &tokio::runtime::Runtime,
+    signing: &p2panda_core::SigningKey,
+    subject: &p2panda_core::VerifyingKey,
+    subject_bundle_hex: &str,
+    purpose: &str,
+    from_epoch: i64,
+    offset_ms: i64,
+) -> String {
+    let existing = diaswarm_keys::Vault::open(joined_dir, offset_ms, signing)
+        .ok()
+        .filter(|v| v.is_welcomed());
+
+    let vault = match existing {
+        Some(v) => v,
+        None => match join_subject(
+            own_dir,
+            joined_dir,
+            store,
+            runtime,
+            signing,
+            subject,
+            subject_bundle_hex,
+            purpose,
+            offset_ms,
+        ) {
+            Ok(v) => v,
+            Err(e) => return format!("error join {e}"),
+        },
+    };
+
+    match read_followed(&vault, store, runtime, subject, from_epoch) {
+        Ok((ndjson, opened, unreadable)) => format!("ok {opened} {unreadable}\n{ndjson}"),
+        Err(e) => format!("error read {e}"),
+    }
+}
+
+/// Join a subject and read what they have shared. See [`follow_read`].
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysFollowRead<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    joined_dir: JString<'a>,
+    subject_hex: JString<'a>,
+    subject_bundle: JString<'a>,
+    purpose: JString<'a>,
+    from_epoch: jlong,
+) -> JString<'a> {
+    let (Ok(joined), Ok(subject), Ok(bundle), Ok(purpose)) = (
+        env.get_string(&joined_dir),
+        env.get_string(&subject_hex),
+        env.get_string(&subject_bundle),
+        env.get_string(&purpose),
+    ) else {
+        return to_jstring(env, "error bad-argument".to_string());
+    };
+    let (joined, subject, bundle, purpose) =
+        (String::from(joined), String::from(subject), String::from(bundle), String::from(purpose));
+
+    let Some(author) = verifying_key(&subject) else {
+        return to_jstring(env, "error subject not-a-key".to_string());
+    };
+    let Some(v) = keys_vault(handle) else {
+        return to_jstring(env, "error no-vault".to_string());
+    };
+    let offset = v.vault.offset();
+    let own_dir = v.vault.root().to_path_buf();
+
+    let out = follow_read(
+        &own_dir,
+        Path::new(&joined),
+        &v.store,
+        &v.runtime,
+        &v.signing,
+        &author,
+        &bundle,
+        &purpose,
+        from_epoch,
+        offset,
+    );
+    to_jstring(env, out)
+}
+
 #[cfg(test)]
 mod shadow_tests {
     use super::seal_checked;
@@ -1923,6 +2026,91 @@ mod shadow_tests {
         // assumed; the code has always done 3.
         assert_eq!(opened, 3, "a grant should reach back over the whole bundle");
         assert_eq!(lines, 12, "expected 12 records, got {lines}");
+    }
+
+    /// A SECOND READ REUSES THE JOIN INSTEAD OF REDOING IT.
+    ///
+    /// **AND THAT IS CORRECTNESS, NOT SPEED.** `join` replaces the group state
+    /// wholesale, so joining again on every refresh would throw away a secret
+    /// bundle that took a replication round trip to acquire — and would fail
+    /// outright once the welcome has been pruned from the log or the subject
+    /// has rotated past it. A follower refreshes every couple of minutes, so
+    /// "every refresh" is the normal case, not an edge one.
+    #[test]
+    fn reading_twice_does_not_rejoin() {
+        use diaswarm_keys::{Vault, encode_bundle, wire};
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store = rt.block_on(async {
+            diaswarm_keys::SqliteStoreBuilder::memory().build().await.unwrap()
+        });
+        let rng = diaswarm_keys::Rng::default();
+
+        let me = p2panda_core::SigningKey::generate();
+        let own_dir = dir("r-own");
+        let mut own = Vault::open(&own_dir, 12 * 3_600_000, &me).unwrap();
+        let (own_mgr, _b) = Vault::key_bundle(&rng).unwrap();
+        own.create(own_mgr).unwrap();
+        let my_bundle = encode_bundle(&own.my_bundle().unwrap()).unwrap();
+        drop(own);
+
+        let subject_key = p2panda_core::SigningKey::generate();
+        let mut subject = Vault::open(dir("r-subject"), 12 * 3_600_000, &subject_key).unwrap();
+        let (s_mgr, _sb) = Vault::key_bundle(&rng).unwrap();
+        let create = subject.create(s_mgr).unwrap();
+        rt.block_on(wire::publish_control(&store, &subject_key, &create)).unwrap();
+        let subject_bundle = encode_bundle(&subject.my_bundle().unwrap()).unwrap();
+        let reader = diaswarm_keys::decode_bundle(&my_bundle).unwrap();
+        let (welcome, _t) = subject.grant(reader, "follow").unwrap();
+        rt.block_on(wire::publish_control(&store, &subject_key, &welcome)).unwrap();
+        let seg = subject.seal(31_000, &records(31_000, 5)).unwrap();
+        rt.block_on(wire::publish(&store, &subject_key, &seg)).unwrap();
+
+        let author = subject_key.verifying_key();
+        let joined_dir = dir("r-joined");
+        let call = |from: i64| {
+            super::follow_read(
+                &own_dir,
+                &joined_dir,
+                &store,
+                &rt,
+                &me,
+                &author,
+                &subject_bundle,
+                "follow",
+                from,
+                12 * 3_600_000,
+            )
+        };
+
+        let first = call(i64::MIN);
+        assert!(first.starts_with("ok 1 0"), "first read: {}", &first[..first.len().min(40)]);
+        assert_eq!(first.lines().skip(1).filter(|l| !l.trim().is_empty()).count(), 5);
+
+        // **THE WELCOME IS NOW GONE FROM THE LOG.** If the second read tried to
+        // join again it would find nothing that welcomes it and fail — which is
+        // exactly the state a follower is in days after pairing.
+        let pruned = rt.block_on(async {
+            diaswarm_keys::SqliteStoreBuilder::memory().build().await.unwrap()
+        });
+        rt.block_on(wire::publish(&pruned, &subject_key, &seg)).unwrap();
+        let second = super::follow_read(
+            &own_dir,
+            &joined_dir,
+            &pruned,
+            &rt,
+            &me,
+            &author,
+            &subject_bundle,
+            "follow",
+            i64::MIN,
+            12 * 3_600_000,
+        );
+        assert!(
+            second.starts_with("ok 1 0"),
+            "a second read re-joined instead of reusing: {}",
+            &second[..second.len().min(60)]
+        );
     }
 
     fn dir(tag: &str) -> std::path::PathBuf {
