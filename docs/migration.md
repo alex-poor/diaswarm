@@ -174,8 +174,43 @@ output distinguishes those. Worth fixing before the decision, not after.
 2. ~~The drain excess is attributed.~~ **Done** — 6,941 records published twice,
    because AAPS's sync queue resolves every version row to its record and the
    emitter's memory lasts one pass. Fixed by deduplicating on read.
-3. **Not done.** Shadow mode runs for several days, across a reboot, a Doze
-   period and a sensor change, still agreeing.
+3. **Mostly done, and the word "agreeing" was never backed by code.** Measured
+   2026-09-12, on the loop phone:
+
+   * **Several days.** `spaces/credentials.json` is untouched since
+     2026-09-10 15:47 and the vault has sealed continuously since, through the
+     app upgrade to `diaswarm6`.
+   * **A cold reboot.** Uptime was 4 days 22 h — it had genuinely never been
+     restarted since the spaces vault was created. After `adb reboot`, AAPS
+     restarted itself on `BOOT_COMPLETED` under a new pid, and
+     `credentials.json`, `node.key` and `subject.id` are **byte-identical**.
+     The vault reopened and sealed on the next pass. This is the condition with
+     consequences: a device returning as a new member invalidates every grant
+     ever made to it.
+   * **Both sensor changes.** Not waited for — already in the history. The
+     backfill covers epochs 20630..20708, which spans Dexcom G6 → a morning of
+     Libre 2 → Libre 3 on 2026-09-07. A week of ordinary running might cross
+     none; this crossed two.
+   * **A Doze period.** Not done, and not attempted: forcing idle on the phone
+     driving a pump is not worth the evidence it adds.
+
+   ⚠️ **"STILL AGREEING" IS NOT WHAT SHADOW MODE MEASURES.** It seals into the
+   second vault and adds to a counter — `shadowSealed += n`, logged as "shadow
+   sealed N". Nothing reads back from either vault and nothing compares;
+   `spacesStatus` has no call site outside its JNI declaration. Two doc
+   comments in `DataSyncSelectorSwarmImpl` say "and say whether it agrees".
+   They do not.
+
+   So what a week of green shadow logs establishes is: it does not crash, hang
+   or leak, its identity survives, and it accepts the same *count*. Agreement
+   is owned by `tests/differential.rs`, on 31,341 real records, and the phone
+   has never added to it. Building a live comparison needs a granted reader's
+   private key on a desktop, which is why it has not been done.
+
+   *Also unexplained:* the shadow vault is now **27 MB against the old vault's
+   11 MB**. [D21](decisions.md) measured 3.2 MB against 8.3 MB — the spaces
+   vault was the smaller one. The ratio has inverted and nobody has said why.
+   Not fan-out: `windows` is 1.
 
    ~~Out-of-order arrival loses records silently.~~ **Closed 2026-09-12.**
    `ingest` used to process in arrival order and catch the resulting
