@@ -1,0 +1,23 @@
+[package]
+name = "p2panda-datascheme-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# THE QUESTION: can the key layer be p2panda's while the DATA stays in
+# diaswarm's own independently-sealed segments?
+#
+# docs/decisions.md D26 argues yes, from reading the API. `p2panda-spaces`
+# chains application messages to their space's previous tips, so a reader must
+# walk everything since the grant to open today — measured, and it is why the
+# migration would cost the flagship. `p2panda-encryption`'s data scheme has no
+# such chain: secrets are fetched by id and `encrypt_data`/`decrypt_data` are
+# free functions over a `GroupSecret`.
+#
+# `test_utils` is enabled because the crate's production DGM and orderer live in
+# p2panda-spaces behind `pub(crate)`. That is a real cost of D26 and it is not
+# hidden by this spike: shipping it means ~242 lines of our own membership and
+# ordering code. They are bookkeeping, not cryptography, which is the whole
+# argument.
+[dependencies]
+p2panda-encryption = { version = "=0.7.1", features = ["test_utils"] }
