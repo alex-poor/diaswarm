@@ -48,6 +48,28 @@ Removal rotates the secret, so the next segment names an id the removed reader
 has no secret for. What they already hold stays readable, which is what
 [D4](../../docs/decisions.md) and §11 promise and never pretend otherwise.
 
+## 4. The welcome does not sink it — the risk D26 named
+
+A joiner's welcome carries the whole secret bundle, which is what lets them read
+history. If that were linear in history the cost would have moved rather than
+gone.
+
+| rotations | bundle | `add` (forge) | welcome (process) |
+|---|---|---|---|
+| 1 | 2 | 0.158 ms | 0.105 ms |
+| 30 | 31 | 0.184 ms | 0.192 ms |
+| 90 | 91 | 0.249 ms | 0.242 ms |
+| 180 | 181 | 0.353 ms | 0.409 ms |
+| 365 | 366 | 0.535 ms | **0.763 ms** |
+
+**A year of daily key rotation is a 366-secret bundle and a 0.76 ms welcome.**
+It grows, but from nothing and slowly.
+
+The reason is that a secret is generated per **group operation** — create,
+update, remove — and *not* per message. The bundle tracks how often keys rotate,
+not how much data exists. A decade of daily rotation is 3,650 secrets, which on
+this curve is still single-digit milliseconds.
+
 ## What this does NOT establish
 
 * **The production DGM and orderer are not ours yet.** `p2panda-spaces` has
@@ -63,7 +85,5 @@ has no secret for. What they already hold stays readable, which is what
 * **The auth layer is untouched.** Who may grant, and the tamper-evident record
   of grants ([D13](../../docs/decisions.md)), is a separate question —
   `p2panda-auth` or the existing signed log.
-* **Welcome cost is unmeasured.** D26 names it as the thing that would sink
-  this: if handing a joiner the secret bundle is itself linear in history, the
-  cost moves rather than disappears. Two members here, one bundle, nothing
-  stressed.
+* **The auth layer is untouched** in a second sense: nothing here is persisted
+  or reopened, so `credentials.json`-style identity survival is unproven.

@@ -40,10 +40,11 @@ fn day(epoch: i64) -> Vec<u8> {
 
 const SUBJECT: MemberId = 0;
 const READER: MemberId = 1;
+const LATECOMER: MemberId = 2;
 
 fn main() {
     let rng = Rng::from_seed([7; 32]);
-    let mut net = Network::new([SUBJECT, READER], Rng::from_seed([7; 32]));
+    let mut net = Network::new([SUBJECT, READER, LATECOMER], Rng::from_seed([7; 32]));
     net.create(SUBJECT, vec![SUBJECT, READER]);
     net.process();
 
@@ -127,6 +128,53 @@ fn main() {
         "  and what they already had: {} — prospective revocation, as the design says",
         if kept { "still readable" } else { "unreadable" }
     );
+
+    // ---- 4. the welcome, which is what D26 said could sink this ----
+    println!();
+    println!("  {:>10}  {:>10}  {:>14}  {:>16}", "rotations", "bundle", "add (forge)", "welcome (process)");
+    for updates in [1usize, 30, 90, 180, 365] {
+        let (bundle, sent, processed) = welcome_cost(updates);
+        println!(
+            "  {:>10}  {:>10}  {:>11.3}ms  {:>13.3}ms",
+            updates, bundle, sent, processed
+        );
+    }
+    println!();
+    println!("  A secret is generated per group operation, not per message, so this is");
+    println!("  the cost of rotating keys — one a day for a year is the last row.");
+}
+
+/// **THE RISK D26 NAMED.** A joiner's welcome carries the whole secret bundle,
+/// which is what lets them read history. If that is linear in the number of
+/// secrets, the cost has moved rather than gone — a subject who rotates keys per
+/// epoch would hand a year's worth to every new follower.
+///
+/// A secret is generated on create, update and remove — NOT per message — so the
+/// bundle grows with group operations, not with data. Rotating per epoch, as
+/// `diaswarm-core` does with one key per segment, would mean one a day.
+fn welcome_cost(updates: usize) -> (usize, f64, f64) {
+    let mut net = Network::new([SUBJECT, READER, LATECOMER], Rng::from_seed([9; 32]));
+    net.create(SUBJECT, vec![SUBJECT, READER]);
+    net.process();
+
+    for _ in 0..updates {
+        net.update(SUBJECT);
+        net.process();
+    }
+    let bundle = net.members.get(&SUBJECT).expect("subject").secrets.len();
+
+    let t0 = Instant::now();
+    net.add(SUBJECT, LATECOMER);
+    let sent = t0.elapsed();
+
+    let t1 = Instant::now();
+    net.process();
+    let processed = t1.elapsed();
+
+    let got = net.members.get(&LATECOMER).expect("latecomer").secrets.len();
+    assert_eq!(got, bundle, "the latecomer did not receive the whole bundle");
+
+    (bundle, sent.as_secs_f64() * 1000.0, processed.as_secs_f64() * 1000.0)
 }
 
 /// The bytes a segment names its secret by, back into an id.

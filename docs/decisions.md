@@ -343,15 +343,29 @@ naming rather than cryptography.
   lines of hand-composed cryptography that nobody has reviewed, which is the
   thing D20 exists to remove.
 
-⚠️ **Nothing here is built.** The APIs are read and quoted, not exercised. What
-would settle it is a spike that creates a group, adds a reader, seals segments
-under `encrypt_data`, removes the reader, and shows the next segment is
-unreadable to them — plus `readcost`-style numbers showing the recent read stays
-flat.
+✅ **Measured in `spike/p2panda-datascheme`**, which is what moved this from an
+argument to a proposal worth acting on. Reading the newest day is **flat** —
+1.69 ms at seven days of history, 1.19 ms at a hundred and eighty — while a full
+catch-up stays linear. Segments reached 11.8 KB with no 64 KB cap and no chain.
+Removal still cuts forward and only forward.
 
-*Reopens if:* the welcome message turns out to carry the secret bundle in a way
-that is itself linear in history, which would move the cost rather than remove
-it.
+**And the risk named here first has been tested and is not one.** A joiner's
+welcome carries the whole secret bundle; if that were linear in history the cost
+would have moved rather than gone. A year of *daily* key rotation is a
+366-secret bundle and a **0.76 ms** welcome, because a secret is generated per
+group operation and not per message — the bundle tracks rotations, not data.
+
+⚠️ **What is still not built, and it is not nothing.** `p2panda-spaces` keeps
+its production DGM and orderer behind `pub(crate)`, so the spike runs on the
+crate's `test_utils` ones. Shipping this means about **242 lines** of our own
+membership and ordering code, or persuading upstream to export theirs. That code
+is bookkeeping rather than cryptography — which is the whole argument for the
+trade — but it has to exist. Nothing in the spike replicates, persists or
+restarts either.
+
+*Reopens if:* writing those 242 lines turns out to need judgement about
+concurrent membership rather than bookkeeping, in which case it is bespoke
+security code after all and the argument weakens considerably.
 
 ### D25 · Sharing writes to the peer it dials, and that moved the wire to `diaswarm/6`
 
