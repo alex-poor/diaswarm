@@ -380,6 +380,13 @@ pub fn open_control(
 /// `after` is a sequence number, so catching up is "what has arrived since",
 /// not "fetch everything and work out what is new". A vault that has processed
 /// up to seq 3 asks for `Some(3)`.
+///
+/// **THE LINKS INSIDE WHAT IT RETURNS ARE CHECKED HERE**, so acting on a
+/// control log that has had an entry swapped out is not something a caller can
+/// do by forgetting to ask. What this cannot see is the run it was not given:
+/// asking for `Some(3)` says nothing about entries 0 to 3. For the whole-log
+/// guarantee — and for comparing two peers' copies — use
+/// [`crate::auth::verify_control_chain`].
 pub async fn control_from(
     store: &SqliteStore,
     subject: &VerifyingKey,
@@ -396,9 +403,29 @@ pub async fn control_from(
     >>::get_log_entries(store, subject, &CONTROL_LOG_ID, after, None)
     .await?;
 
-    let mut out = Vec::new();
-    for (operation, _encoded_header) in entries.into_iter().flatten() {
-        out.push(open_control(operation, subject)?);
+    let operations: Vec<KeysOperation> =
+        entries.into_iter().flatten().map(|(op, _encoded_header)| op).collect();
+
+    let mut out = Vec::with_capacity(operations.len());
+    for (i, operation) in operations.iter().enumerate() {
+        // A run that starts at the beginning of the log must start at seq 0
+        // with nothing behind it; one that starts mid-log is trusted to begin
+        // where the caller said, and its own links are still checked.
+        let linked = match i {
+            0 if after.is_none() => {
+                operation.header.seq_num == 0 && operation.header.backlink.is_none()
+            }
+            0 => true,
+            _ => p2panda_core::validate_backlink(&operations[i - 1].header, &operation.header)
+                .is_ok(),
+        };
+        if !linked {
+            return Err(Error::Forged(format!(
+                "control log does not chain at seq {}",
+                operation.header.seq_num
+            )));
+        }
+        out.push(open_control(operation.clone(), subject)?);
     }
     Ok(out)
 }

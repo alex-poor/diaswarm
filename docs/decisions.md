@@ -516,8 +516,53 @@ same leak unless its handles are tags too. Whatever carries grants has to name a
 per-relationship tag — which is what D13's log already does — so the existing
 signed, hash-chained grant log is not obviously the thing to replace here.
 
-⚠️ **What is still not built.** The auth layer. Replication and the
-directory-sharing reader are done — see below.
+✅ **And that is where auth landed — 2026-09-12, in `keys::auth`.** Not by
+adopting `p2panda-auth` and not by porting `diaswarm-core`'s grant log, because
+a p2panda log already **is** that log:
+
+| D13 asks for | where it already was |
+|---|---|
+| a signature per entry | the operation header — checked by `wire::open_control` |
+| a hash chain | `backlink` + `seq_num` — **nothing was checking it** |
+| names nobody | `group::GrantTag` |
+| replicates to peers | log sync over `CONTROL_LOG_ID` |
+
+Only the third row needed writing. `validate_operation` checks a signature and a
+payload hash and says nothing about whether one entry follows another, so "it is
+hash-chained" was a property of the data structure that no code asserted.
+`auth::verify_control_chain` walks a subject's control log and returns the
+position of the first break, the same contract as
+`diaswarm_core::vault::Vault::verify_chain`; `wire::control_from` checks the
+links inside whatever run it returns, so acting on an edited log is not
+something a caller can do by forgetting to ask.
+
+**The half that needs the swarm is `Chain::compare`.** A chain check catches an
+entry altered or removed from the middle. It cannot catch a truncated tail —
+what remains is a valid prefix and the subject holds every key needed to sign a
+shorter log. Two peers' copies catch it: `a_subject_showing_two_histories_is_caught_by_comparing_peers`
+builds two logs that are each internally beyond reproach and reports
+`Forked { at: 1 }` from the pair. `Chain` keeps every entry hash rather than a
+head for exactly this — a head cannot tell "this peer has seen less" from "this
+peer was told something else", and the test asserts a peer merely behind comes
+back `Consistent`.
+
+**AND IT ENFORCES NOTHING, DELIBERATELY.** In `diaswarm-core` the log *is* the
+permission: `entitled(tag)` answers which segments a reader may read. Here that
+question has no meaning — a reader opens a segment if it holds the secret the
+segment names. Entitlement is cryptographic; the log is for accountability. A
+log that enforced nothing while being treated as though it did would be the
+worst of both, so the module says so in its first paragraph.
+
+⚠️ **One subject is one signing key, and that is a real limit.** "Who may grant"
+has a one-line answer because a group's control log is a single author's log.
+There is no way to say "this other key may also grant on my behalf", so a second
+device is a second subject. `nobody_but_the_subject_writes_the_subjects_log`
+pins it. That is the right trade while the flagship is one person's phone
+publishing their own data, and it is the thing that would reopen this if the
+clinician or research use cases ever need delegation.
+
+✅ **All three of these are now built** — auth, replication, and a reader that
+does not share the subject's directory. See below.
 
 ✅ **Replication, 2026-09-12.** `diaswarm-net`'s `Replicator` is now generic
 over the extension type and over *which logs a subject has*, so both vaults use

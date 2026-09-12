@@ -18,8 +18,13 @@
 //! [`group::Message`] is never constructed, which is what keeps the control
 //! history one entry per grant instead of one per reading.
 //!
-//! Auth — who may grant, and the tamper-evident record of grants ([D13]) — is a
-//! separate question this crate does not answer.
+//! Auth — who may grant, and the tamper-evident record of grants ([D13]) — is
+//! [`auth`]. It turned out to be mostly already here: a p2panda log is signed
+//! per entry, hash-chained and replicable by construction, and the control log
+//! names members by [`group::GrantTag`], so what was missing was the checking
+//! rather than the structure. The log records what the subject did; it does not
+//! decide what a reader may open, because here that is decided by whether the
+//! reader holds the secret a segment names.
 //!
 //! **CONTROL MESSAGES ARE SIGNED, AND THE TYPE SYSTEM SAYS SO.**
 //! [`group::Message`] is a plain struct whose `sender` field anybody can set, so
@@ -52,6 +57,7 @@
 //! unlinkable, because those come from ECDH and this one deliberately does
 //! not.
 
+pub mod auth;
 pub mod group;
 pub mod wire;
 

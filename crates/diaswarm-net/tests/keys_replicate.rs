@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use diaswarm_core::{EPOCH_MS, Record};
 use diaswarm_keys::wire::{self, KeysOperation, CONTROL_LOG_ID, LOG_ID};
-use diaswarm_keys::Vault;
+use diaswarm_keys::{auth, Vault};
 use diaswarm_net::pool;
 use diaswarm_net::replicate::KeysReplicator;
 use diaswarm_net::swarm::{network_id, Swarm};
@@ -130,8 +130,27 @@ async fn a_follower_gets_its_grant_and_its_days_from_a_stranger() {
     //
     // It never contacted the subject. What it has is the subject's public key
     // and key bundle, which is what an invite carries.
+    // **THE CHAIN IS CHECKED BEFORE ANYTHING IS ACTED ON**, and against the
+    // copy the carrier holds rather than the subject's own — which is the whole
+    // point of D13's tamper-evidence replicating. A carrier that had dropped an
+    // entry on the way, or a subject that had shown this peer a shorter
+    // history, shows up here rather than as a grant that quietly does less than
+    // it should.
+    let chain = auth::verify_control_chain(&carrier_store, &author).await.unwrap();
+    assert!(chain.is_intact(), "the carrier's copy of the grant log broke at {:?}", chain.broken_at);
+    assert_eq!(chain.len(), 2, "the carrier holds a different number of grants than it reported");
+
     let arrived = wire::control_from(&carrier_store, &author, None).await.unwrap();
     assert_eq!(arrived.len(), 2, "both control messages did not authenticate");
+
+    // And the carrier's copy says the same thing as the subject's own. Two
+    // peers agreeing is what makes a later disagreement evidence.
+    let mine = auth::verify_control_chain(&subject_store, &author).await.unwrap();
+    assert_eq!(
+        mine.compare(&chain),
+        diaswarm_keys::auth::Agreement::Consistent { shared: 2 },
+        "the carrier and the subject disagree about the grant log"
+    );
 
     let reader_key = SigningKey::generate();
     let mut reader = Vault::open(tmp("reader"), OFFSET, &reader_key).unwrap();
