@@ -132,7 +132,24 @@ object Follower {
                 } finally {
                     SwarmNative.keysClose(handle)
                 }
-                if (fromKeys.isNotBlank()) return parseReadings(fromKeys)
+                // `error …` is a reason, not rows — see keysGlucose.
+                val failed = fromKeys.startsWith("error")
+                val parsed =
+                    if (failed || fromKeys.isBlank()) emptyList() else parseReadings(fromKeys)
+                if (failed) android.util.Log.i(SyncWorker.TAG, "keys read: $fromKeys")
+                // **SAY WHICH VAULT ANSWERED.** The fallback is deliberate and
+                // silent — a follower not yet granted on the new vault keeps
+                // seeing yesterday's readings rather than an empty graph — but
+                // silent means a working keys read and a failed one produce the
+                // same screen. Without this line there is no way to tell from
+                // outside the app which one happened, which is the whole reason
+                // shadow mode had to be rewritten this week.
+                android.util.Log.i(
+                    SyncWorker.TAG,
+                    if (parsed.isEmpty()) "keys read empty for ${subject.short} — falling back"
+                    else "keys read ${parsed.size} reading(s) for ${subject.short}"
+                )
+                if (parsed.isNotEmpty()) return parsed
             }
         }
 

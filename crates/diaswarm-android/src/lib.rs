@@ -1697,7 +1697,8 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSealChecked<'a>(
         return to_jstring(env, "error no-vault".to_string());
     };
 
-    to_jstring(env, seal_checked(&mut v.vault, epoch, &body))
+    let (store, handle, signing) = (v.store.clone(), v.handle.clone(), v.signing.clone());
+    to_jstring(env, seal_checked(&mut v.vault, &store, &handle, &signing, epoch, &body))
 }
 
 /// A followed subject's readings out of the keys vault, in `netGlucose`'s shape.
@@ -1761,9 +1762,13 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGlucose<'a>(
         offset,
     );
     let Some(body) = out.strip_prefix("ok ").and_then(|rest| rest.split_once('\n')) else {
-        // An error is empty here rather than a message: the caller is a chart,
-        // and `netGlucose` answers the same way when it can open nothing.
-        return to_jstring(env, String::new());
+        // **THE REASON COMES BACK, EVEN THOUGH THE CALLER IS A CHART.** This
+        // returned an empty string to look like `netGlucose`, which threw away
+        // the one thing that distinguishes "not granted yet" from "nothing has
+        // replicated" from "the tag does not match" — three causes with three
+        // different fixes, all presenting as an empty graph. The caller treats
+        // anything starting `error` as no readings and says so in the log.
+        return to_jstring(env, out);
     };
 
     let mut rows: Vec<(i64, f64, String, String)> = body
@@ -2006,7 +2011,14 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRevoke<'a>(
 /// layout exists — so the format is exactly the kind of thing that drifts
 /// silently. And the Kotlin's failure mode if it drifts is the bad one: a field
 /// it cannot find would read as `missing=0`, which is "agrees".
-pub fn seal_checked(vault: &mut diaswarm_keys::Vault, epoch: i64, body: &str) -> String {
+pub fn seal_checked(
+    vault: &mut diaswarm_keys::Vault,
+    store: &diaswarm_keys::SqliteStore,
+    runtime: &tokio::runtime::Handle,
+    signing: &p2panda_core::SigningKey,
+    epoch: i64,
+    body: &str,
+) -> String {
     let given: Vec<Record> = body
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -2014,8 +2026,19 @@ pub fn seal_checked(vault: &mut diaswarm_keys::Vault, epoch: i64, body: &str) ->
         .map(Record::normalise)
         .collect();
 
-    if let Err(e) = vault.seal(epoch, &given) {
-        return format!("error seal {e}");
+    let segment = match vault.seal(epoch, &given) {
+        Ok(s) => s,
+        Err(e) => return format!("error seal {e}"),
+    };
+
+    // **AND PUBLISH IT, OR NOBODY CAN EVER FETCH IT.** Sealing writes a file;
+    // a follower reads operations. Without this the segments existed only on
+    // the subject's own filesystem, so a reader could be granted, replicate the
+    // control log, find its welcome and join — all of which worked — and then
+    // have nothing to open. The failure looked like a broken reader and was a
+    // missing writer.
+    if let Err(e) = runtime.block_on(diaswarm_keys::wire::publish(store, signing, &segment)) {
+        return format!("error publish {e}");
     }
 
     // **READ BACK OFF DISK RATHER THAN TRUSTING WHAT WAS JUST WRITTEN.** A seal
@@ -2128,15 +2151,43 @@ pub fn read_followed(
     tail_days: u64,
     from_epoch: i64,
 ) -> Result<(String, usize, usize), String> {
-    let segments = if tail_days > 0 {
+    // **ONE EPOCH IS MANY OPERATIONS, AND ONLY THE LAST ONE MATTERS.**
+    //
+    // A subject publishes on every flush — every five minutes — and each flush
+    // re-seals the whole accumulated day, so the operations for one epoch are a
+    // sequence of supersets and the newest contains all of them. That breaks
+    // the invariant `segments_tail` was written under, which was "the last N
+    // entries are the last N days": at a five-minute cadence the last two
+    // entries are ten minutes of today.
+    //
+    // So the tail is asked for in *operations* rather than days — 288 flushes
+    // to a day, plus slack for a re-drain — and then reduced to one segment per
+    // epoch, keeping the last, which is the complete one.
+    //
+    // The cost is fetching supersets that are then discarded. It is the price
+    // of a follower seeing today as it happens rather than after midnight, and
+    // it is the thing to revisit first if replication gets expensive.
+    let segments: Vec<diaswarm_keys::Segment> = if tail_days > 0 {
+        let entries = tail_days.saturating_mul(320).min(20_000);
         let tail = runtime
-            .block_on(diaswarm_keys::wire::segments_tail(store, subject, tail_days))
+            .block_on(diaswarm_keys::wire::segments_tail(store, subject, entries))
             .map_err(|e| format!("segments {e}"))?;
-        tail.into_iter().filter(|s| s.epoch >= from_epoch).collect()
+        // **AND THEN THE NEWEST `tail_days` OF THEM.** Asking the log for 320
+        // operations a day is how many entries to *fetch*; it says nothing
+        // about how many days those entries cover, and on a quiet log they
+        // cover far more. A follower asking for one day must get one day —
+        // `a_tail_read_returns_the_newest_days_and_no_others` caught this
+        // returning thirty.
+        let mut days = newest_per_epoch(tail.into_iter().filter(|s| s.epoch >= from_epoch).collect());
+        if days.len() > tail_days as usize {
+            days.drain(..days.len() - tail_days as usize);
+        }
+        days
     } else {
-        runtime
+        let all = runtime
             .block_on(diaswarm_keys::wire::segments_from(store, subject, from_epoch))
-            .map_err(|e| format!("segments {e}"))?
+            .map_err(|e| format!("segments {e}"))?;
+        newest_per_epoch(all)
     };
 
     let mut out = String::new();
@@ -2158,6 +2209,19 @@ pub fn read_followed(
         }
     }
     Ok((out, opened, unreadable))
+}
+
+/// One segment per epoch: the last, which supersedes the rest.
+///
+/// Input must be in log order, which `segments_tail` and `segments_from` both
+/// guarantee — they read by sequence number.
+fn newest_per_epoch(segments: Vec<diaswarm_keys::Segment>) -> Vec<diaswarm_keys::Segment> {
+    let mut by_epoch: std::collections::BTreeMap<i64, diaswarm_keys::Segment> =
+        std::collections::BTreeMap::new();
+    for segment in segments {
+        by_epoch.insert(segment.epoch, segment);
+    }
+    by_epoch.into_values().collect()
 }
 
 /// Join if we have not yet, then read everything we can from `from_epoch`.
@@ -2264,7 +2328,19 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysFollowRead<'a>(
 mod shadow_tests {
     use super::seal_checked;
 
-    fn vault(tag: &str) -> (diaswarm_keys::Vault, std::path::PathBuf) {
+    /// A vault, its store, a runtime and the key that signs its log.
+    ///
+    /// The store is here because sealing now publishes: a segment that is only
+    /// a file is a segment no follower can fetch, which is what the device
+    /// showed after the join already worked.
+    fn vault(
+        tag: &str,
+    ) -> (
+        diaswarm_keys::Vault,
+        diaswarm_keys::SqliteStore,
+        tokio::runtime::Runtime,
+        p2panda_core::SigningKey,
+    ) {
         let root = std::env::temp_dir().join(format!(
             "diaswarm-shadow-{tag}-{}",
             std::time::SystemTime::now()
@@ -2274,11 +2350,15 @@ mod shadow_tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let signing = p2panda_core::SigningKey::generate();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store = rt.block_on(async {
+            diaswarm_keys::SqliteStoreBuilder::memory().build().await.unwrap()
+        });
         let mut v = diaswarm_keys::Vault::open(&root, 12 * 3_600_000, &signing).unwrap();
         let rng = diaswarm_keys::Rng::default();
         let (manager, _bundle) = diaswarm_keys::Vault::key_bundle(&rng).unwrap();
         v.create(manager).unwrap();
-        (v, root)
+        (v, store, rt, signing)
     }
 
     fn ndjson(from: i64, n: i64) -> String {
@@ -2610,8 +2690,8 @@ mod shadow_tests {
     /// refactor and a shadow mode that silently passes.
     #[test]
     fn the_report_says_what_the_plugin_reads() {
-        let (mut v, _root) = vault("format");
-        let report = seal_checked(&mut v, 20_000, &ndjson(20_000 * 86_400_000, 12));
+        let (mut v, store, rt, key) = vault("format");
+        let report = seal_checked(&mut v, &store, rt.handle(), &key, 20_000, &ndjson(20_000 * 86_400_000, 12));
 
         assert!(report.starts_with("ok "), "unexpected report: {report}");
         let fields: std::collections::HashMap<&str, &str> = report
@@ -2635,11 +2715,11 @@ mod shadow_tests {
     /// of appending to it, this is the test that would have said so.
     #[test]
     fn a_day_sealed_in_pieces_reports_nothing_missing() {
-        let (mut v, _root) = vault("pieces");
+        let (mut v, store, rt, key) = vault("pieces");
         let base = 20_001 * 86_400_000;
         let mut held = 0i64;
         for chunk in 0..6 {
-            let report = seal_checked(&mut v, 20_001, &ndjson(base + chunk * 12 * 300_000, 12));
+            let report = seal_checked(&mut v, &store, rt.handle(), &key, 20_001, &ndjson(base + chunk * 12 * 300_000, 12));
             let fields: std::collections::HashMap<&str, &str> =
                 report.split(' ').filter_map(|f| f.split_once('=')).collect();
             assert_eq!(fields["missing"], "0", "flush {chunk} lost records: {report}");
