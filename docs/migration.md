@@ -710,6 +710,36 @@ carries on without network-change detection. Already documented in
 `crates/diaswarm-android/Cargo.toml`; harmless for a wifi test, and not a new
 problem.
 
-**Remaining for a cutover:** the bundle into the invite and `Request::Offer`;
-the JNI, shaped by the one-identity-many-vaults constraint above; Ayni's read
-path; and the existing-followers migration, still unanswered.
+### ✅ The publisher side, on a phone — 2026-09-13
+
+Everything but Ayni is now wired and was checked on phone B after installing:
+
+```
+swarm: in the pool as b8e0c9badf6b…
+swarm: shadow agrees — given 1, holds 2, missing 0, lost 0, failures 0
+swarm: keys carrying 1 log(s)
+diaswarm:3:801c9be0…:b8e0c9ba…   (8 fields — the invite carries the keys identity)
+```
+
+The shadow line is the one that mattered. `keysOpen` now **borrows the pool's
+SQLite store** rather than opening its own, because `p2panda-store` builds pools
+with `max_connections(1)` and no busy timeout — two pools on one file would make
+sealing and replication take turns failing. That it still agrees says the
+borrowing works on a device, which was the day's main risk.
+
+`keys carrying 1 log(s)` is this phone's own log. The one subject it follows was
+paired before the keys field existed, so it is skipped rather than failed —
+documented behaviour, and visible because the count is logged.
+
+🐛 **And the first version of that line logged only failures**, so a pass that
+carried everything and a pass that carried nothing read identically. Written by
+the author of a day spent removing exactly that shape from other people's code.
+
+**Remaining for a cutover:** Ayni — it has no keys vault, hands out a v2 invite,
+and cannot complete a D26 pairing; and D27's existing-follower migration, which
+is designed and unbuilt.
+
+⚠️ **Only the loop phone can demonstrate the whole thing**, because it is the
+only device with records to seal. `twokeys` proved the protocol between both
+phones; the *app* path — a v3 invite out of AAPS, scanned, granted, replicated,
+read — needs a publisher with data.

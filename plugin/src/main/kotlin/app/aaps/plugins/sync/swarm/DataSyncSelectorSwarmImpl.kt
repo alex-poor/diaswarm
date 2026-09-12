@@ -735,7 +735,16 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             SwarmPaths.store(context).absolutePath,
             SwarmPaths.identity(context).absolutePath
         )
-        if (carried < 0) aapsLogger.debug(LTag.CORE, "swarm: keys carry unavailable ($carried)")
+        // **SAY WHAT IT DID, NOT ONLY WHEN IT FAILED.** The first version of
+        // this logged nothing on success, so a pass that carried nothing and a
+        // pass that carried everything read identically — which is the exact
+        // failure shape the rest of this file exists to avoid, written by
+        // somebody who had spent the day removing it elsewhere.
+        when {
+            carried < 0 -> aapsLogger.info(LTag.CORE, "swarm: keys carry unavailable ($carried)")
+            carried == 0L -> aapsLogger.info(LTag.CORE, "swarm: keys carrying nothing")
+            else -> aapsLogger.info(LTag.CORE, "swarm: keys carrying $carried log(s)")
+        }
 
         val f = report.split('\t')
         aapsLogger.info(
