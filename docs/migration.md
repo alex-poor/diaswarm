@@ -266,6 +266,15 @@ output distinguishes those. Worth fixing before the decision, not after.
    * **Batching live seals** is still worth doing — cost is quadratic in the
      count, so cutting 1,400 operations a day to 288 is about a 24× saving. But
      it moves the wall by weeks, it does not remove it.
+     **Done 2026-09-12**, in `flushShadow`: the spaces path accumulates across
+     passes and seals every five minutes, or sooner for a bulk handover, or
+     immediately once an epoch closes. Five because it is the cadence the loop
+     reasons in and the bucket `spec/records.md` uses, so a reading waits at most
+     one CGM cycle longer than it already did; an hour would be twelve times
+     cheaper again and would make a follower useless at 3 a.m. On the loop phone
+     the two cadences visibly diverge — the core vault sealing at 16:47:28,
+     16:48:04, 16:48:24, 16:55:32 and the shadow at 16:47:28 and then 16:55:33
+     with four records in one operation.
    * **Chunked or incremental catch-up** buys nothing. Measured.
    * **Pruning** is the only one that bounds the count, and therefore the only
      structural answer. `LogStore::prune_entries` is implemented on

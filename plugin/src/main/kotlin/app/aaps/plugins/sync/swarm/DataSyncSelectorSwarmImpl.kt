@@ -60,6 +60,15 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private var emitter: Long = 0L
 
     companion object {
+        /**
+         * How often the spaces vault is sealed. See [flushShadow].
+         *
+         * The CGM's own clinical cadence, and the bucket the loop reasons in.
+         */
+        private const val SHADOW_SEAL_INTERVAL_MS = 5 * 60 * 1000L
+
+        /** Or sooner, if a backfill has handed over more than this at once. */
+        private const val SHADOW_SEAL_BYTES = 32 * 1024
 
         /**
          * The only purpose the phone grants under, for now.
@@ -299,6 +308,26 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private var shadowSealed = 0L
 
     /**
+     * Records waiting to be sealed into the spaces vault, held ACROSS passes.
+     *
+     * **BECAUSE AN OPERATION IS EXPENSIVE FOR EVER, NOT JUST ONCE.** The core
+     * vault re-seals a whole segment, so sealing every pass costs it nothing
+     * extra. The spaces vault appends an operation, and `opcost.rs` measured
+     * what that means: per-operation read cost doubles as the count doubles,
+     * and — the decisive part — delivering the same 2,000 operations in ten
+     * chunks cost the same as delivering them at once, with each chunk dearer
+     * than the last. The cost of an operation rises with how much history is
+     * already held. Sealing one reading per pass was adding about 1,400
+     * operations a day to a structure that charges more for each one.
+     *
+     * So the spaces path accumulates and seals on a cadence instead. The core
+     * vault is untouched and still seals every pass; it is the authoritative
+     * one and its freshness is what a follower reads.
+     */
+    private val shadowPending = mutableMapOf<Long, StringBuilder>()
+    private var shadowSealedAt = 0L
+
+    /**
      * The most a single pass will drain before stopping and coming back.
      *
      * **A BOUND, NOT A TUNING KNOB.** A full re-drain of 74 days is 31,000
@@ -437,7 +466,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         try {
         for ((epoch, body) in pending) {
             val text = body.toString()
-            shadowSeal(shadow, text)
+            shadowPending.getOrPut(epoch) { StringBuilder() }.append(text)
             val n = SwarmNative.vaultSeal(vault, identity, epoch, offsetMs, text)
             if (n < 0) {
                 aapsLogger.error(LTag.CORE, "swarm: sealing epoch $epoch failed with $n")
@@ -445,6 +474,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 aapsLogger.info(LTag.CORE, "swarm: sealed epoch $epoch, $n records")
             }
         }
+            flushShadow(shadow)
         } finally {
             if (shadow != 0L) SwarmNative.spacesClose(shadow)
         }
@@ -501,6 +531,49 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      *
      * Off by default. See [SwarmBooleanKey.ShadowSpacesVault].
      */
+    /**
+     * Seal the accumulated records into the spaces vault, on a cadence.
+     *
+     * **FIVE MINUTES, AND THE NUMBER IS A TRADE RATHER THAN A TUNING.** Cost is
+     * quadratic in the operation count, so fewer, fatter operations are cheaper
+     * quadratically: one a pass is about 1,400 a day, one every five minutes is
+     * 288, and the read cost falls by roughly 25×. Going further — fifteen
+     * minutes, an hour — keeps paying, and buys it with staleness.
+     *
+     * Five is where it stops being free. It is the cadence the loop itself
+     * reasons in, it is what `spec/records.md` buckets to, and the follower
+     * polls every two minutes against a sensor that reports every one — so a
+     * reading waits at most one CGM cycle longer than it already did. An hour
+     * would be twelve times cheaper again and would make a follower useless at
+     * 3 a.m., which is the use case this project exists for.
+     *
+     * **A CLOSED DAY IS NEVER HELD.** An epoch that is no longer the current one
+     * is sealed immediately whatever the clock says, so a day cannot sit in
+     * memory waiting for a cadence that only fires while records are arriving.
+     *
+     * **AND IT IS SAFE TO LOSE.** If the process dies with records accumulated,
+     * they are missing from the spaces vault until a re-drain. That vault is
+     * authoritative for nothing, is read by no screen, and D21's shadow mode
+     * exists precisely so its failures cost a log line. The core vault still
+     * seals every pass and is what a follower reads.
+     */
+    private fun flushShadow(handle: Long) {
+        if (handle == 0L || shadowPending.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val currentEpoch = SwarmNative.epochOf(now, offsetMs)
+        val due = shadowSealedAt == 0L || now - shadowSealedAt >= SHADOW_SEAL_INTERVAL_MS
+        val bulky = shadowPending.values.sumOf { it.length } >= SHADOW_SEAL_BYTES
+
+        // Closed days go now; today waits for the cadence.
+        val ready = shadowPending.keys.filter { it != currentEpoch || due || bulky }
+        if (ready.isEmpty()) return
+
+        for (epoch in ready) {
+            shadowPending.remove(epoch)?.let { shadowSeal(handle, it.toString()) }
+        }
+        shadowSealedAt = now
+    }
+
     private fun shadowSeal(handle: Long, ndjson: String) {
         if (handle == 0L || ndjson.isBlank()) return
         try {
