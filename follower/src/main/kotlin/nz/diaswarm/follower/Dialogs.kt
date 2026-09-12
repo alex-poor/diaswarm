@@ -69,6 +69,8 @@ fun PeopleSheet(
     onShowInvite: () -> Unit,
     onChoose: (Follower.Subject) -> Unit,
     onUnits: () -> Unit,
+    onKeysVault: () -> Unit,
+    keysVault: Boolean,
     onBand: () -> Unit,
     bandLabel: String,
     mmol: Boolean,
@@ -105,6 +107,26 @@ fun PeopleSheet(
                     modifier = Modifier.fillMaxWidth().clickable { onShowInvite() }.padding(vertical = 8.dp))
                 Text("Units: ${if (mmol) "mmol/L" else "mg/dL"}", color = Text1, fontSize = 15.sp,
                     modifier = Modifier.fillMaxWidth().clickable { onUnits() }.padding(vertical = 8.dp))
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                        .clickable { onKeysVault() }.padding(vertical = 8.dp)
+                ) {
+                    Text(
+                        "New vault: ${if (keysVault) "on" else "off"}",
+                        color = Text1,
+                        fontSize = 15.sp
+                    )
+                    // SAYS WHAT IT COSTS, because the cost lands on somebody
+                    // else. Turning this on makes your invite readable only by
+                    // apps that understand it — so if the person you follow has
+                    // not updated, sharing stops working rather than degrading.
+                    Text(
+                        "Experimental. Your invite changes form, so the person you " +
+                            "follow needs a recent app for it to work.",
+                        color = Text2,
+                        fontSize = 12.sp
+                    )
+                }
                 Column(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
                         .clickable { onBand() }.padding(vertical = 8.dp)

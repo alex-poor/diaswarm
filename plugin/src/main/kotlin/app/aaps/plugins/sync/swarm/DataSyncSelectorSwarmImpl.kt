@@ -866,6 +866,33 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             }
             aapsLogger.info(LTag.CORE, "swarm: granted ${who.take(16)}… — $n wraps published")
 
+            // **AND ON THE KEYS VAULT TOO, IF THEY PUBLISHED AN IDENTITY.**
+            // Without this a scan grants half of what the invite offers: the
+            // reader gets wraps for the old vault and is not a member of the
+            // new one, so the day the old vault goes away they stop reading
+            // with nothing to say why. Empty is a v1 or v2 invite — somebody
+            // whose app has no keys vault — and is not a failure.
+            val theirKeys = fields.getOrNull(4).orEmpty()
+            if (theirKeys.isNotEmpty()) {
+                val handle = openShadow()
+                if (handle == 0L) {
+                    aapsLogger.error(LTag.CORE, "swarm: keys grant skipped — no keys vault")
+                } else {
+                    try {
+                        val tag = SwarmNative.keysGrant(handle, theirKeys, PURPOSE)
+                        if (tag.startsWith("error")) {
+                            aapsLogger.error(LTag.CORE, "swarm: keys grant failed: $tag")
+                        } else {
+                            aapsLogger.info(LTag.CORE, "swarm: keys granted as ${tag.take(16)}…")
+                        }
+                    } catch (e: Throwable) {
+                        aapsLogger.error(LTag.CORE, "swarm: keys grant threw: $e")
+                    } finally {
+                        SwarmNative.keysClose(handle)
+                    }
+                }
+            }
+
             // AND TELL THEM WHERE TO LOOK. Granting somebody who cannot find
             // you is half a share; they would otherwise have to scan a second
             // code to learn an address we already know.

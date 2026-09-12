@@ -1147,7 +1147,13 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_inviteParse<'a>(
 ) -> JString<'a> {
     let Ok(t) = env.get_string(&text) else { return to_jstring(env, String::new()) };
     match diaswarm_core::invite::Invite::parse(&String::from(t)) {
-        Ok(i) => to_jstring(env, format!("{}\t{}\t{}\t{}", i.subject, i.endpoint, i.purpose, i.relay)),
+        // A FIFTH FIELD, EMPTY ON A v1 OR v2 INVITE. It is what lets the
+        // subject grant this reader on the keys vault as well as the old one —
+        // without it a scan grants half of what the invite offers.
+        Ok(i) => to_jstring(
+            env,
+            format!("{}\t{}\t{}\t{}\t{}", i.subject, i.endpoint, i.purpose, i.relay, i.keys),
+        ),
         Err(_) => to_jstring(env, String::new()),
     }
 }
@@ -1912,9 +1918,21 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGrant<'a>(
         return to_jstring(env, "error no-vault".to_string());
     };
 
-    let bundle = match diaswarm_keys::decode_bundle(&bundle) {
-        Ok(b) => b,
-        Err(e) => return to_jstring(env, format!("error bundle {e}")),
+    // **WHAT THE INVITE CARRIES IS AN IDENTITY, NOT A BARE BUNDLE**, and this
+    // decoded it as a bundle until a real pairing said
+    // `missing field identity_key`. The desktop test could not see it: it
+    // encodes and decodes with the same pair of functions, so it agrees with
+    // itself. The app encodes an identity on one phone and decoded a bundle on
+    // the other, and only two devices put those two halves together.
+    //
+    // A bare bundle is still accepted, because `twokeys` prints one and a
+    // person pasting either should get the grant they asked for.
+    let bundle = match diaswarm_keys::decode_identity(&bundle) {
+        Ok(id) => id.bundle,
+        Err(_) => match diaswarm_keys::decode_bundle(&bundle) {
+            Ok(b) => b,
+            Err(e) => return to_jstring(env, format!("error bundle {e}")),
+        },
     };
     let (welcome, tag) = match v.vault.grant(bundle, &purpose) {
         Ok(pair) => pair,
@@ -2520,6 +2538,47 @@ mod shadow_tests {
         // And 0 still means the whole history, for a research export.
         let all = read(0);
         assert!(all.starts_with("ok 30 0"), "a full read {}", &all[..all.len().min(30)]);
+    }
+
+    /// A GRANT TAKES WHAT AN INVITE ACTUALLY CARRIES.
+    ///
+    /// **THE MISMATCH THAT ONLY TWO PHONES COULD SHOW.** An invite carries a
+    /// `KeysIdentity` — signer and bundle together — and the grant path decoded
+    /// it as a bare `LongTermKeyBundle`, which fails with
+    /// `missing field identity_key`. Every desktop test passed because each one
+    /// encodes and decodes with the same pair of functions, so it agrees with
+    /// itself. The app encoded an identity on one phone and decoded a bundle on
+    /// the other, and nothing put those two halves together until a real
+    /// pairing did.
+    ///
+    /// This pins both forms, because a person pasting either should get the
+    /// grant they asked for.
+    #[test]
+    fn a_grant_accepts_an_identity_or_a_bare_bundle() {
+        use diaswarm_keys::{Vault, encode_bundle, encode_identity};
+
+        let rng = diaswarm_keys::Rng::default();
+        let key = p2panda_core::SigningKey::generate();
+        let mut v = Vault::open(dir("grant-forms"), 12 * 3_600_000, &key).unwrap();
+        let (mgr, _b) = Vault::key_bundle(&rng).unwrap();
+        v.create(mgr).unwrap();
+
+        let as_identity = encode_identity(&v.identity().unwrap()).unwrap();
+        let as_bundle = encode_bundle(&v.my_bundle().unwrap()).unwrap();
+
+        // What `keysGrant` does with each, without the JNI around it.
+        assert!(
+            diaswarm_keys::decode_identity(&as_identity).is_ok(),
+            "an invite's keys field must decode as an identity"
+        );
+        assert!(
+            diaswarm_keys::decode_identity(&as_bundle).is_err(),
+            "a bare bundle is not an identity — the fallback exists for this"
+        );
+        assert!(
+            diaswarm_keys::decode_bundle(&as_bundle).is_ok(),
+            "twokeys prints a bare bundle and it must still be usable"
+        );
     }
 
     fn dir(tag: &str) -> std::path::PathBuf {
