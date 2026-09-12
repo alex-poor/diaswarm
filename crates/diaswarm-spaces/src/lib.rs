@@ -532,6 +532,42 @@ impl Vault {
         Ok(msgs)
     }
 
+    /// This vault's own key bundle, as a signed operation anyone can ingest.
+    ///
+    /// **THE ANSWER TO "AN INVITE CANNOT GRANT", AND IT IS NOT A BIGGER INVITE.**
+    /// A grant needs the reader's long-term key bundle, not just their public
+    /// key. The obvious fix is to put the bundle in the QR code — and
+    /// `p2panda-spaces` has deliberately closed that door: `Member` derives only
+    /// `Debug`, is not constructable from outside, and carries a note saying why.
+    /// "This struct does not guarantee if the member's handle / id is authentic
+    /// ... care will be required as soon as `Member` gets constructable,
+    /// serializable etc." A bundle pasted into a string is a bundle nobody
+    /// signed.
+    ///
+    /// The supported path is this: a peer publishes its bundle as a
+    /// `SpacesArgs::KeyBundle` operation, signed by the author, and whoever
+    /// ingests it registers that member as a side effect of processing a signed
+    /// message. Authenticity comes from the signature rather than from trusting
+    /// the channel — which is also why `SpacesArgs::KeyBundle`'s own
+    /// documentation says applications should check the bundle was authored by
+    /// the sender.
+    ///
+    /// Rotation is real and not yet handled anywhere: the bundle has an expiry,
+    /// this call rotates it when it is close, and a peer that never republishes
+    /// becomes ungrantable. See [`Vault::key_bundle_expired`].
+    pub async fn key_bundle(&self) -> Result<Operation, Error> {
+        self.manager
+            .key_bundle_message()
+            .await
+            .map(Operation::from)
+            .map_err(|e| Error::Spaces(e.to_string()))
+    }
+
+    /// Whether this vault's published bundle is due for rotation.
+    pub async fn key_bundle_expired(&self) -> Result<bool, Error> {
+        self.manager.key_bundle_expired().await.map_err(|e| Error::Spaces(e.to_string()))
+    }
+
     /// Tell this vault about another peer, so it can be granted.
     ///
     /// On a phone this is what scanning an invite does.

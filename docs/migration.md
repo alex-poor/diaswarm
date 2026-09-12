@@ -312,10 +312,31 @@ output distinguishes those. Worth fixing before the decision, not after.
    shipping vault has no equivalent need: `vaultGrant` takes hex and wraps
    straight to it, which is why sharing works on hardware today.
 
-   `a_grant_needs_more_than_the_key_an_invite_carries` holds this down. Closing
-   it means a `diaswarm:3:` invite carrying a bundle, plus something that
-   republishes one before it expires — `Manager` has both the expiry check and
-   the rotation call, and nothing in this repository calls either.
+   `a_grant_needs_more_than_the_key_an_invite_carries` holds this down.
+
+   **AND THE FIX IS NOT A BIGGER INVITE.** That was the obvious reading and it
+   is wrong: `Member` derives only `Debug`, is not constructable from outside,
+   and carries a note explaining why — *"this struct does not guarantee if the
+   member's handle / id is authentic ... care will be required as soon as
+   `Member` gets constructable, serializable etc."* A bundle pasted into a QR
+   string is a bundle nobody signed, and an impersonation waiting to happen.
+
+   The supported path is a **signed operation**: a peer publishes its bundle as
+   `SpacesArgs::KeyBundle` and whoever ingests it registers that member as a
+   side effect of processing a message the author signed. Authenticity comes
+   from the signature, not from trusting the channel.
+
+   Measured in `a_published_key_bundle_makes_a_bare_key_grantable`: a grant from
+   a bare key fails, one signed operation is ingested, the same grant succeeds,
+   and the reader opens what was sealed after it. `Vault::key_bundle` exposes
+   the message; `Vault::key_bundle_expired` is the rotation check nothing calls
+   yet.
+
+   **So the invite format does not change.** What is left is carrying one extra
+   operation at first contact, and there is already a channel for it — the
+   subject dials the follower during the one-scan exchange ([D25](decisions.md))
+   and the follower hands its invite back. That is where the bundle should
+   travel, and it is the wire work this gate now reduces to.
 
    Found by reading upstream rather than by running anything: `Vault::register`
    takes another `Vault`, which only ever exists with both peers in one

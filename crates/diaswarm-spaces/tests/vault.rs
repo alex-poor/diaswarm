@@ -446,3 +446,66 @@ async fn a_dependency_arriving_late_releases_what_waited_for_it() {
         "a bundle delivered in two halves read differently from the same bundle in one"
     );
 }
+
+/// AND THIS IS HOW AN INVITE IS MADE ENOUGH — without growing the invite.
+///
+/// [`a_grant_needs_more_than_the_key_an_invite_carries`] establishes that a
+/// public key alone cannot be granted: the spaces vault wants a long-term key
+/// bundle too. The tempting fix is a `diaswarm:3:` invite carrying one, and
+/// upstream has deliberately closed that door — `Member` is not constructable
+/// or serialisable from outside, with a note saying a handle in a struct
+/// nobody signed is an impersonation waiting to happen.
+///
+/// The supported path is a signed operation. A peer publishes its bundle as
+/// `SpacesArgs::KeyBundle`; whoever ingests it registers that member as a side
+/// effect of processing a message the author signed. The invite still carries
+/// only a key — what has to travel is one extra operation, and this project
+/// already has a channel for it: the subject dials the follower during the
+/// one-scan exchange and the follower hands its invite back.
+#[tokio::test]
+async fn a_published_key_bundle_makes_a_bare_key_grantable() {
+    let mut subject = peer("bundle-subject").await;
+    let reader = peer("bundle-reader").await;
+
+    // The key is all an invite carries, and on its own it is not enough.
+    let key = reader.subject();
+    // Kept, because it opens window 0 and everything later depends on it.
+    let opened = subject.seal(&[]).await.unwrap();
+    assert!(
+        subject.grant(key, Reach::Everything).await.is_err(),
+        "a bare key was grantable before the bundle arrived"
+    );
+
+    // One signed operation, which is what would travel over the wire.
+    let bundle = reader.key_bundle().await.unwrap();
+    let ingested = subject.ingest(&[bundle]).await.unwrap();
+    assert_eq!(ingested.panicked, 0, "ingesting a key bundle panicked");
+    assert_eq!(ingested.held, 0, "a key bundle should depend on nothing");
+
+    // And now the same grant, from the same bare key, works.
+    let mut ops = opened;
+    ops.extend(subject.grant(key, Reach::Everything).await.expect("grant after bundle"));
+    assert!(!ops.is_empty(), "granting produced no operations");
+
+    // The reader can actually read what follows, which is the point of all of it.
+    let records = vec![Record::new(26_000 * EPOCH_MS + 3_600_000, "cgm")
+        .set("mgdl", Some(140.0.into()))];
+    ops.extend(subject.seal(&records).await.unwrap());
+
+    reader.register(&subject).await.unwrap();
+    let got = reader.ingest(&ops).await.unwrap();
+    assert_eq!(
+        got.held, 0,
+        "the reader is still waiting on a dependency that should have been in the bundle"
+    );
+    assert_eq!(got.panicked, 0, "the reader panicked on what it was granted");
+    // The stream header rides along with window 0, so this is containment
+    // rather than equality — §5.2's `meta` is a record too.
+    let read = canonical(&got.records);
+    for want in canonical(&records) {
+        assert!(
+            read.contains(&want),
+            "the reader did not get what was sealed after the grant: {want} missing from {read:?}"
+        );
+    }
+}
