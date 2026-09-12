@@ -86,9 +86,9 @@ async fn main() -> Result<()> {
 
     match role.as_str() {
         "publish" => publish(vault, replicator, swarm).await,
-        "carry" => carry(vault, replicator, swarm, args.next()).await,
+        "carry" => carry(vault, replicator, swarm, args.next(), args.next()).await,
         _ => {
-            eprintln!("usage: twophone <publish|carry> [dir] [subject-hex-if-carrying]");
+            eprintln!("usage: twophone <publish|carry> [dir] [subject-hex] [expected-ops]");
             std::process::exit(2);
         }
     }
@@ -114,7 +114,7 @@ async fn publish(
     replicator.carry(topic, &subject).await?;
 
     println!("\n  RUN THIS ON THE OTHER PHONE:");
-    println!("    twophone carry /data/local/tmp/tp {subject}\n");
+    println!("    twophone carry /data/local/tmp/tp {subject} {sealed}\n");
     println!("  announcing (ctrl-c to stop)…");
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
@@ -128,6 +128,7 @@ async fn carry(
     replicator: Replicator,
     swarm: Swarm,
     subject: Option<String>,
+    expect: Option<String>,
 ) -> Result<()> {
     let Some(subject) = subject else {
         eprintln!("  the subject's key is needed: twophone carry <dir> <subject-hex>");
@@ -147,16 +148,35 @@ async fn carry(
     replicator.carry(topic, &subject).await?;
     println!("  carrying bucket for {}…", &subject[..16]);
 
+    // **COMPLETENESS NEEDS A TARGET, AND THIS USED TO HAVE NONE.** The old
+    // loop stopped as soon as anything at all had arrived and twenty seconds
+    // had passed, then reported the count — which answers "did replication
+    // start", not "did it finish". migration.md's gate 4 asks the second
+    // question, and the 1-of-6 result it records is what the first one looks
+    // like when you read it as the second.
+    //
+    // So the publisher prints how many operations it sealed, and that number
+    // is passed here. Without it this still runs and still cannot conclude.
+    let expect: usize = expect.and_then(|a| a.parse().ok()).unwrap_or(0);
+    if expect == 0 {
+        println!("  no expected count given — this run can show arrival, not completeness");
+    }
+
     let started = Instant::now();
     let mut last = 0;
-    for _ in 0..60 {
+    let mut complete_at = None;
+    for _ in 0..90 {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let n = held(&vault.store(), &author).await;
+        let n = held(&vault.store(), &author).await as usize;
         if n != last {
             println!("    +{:>4.0}s  holding {n} operations", started.elapsed().as_secs_f64());
             last = n;
         }
-        if n > 0 && started.elapsed() > Duration::from_secs(20) {
+        if expect > 0 && n >= expect {
+            complete_at = Some(started.elapsed());
+            break;
+        }
+        if expect == 0 && n > 0 && started.elapsed() > Duration::from_secs(20) {
             break;
         }
     }
@@ -166,6 +186,14 @@ async fn carry(
         println!("  NOTHING ARRIVED. The two phones did not replicate.");
         println!("  events: {:?}", replicator.events());
         std::process::exit(1);
+    }
+    match (expect, complete_at) {
+        (0, _) => {}
+        (e, Some(t)) => println!("  COMPLETE: {last} of {e} operations in {:.0}s", t.as_secs_f64()),
+        (e, None) => {
+            println!("  INCOMPLETE: {last} of {e} operations after {:.0}s", started.elapsed().as_secs_f64());
+            println!("  events: {:?}", replicator.events());
+        }
     }
 
     // HOLDING IS NOT READING, on hardware this time.
@@ -191,6 +219,14 @@ async fn carry(
         "  opened  {} records{}",
         read.records.len(),
         if read.records.is_empty() { " — as it should: it was granted nothing" } else { " — WRONG" }
+    );
+    // held/panicked say WHY nothing opened. A carrier that was granted nothing
+    // should refuse cleanly; one that is holding operations back because their
+    // dependencies never arrived is a different and worse thing, and the two
+    // look identical from the record count alone.
+    println!(
+        "  ingest  refused {} · held {} · panicked {}",
+        read.refused, read.held, read.panicked
     );
     if !read.records.is_empty() {
         std::process::exit(1);

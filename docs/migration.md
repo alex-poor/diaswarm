@@ -70,22 +70,40 @@ belongs regardless: a peer relaying two overlapping copies of a subject is
 normal rather than broken. `a_record_sealed_twice_is_read_once` covers it, and
 fails without the fix.
 
-**3. Two phones replicate, partially.** Run on the real devices with
+**3. ~~Two phones replicate, partially.~~ Completely, and the old figure was
+measuring the wrong thing.** Run on the real devices with
 `crates/diaswarm-net/src/bin/twophone.rs` — a binary in `/data/local/tmp`, no
-app involved:
+app involved. Two cold runs, 2026-09-12, publisher on phone B and carrier on the
+loop phone, both over the relay:
 
 ```
-carrying bucket for e9be07cbd8172011…
-  +   4s  holding 1 operations
-carried 1 operations from a phone it was never introduced to
+carrying bucket for f0faea6d65446a1f…
+  +   2s  holding 6 operations
+COMPLETE: 6 of 6 operations in 2s
+carried 6 operations from a phone it was never introduced to
 opened  0 records — as it should: it was granted nothing
+ingest  refused 0 · held 0 · panicked 0
 ```
 
-The claim holds: two devices on a real network found each other through the
-pool, moved a subject neither was introduced about, and the carrier could open
-none of it. What is *not* established is completeness — one of six operations
-arrived inside the twenty-second window the binary waits. Whether the rest
-follow, and how quickly, is unmeasured.
+The second run: 6 of 6 in 4s.
+
+**THE 1-OF-6 THIS USED TO RECORD WAS A HARNESS ARTEFACT, NOT A RESULT.** The
+carrier stopped as soon as *anything* had arrived and twenty seconds had passed,
+then printed what it held — which answers "did replication start", not "did it
+finish", and this gate asks the second. It now takes the publisher's sealed
+count and waits for it, so it can say COMPLETE or INCOMPLETE rather than leaving
+a number to be misread. It also reports `refused`/`held`/`panicked`, because a
+carrier that opens nothing because it was granted nothing and one that opens
+nothing because operations are stuck waiting on a dependency look identical from
+the record count alone.
+
+Both runs also predate nothing: they are the first on the relay harness — the
+old figure was taken before relays existed — and the first through the
+dependency orderer.
+
+*Not established:* the reverse direction, with the loop phone publishing. The
+sandbox declines to run a long-lived background process on the phone driving a
+pump, which is the right call and leaves that half unmeasured.
 
 ⚠️ **mDNS does not work from a bare binary on Android**: `ndk-context` panics
 with "android context was not initialized", because local discovery needs a JNI
@@ -168,10 +186,11 @@ output distinguishes those. Worth fixing before the decision, not after.
    pending, released when the dependency lands. `a_shuffled_bundle_still_reads_completely`
    and `a_dependency_arriving_late_releases_what_waited_for_it` cover it, and
    both fail if the ordering is removed.
-4. **Not done, and now unmeasured rather than partial.** Two phones replicate a
-   subject over log sync, and a granted reader on one opens what the other
-   sealed. The 1-of-6 result above was taken before relays existed;
-   `twophone.rs` now dials `DEFAULT_RELAY` and has not been re-run.
+4. **Half done.** Two phones replicate a subject over log sync completely —
+   6 of 6 in 2s and 4s, twice cold, over the relay, with a carrier that opens
+   none of it. What is still untested is the other half of the sentence: a
+   *granted* reader on one phone opening what the other sealed. `twophone`'s
+   carrier is granted nothing by design, so it proves carriage and not reading.
 5. ~~Someone decides whether worse first contact is acceptable.~~ **Answered**
    — three seconds, accept it.
 6. **Not done, and nothing else on this list knew about it.** An invite has to
