@@ -620,3 +620,57 @@ here.** Let shadow mode run for a week. If it still agrees pass for pass after a
 reboot and a sensor change, delete `vault.rs`, `seal.rs` and `wire.rs` — the
 evidence for doing so is stronger than the evidence that ever existed for the
 code they replace.
+
+## The cutover, and the one thing blocking all of it
+
+**Decided 2026-09-12: a cutover is wanted, and `diaswarm-keys` is not close to
+one.** It is a storage engine wired into exactly one caller — shadow mode
+sealing. The shipping path is entirely `diaswarm-core`:
+
+| Piece | Today | Needed |
+|---|---|---|
+| Seal | `vaultSeal` → core vault | ✅ keys seals, shadow only |
+| Grant | `vaultGrant` → `record_grant` + `publish_wraps` | ❌ no JNI for `keys::Vault::grant` |
+| Invite | `subject, endpoint, purpose, relay` | ❌ **carries no key bundle** |
+| Transport | `wire.rs` pull protocol, polled | ❌ `KeysReplicator` tested, nothing calls it |
+| Ayni read | `netGlucose`/`netTreatments`/`netLatest` → core vault | ❌ rebuilt on keys segments |
+| Existing data | 74 days, followers already granted | ❌ **a naive cutover invalidates every grant** |
+
+That last row is the sharp one. Following is meant to be *permanent until
+revoked*; a cutover that drops existing grants means re-pairing, which has
+already been rejected as an answer.
+
+### Why the bundle exchange is the blocker
+
+`p2panda-encryption` agrees keys from a `LongTermKeyBundle`, and **both sides
+need the other's before a grant can exist**: the subject calls
+`grant(reader_bundle, purpose)`, and the reader needs the subject's bundle to
+derive the same `GrantTag` and to open its welcome. The invite carries neither.
+So today there is no way to grant a reader on the keys vault *at all* — which is
+why nothing downstream of it can be tested end to end, and why it is the first
+thing to build.
+
+The channels already exist and only need a field each:
+
+* the **invite** (subject → reader) carries the subject's bundle. New invite
+  version; `diaswarm:2:` must keep working for the core vault.
+* **`Request::Offer`** (reader → subject, D25) carries the reader's bundle. It
+  already exists precisely so one scan finishes the exchange both ways (D16).
+
+A bundle is a few hundred bytes, so a QR code is unbothered.
+
+### Next session: unblock, do not cut over
+
+1. `keys::Vault` JNI beyond sealing: `keysBundle` (ours, for an invite),
+   `keysGrant(reader_bundle, purpose) -> tag`, `keysRevoke(tag)`,
+   `keysJoin(subject_bundle, subject_key, purpose)`. **Each needs a
+   `SqliteStore` alongside the vault**, because a grant is only real once
+   `wire::publish_control` has put it in the control log.
+2. Bundle into the invite and into `Request::Offer`, with the old invite still
+   parsing.
+3. Prove it between two phones with a `twophone`-style binary on the keys vault
+   — `crates/diaswarm-net/src/bin/twophone.rs` is the existing harness and runs
+   from `/data/local/tmp`, nowhere near AAPS.
+
+Only then is the cutover a sequence of testable steps rather than a cliff. The
+migration of existing followers is a separate question and is still unanswered.
