@@ -46,21 +46,19 @@ fn a_granted_reader_opens_segments_and_a_revoked_one_stops() {
 
     let root = tmp("shared");
     let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("subject vault");
-    let (_subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("subject bundle");
+    let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("subject bundle");
     let (reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("reader bundle");
 
-    subject
-        .create(&subject_key, vec![(subject.subject(), subject_bundle.clone())])
-        .expect("create group");
+    subject.create(subject_mgr).expect("create");
 
     // A day before anybody is granted.
     subject.seal(20_000, &day(20_000)).expect("seal");
 
-    let welcome = subject.grant(reader_key.verifying_key(), reader_bundle).expect("grant");
+    let (welcome, _tag) = subject.grant(reader_bundle, "follow").expect("grant");
 
     let mut reader = Vault::open(&root, OFFSET, &reader_key).expect("reader vault");
-    let registry = Vault::registry(&[(subject.subject(), subject_bundle)]).expect("registry");
-    reader.join(&reader_key, reader_mgr, registry, welcome).expect("join");
+    let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("registry");
+    reader.join(reader_mgr, registry, &subject_bundle, "follow", welcome).expect("join");
 
     // More days, after the grant.
     for e in 1..180i64 {
@@ -119,16 +117,14 @@ fn reading_the_newest_day_does_not_care_how_much_came_before() {
         let root = tmp(&format!("depth-{held}"));
 
         let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("vault");
-        let (_m, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
+        let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
         let (reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("bundle");
-        subject
-            .create(&subject_key, vec![(subject.subject(), subject_bundle.clone())])
-            .expect("create");
-        let welcome = subject.grant(reader_key.verifying_key(), reader_bundle).expect("grant");
+        subject.create(subject_mgr).expect("create");
+        let (welcome, _tag) = subject.grant(reader_bundle, "follow").expect("grant");
 
         let mut reader = Vault::open(&root, OFFSET, &reader_key).expect("vault");
-        let registry = Vault::registry(&[(subject.subject(), subject_bundle)]).expect("registry");
-        reader.join(&reader_key, reader_mgr, registry, welcome).expect("join");
+        let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("registry");
+        reader.join(reader_mgr, registry, &subject_bundle, "follow", welcome).expect("join");
 
         for e in 0..held {
             subject.seal(20_000 + e, &day(20_000 + e)).expect("seal");
@@ -162,19 +158,17 @@ fn a_vault_reopens_as_the_same_member() {
     let secrets_before;
     {
         let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("vault");
-        let (_m, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
+        let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
         let (reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("bundle");
-        subject
-            .create(&subject_key, vec![(subject.subject(), subject_bundle.clone())])
-            .expect("create");
-        let welcome = subject.grant(reader_key.verifying_key(), reader_bundle).expect("grant");
+        subject.create(subject_mgr).expect("create");
+        let (welcome, _tag) = subject.grant(reader_bundle, "follow").expect("grant");
         subject.seal(20_000, &day(20_000)).expect("seal");
         subject_id = subject.subject();
         secrets_before = subject.secrets();
 
         let mut reader = Vault::open(&root, OFFSET, &reader_key).expect("reader");
-        let registry = Vault::registry(&[(subject_id, subject_bundle)]).expect("registry");
-        reader.join(&reader_key, reader_mgr, registry, welcome).expect("join");
+        let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("registry");
+        reader.join(reader_mgr, registry, &subject_bundle, "follow", welcome).expect("join");
         assert_eq!(reader.read_from(i64::MIN).expect("read").len(), 1);
     }
     // Both vaults dropped. Nothing in memory survives.
@@ -198,4 +192,49 @@ fn a_vault_reopens_as_the_same_member() {
         let mode = std::fs::metadata(root.join("group.cbor")).expect("state file").permissions().mode();
         assert_eq!(mode & 0o077, 0, "group.cbor is readable by somebody else: {mode:o}");
     }
+}
+
+/// THE PROPERTY THE TAG EXISTS FOR: one reader, two subjects, two names.
+///
+/// [D13](../../../docs/decisions.md) removed the reader's public key from the
+/// grant log because it is *the same key in every subject's log* — "one
+/// clinician granted by fifty people appeared identically fifty times, which
+/// identifies them and clusters their patients". `ControlMessage::Add` publishes
+/// whatever the member id is, so this vault gets that property only if the id is
+/// per-relationship.
+///
+/// Asserted rather than assumed, because a benchmark cannot see it and the
+/// version of this crate that used a public key passed every other test.
+#[test]
+fn one_reader_is_a_different_member_to_every_subject() {
+    let rng = Rng::default();
+    let reader_key = SigningKey::from_bytes(&rand32());
+    let (_reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("reader bundle");
+
+    let mut tags = Vec::new();
+    for n in 0..3 {
+        let subject_key = SigningKey::from_bytes(&rand32());
+        let root = tmp(&format!("unlink-{n}"));
+        let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("vault");
+        let (subject_mgr, _b) = Vault::key_bundle(&rng).expect("bundle");
+        subject.create(subject_mgr).expect("create");
+        let (_welcome, tag) = subject.grant(reader_bundle.clone(), "follow").expect("grant");
+        tags.push(tag);
+    }
+
+    assert_eq!(tags.len(), 3);
+    assert_ne!(tags[0], tags[1], "two subjects named the same reader identically");
+    assert_ne!(tags[1], tags[2], "two subjects named the same reader identically");
+    assert_ne!(tags[0], tags[2], "two subjects named the same reader identically");
+
+    // And the purpose changes the name too, so "clinician" and "follow" are not
+    // linkable to each other either.
+    let subject_key = SigningKey::from_bytes(&rand32());
+    let root = tmp("unlink-purpose");
+    let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("vault");
+    let (subject_mgr, _b) = Vault::key_bundle(&rng).expect("bundle");
+    subject.create(subject_mgr).expect("create");
+    let (_w, a) = subject.grant(reader_bundle.clone(), "follow").expect("grant");
+    let (_w, b) = subject.grant(reader_bundle, "clinician").expect("grant");
+    assert_ne!(a, b, "the same reader under two purposes got one name");
 }

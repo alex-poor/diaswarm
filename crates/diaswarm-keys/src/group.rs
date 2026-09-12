@@ -31,33 +31,60 @@ use p2panda_encryption::data_scheme::{ControlMessage, DirectMessage, GroupSecret
 use p2panda_encryption::traits::{GroupMembership, GroupMessage, GroupMessageContent, Ordering};
 use serde::{Deserialize, Serialize};
 
-pub type MemberId = VerifyingKey;
+/// **A MEMBER IS NAMED BY A PER-RELATIONSHIP TAG, NOT BY THEIR KEY.**
+/// `ControlMessage::Add { added: ID }` publishes this identifier in clear, so
+/// what it is decides whether a grant leaks the social graph. A public key is
+/// the same in every subject's log and would cluster a clinician's patients —
+/// [D13](../../docs/decisions.md) removed that and this must not put it back.
+pub type MemberId = GrantTag;
 pub type OperationId = Hash;
 
 /// A per-relationship name for a member, so a control message names nobody.
 ///
-/// ⚠️ **NOT YET USED, AND `MemberId` ABOVE IS A PRIVACY DEFECT UNTIL IT IS.**
-/// `ControlMessage::Add { added: ID }` publishes the identifier in clear, and
-/// with `ID = VerifyingKey` that identifier is the reader's public key — *the
-/// same key in every subject's log*. [D13](../../docs/decisions.md) removed
-/// exactly this: "one clinician granted by fifty people appeared identically
-/// fifty times, which identifies them and clusters their patients."
+/// `HKDF(ECDH(subject, reader), "diaswarm-grant-tag-v1" || purpose)` — D13's
+/// construction, and deliberately the same bytes: `diaswarm-core` and this
+/// crate derive it through `grant_tag_from_shared`, so one relationship has one
+/// identifier whichever vault wrote it.
 ///
-/// `IdentityHandle` requires only `Copy + Debug + PartialEq + Eq + Hash` and is
-/// not sealed, so the handle does not have to be a key. The 2SM key agreement
-/// uses the *bundle*, never the handle, so the handle is a label the application
-/// chooses — and D13 already says what it should be:
-/// `HKDF(ECDH(subject, reader), "diaswarm-grant-tag-v1" || purpose)`. Registered
-/// under the tag, a grant names an identifier that is different in every
-/// subject's log and computable only by the two parties.
+/// It works as a group member id because `IdentityHandle` requires only
+/// `Copy + Debug + PartialEq + Eq + Hash`, is not sealed, and the 2SM key
+/// agreement uses the key *bundle* and never the handle. The handle is a label
+/// the application picks.
 ///
-/// The compile below is the whole claim: a tag is a valid `IdentityHandle`.
-/// Switching `MemberId` to it is the fix, and it ripples through the registry
-/// keys and the grant API, so it is a change rather than a rename.
+/// **Unlinkable across subjects**, because the shared secret differs per pair.
+/// The reader computes the same tag from their own side, so nobody has to be
+/// told what they are called. What still leaks is what D13 says still leaks:
+/// how many grant events there have been, and roughly when.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, std::hash::Hash, Serialize, Deserialize)]
 pub struct GrantTag(pub [u8; 32]);
 
 impl p2panda_encryption::traits::IdentityHandle for GrantTag {}
+
+impl std::fmt::Display for GrantTag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for b in &self.0[..8] {
+            write!(f, "{b:02x}")?;
+        }
+        write!(f, "…")
+    }
+}
+
+impl GrantTag {
+    /// The tag a subject uses for itself inside its own group.
+    ///
+    /// **DELIBERATELY NOT UNLINKABLE, BECAUSE THERE IS NOTHING TO HIDE.** A
+    /// grant tag conceals *who a reader is*, and the subject of a log is
+    /// already named by the log — its key is in the invite anybody scanned. So
+    /// this is a plain function of the subject's own key: derivable by anyone,
+    /// which costs nothing, and stable across restarts, which a random one
+    /// would not be.
+    pub fn own(key: &VerifyingKey) -> Self {
+        let mut input = Vec::with_capacity(64);
+        input.extend_from_slice(b"diaswarm-self-v1");
+        input.extend_from_slice(key.as_bytes());
+        GrantTag(*Hash::digest(&input).as_bytes())
+    }
+}
 
 /// Who is in the group.
 ///
@@ -303,5 +330,5 @@ impl Ordering<MemberId, OperationId, Dgm> for Order {
 /// A placeholder sender, replaced by [`Message::stamp`] before the message
 /// leaves the vault. The trait hands the orderer no identity to use.
 fn dummy_member() -> MemberId {
-    p2panda_core::SigningKey::from_bytes(&[1u8; 32]).verifying_key()
+    GrantTag([0u8; 32])
 }

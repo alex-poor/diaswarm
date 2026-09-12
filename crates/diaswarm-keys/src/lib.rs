@@ -44,7 +44,7 @@ use diaswarm_core::{Record, encode_records};
 
 use p2panda_encryption::traits::GroupMembership as _;
 
-use group::{Dgm, MemberId, Message, Order, OperationId};
+use group::{Dgm, GrantTag, MemberId, Message, Order, OperationId};
 
 type Group = EncryptionGroup<MemberId, OperationId, KeyRegistry<MemberId>, Dgm, KeyManager, Order>;
 type State = GroupState<MemberId, OperationId, KeyRegistry<MemberId>, Dgm, KeyManager, Order>;
@@ -98,7 +98,7 @@ impl Vault {
         let root = root.as_ref().to_path_buf();
         std::fs::create_dir_all(root.join("segments"))?;
         let rng = Rng::default();
-        let me = signing.verifying_key();
+        let me = GrantTag::own(&signing.verifying_key());
         let state = Self::load(&root)?;
         Ok(Vault { root, offset, state, rng, me })
     }
@@ -150,8 +150,30 @@ impl Vault {
         Ok(())
     }
 
+    /// This vault's own member id inside its own group.
+    ///
+    /// A subject is a member of its own group and needs a tag like anybody
+    /// else. Its counterpart is itself, so the shared secret is its identity
+    /// key agreed with its own public half.
     pub fn subject(&self) -> MemberId {
         self.me
+    }
+
+    /// The tag naming the relationship between this vault and `their_bundle`.
+    ///
+    /// Both sides compute it from their own secret and the other's published
+    /// identity key, so neither has to be told, and it differs for every pair.
+    pub fn tag_for(
+        my_keys: &p2panda_encryption::key_manager::KeyManagerState,
+        their_bundle: &LongTermKeyBundle,
+        purpose: &str,
+    ) -> Result<GrantTag, Error> {
+        use p2panda_encryption::traits::KeyBundle as _;
+        let mine = KeyManager::identity_secret(my_keys);
+        let shared = mine
+            .calculate_agreement(their_bundle.identity_key())
+            .map_err(|e| Error::Crypto(e.to_string()))?;
+        Ok(GrantTag(diaswarm_core::seal::grant_tag_from_shared(&shared, purpose)))
     }
 
     pub fn offset(&self) -> i64 {
@@ -199,23 +221,23 @@ impl Vault {
         Ok(registry)
     }
 
-    /// Start a group with the given members, having registered their bundles.
-    pub fn create(
-        &mut self,
-        signing: &SigningKey,
-        members: Vec<(MemberId, LongTermKeyBundle)>,
-    ) -> Result<Message, Error> {
-        let _ = signing;
-        let (manager, _) = Self::key_bundle(&self.rng)?;
-        let mut registry = KeyRegistry::<MemberId>::init();
-        for (id, bundle) in &members {
-            registry = KeyRegistry::add_longterm_bundle(registry, *id, bundle.clone())
-                .map_err(|e| Error::Crypto(e.to_string()))?;
-        }
+    /// Start a group, with this vault as its only member.
+    ///
+    /// **THE CALLER SUPPLIES THE KEY MANAGER**, and an earlier version did not
+    /// — it generated one internally and discarded the bundle it was handed,
+    /// so the identity a reader was told about and the identity the subject
+    /// actually held were different keys. Nothing noticed while the member id
+    /// was a public key, because nothing derived anything from the identity.
+    /// The moment a grant tag came from `ECDH(subject, reader)` the two sides
+    /// computed different tags and the reader read nothing.
+    ///
+    /// Readers are added afterwards with [`Vault::grant`], which is where the
+    /// relationship tag is derived.
+    pub fn create(&mut self, manager: KeyManagerState) -> Result<Message, Error> {
         let dcgka = p2panda_encryption::data_scheme::dcgka::Dcgka::init(
             self.me,
             manager,
-            registry,
+            KeyRegistry::<MemberId>::init(),
             Dgm::create(self.me, &[self.me]).expect("infallible"),
         );
         let state = State {
@@ -225,9 +247,8 @@ impl Vault {
             secrets: p2panda_encryption::data_scheme::SecretBundle::init(),
             is_welcomed: false,
         };
-        let ids: Vec<MemberId> = members.iter().map(|(id, _)| *id).collect();
-        let (state, msg) =
-            Group::create(state, ids, &self.rng).map_err(|e| Error::Group(e.to_string()))?;
+        let (state, msg) = Group::create(state, vec![self.me], &self.rng)
+            .map_err(|e| Error::Group(e.to_string()))?;
         self.state = Some(state);
         self.save()?;
         Ok(msg.stamp(self.me))
@@ -281,16 +302,26 @@ impl Vault {
         Ok(out)
     }
 
-    /// Add a reader, having registered their key bundle.
-    pub fn grant(&mut self, reader: MemberId, bundle: LongTermKeyBundle) -> Result<Message, Error> {
+    /// Add a reader, named by the tag this relationship derives.
+    ///
+    /// **THE TAG IS COMPUTED HERE RATHER THAN PASSED IN**, so no caller can
+    /// accidentally hand a public key to something that publishes it. The
+    /// returned tag is what the subject's own private book should file them
+    /// under — the grant itself names nobody.
+    pub fn grant(
+        &mut self,
+        bundle: LongTermKeyBundle,
+        purpose: &str,
+    ) -> Result<(Message, GrantTag), Error> {
         let mut state = self.state.take().ok_or(Error::NoSecret)?;
-        state.dcgka.pki = KeyRegistry::add_longterm_bundle(state.dcgka.pki, reader, bundle)
+        let tag = Self::tag_for(&state.dcgka.my_keys, &bundle, purpose)?;
+        state.dcgka.pki = KeyRegistry::add_longterm_bundle(state.dcgka.pki, tag, bundle)
             .map_err(|e| Error::Crypto(e.to_string()))?;
         let (state, msg) =
-            Group::add(state, reader, &self.rng).map_err(|e| Error::Group(e.to_string()))?;
+            Group::add(state, tag, &self.rng).map_err(|e| Error::Group(e.to_string()))?;
         self.state = Some(state);
         self.save()?;
-        Ok(msg.stamp(self.me))
+        Ok((msg.stamp(self.me), tag))
     }
 
     /// Remove a reader. Rotates the secret, so the next segment is not theirs.
@@ -315,14 +346,21 @@ impl Vault {
     }
 
     /// Join a group we have been added to, from the welcome we were sent.
+    /// Join a group we have been added to.
+    ///
+    /// **OUR ID HERE IS THE RELATIONSHIP TAG, NOT OUR OWN.** A reader is known
+    /// to each subject by a different name, computed from its own secret and
+    /// that subject's published identity key — so it has to adopt the right one
+    /// before processing a welcome addressed to it.
     pub fn join(
         &mut self,
-        signing: &SigningKey,
         manager: KeyManagerState,
         registry: p2panda_encryption::key_registry::KeyRegistryState<MemberId>,
+        subject_bundle: &LongTermKeyBundle,
+        purpose: &str,
         welcome: Message,
     ) -> Result<(), Error> {
-        let _ = signing;
+        self.me = Self::tag_for(&manager, subject_bundle, purpose)?;
         let dcgka = p2panda_encryption::data_scheme::dcgka::Dcgka::init(
             self.me,
             manager,

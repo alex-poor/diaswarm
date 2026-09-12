@@ -131,16 +131,16 @@ fn both_vaults_give_a_reader_the_same_history() {
     let subject_key = SigningKey::from_bytes(&rand32());
     let reader_key = SigningKey::from_bytes(&rand32());
     let mut keys = KeysVault::open(&keys_root, OFFSET, &subject_key).expect("keys vault");
-    let (_m, subject_bundle) = KeysVault::key_bundle(&rng).expect("bundle");
+    let (subject_mgr, subject_bundle) = KeysVault::key_bundle(&rng).expect("bundle");
     let (reader_mgr, reader_bundle) = KeysVault::key_bundle(&rng).expect("bundle");
-    keys.create(&subject_key, vec![(keys.subject(), subject_bundle.clone())]).expect("create");
-    let welcome = keys.grant(reader_key.verifying_key(), reader_bundle).expect("grant");
+    keys.create(subject_mgr).expect("create");
+    let (welcome, _tag) = keys.grant(reader_bundle, "follow").expect("grant");
     for (epoch, records) in &by_epoch {
         keys.seal(*epoch, records).expect("keys seal");
     }
     let mut keys_reader = KeysVault::open(&keys_root, OFFSET, &reader_key).expect("reader vault");
-    let registry = KeysVault::registry(&[(keys.subject(), subject_bundle)]).expect("registry");
-    keys_reader.join(&reader_key, reader_mgr, registry, welcome).expect("join");
+    let registry = KeysVault::registry(&[(keys.subject(), subject_bundle.clone())]).expect("registry");
+    keys_reader.join(reader_mgr, registry, &subject_bundle, "follow", welcome).expect("join");
     let from_keys: Vec<Record> =
         keys_reader.read_from(i64::MIN).expect("keys read").into_values().flatten().collect();
 

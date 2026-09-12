@@ -81,7 +81,21 @@ pub enum SealError {
 /// burst. Hiding that needs cover traffic, which is a different design.
 pub fn grant_tag(mine: &StaticSecret, theirs: &[u8; 32], purpose: &str) -> [u8; 32] {
     let shared = mine.diffie_hellman(&PublicKey::from(*theirs));
-    derive(shared.as_bytes(), TAG_INFO, purpose.as_bytes())
+    grant_tag_from_shared(shared.as_bytes(), purpose)
+}
+
+/// The same tag, from a shared secret somebody else computed.
+///
+/// **SO TWO IMPLEMENTATIONS AGREE ON THE TAG.** `diaswarm-keys` does its ECDH
+/// with `p2panda-encryption`'s own primitive — its identity secret is not
+/// exportable as bytes, so it cannot call [`grant_tag`] — and must still arrive
+/// at the identical identifier, or the same relationship would be named two
+/// different things depending on which vault wrote it.
+///
+/// Splitting the agreement from the derivation is what makes that possible
+/// without either crate reaching into the other's key material.
+pub fn grant_tag_from_shared(shared: &[u8; 32], purpose: &str) -> [u8; 32] {
+    derive(shared, TAG_INFO, purpose.as_bytes())
 }
 
 /// One epoch's content key. Independent of every other epoch's.

@@ -438,7 +438,35 @@ the recent read is still flat once replication is in the path. Nothing measured
 so far contradicts it, and the split in `Ingested` is why that can be said with
 any confidence at all.
 
-🔴 **AND A PRIVACY DEFECT IN WHAT IS BUILT, FOUND WHILE LOOKING AT THE AUTH
+✅ **FIXED 2026-09-12: a member is named by a per-relationship tag.**
+`MemberId` is `group::GrantTag` —
+`HKDF(ECDH(subject, reader), "diaswarm-grant-tag-v1" || purpose)`, D13's own
+construction, derived through `diaswarm_core::seal::grant_tag_from_shared` so
+both vaults produce the identical bytes for one relationship.
+
+`Vault::grant` computes the tag itself rather than taking one, so no caller can
+hand a public key to something that publishes it, and returns it for the
+subject's private book. A reader adopts the matching tag on `join`, computed
+from its own secret and the subject's published identity key, so nobody has to
+be told what they are called.
+
+`one_reader_is_a_different_member_to_every_subject` asserts it: one reader
+granted by three subjects gets three names, and the same reader under two
+purposes gets two more. Asserted rather than assumed, because no benchmark can
+see this and the version that used a public key passed every other test.
+
+**A latent bug fell out of it.** `Vault::create` generated its own key manager
+and discarded the bundle it was handed, so the identity a reader was told about
+and the identity the subject held were different keys. Invisible while the
+member id was a public key; the moment the tag came from `ECDH(subject, reader)`
+the two sides derived different tags and the reader read nothing. `create` now
+takes the manager.
+
+The real differential still passes: 39,638 records, identical from both vaults.
+
+<details><summary>The defect, as found</summary>
+
+🔴 **A PRIVACY DEFECT IN WHAT WAS BUILT, FOUND WHILE LOOKING AT THE AUTH
 LAYER.** `ControlMessage::Add { added: ID }` and `Remove { removed: ID }`
 publish the member's identifier in clear. `diaswarm-keys` sets
 `ID = VerifyingKey`, so a grant would publish the reader's public key — **the
@@ -459,11 +487,13 @@ Until that switch lands, this vault is **worse on privacy than the one it would
 replace**, and no benchmark in this decision touches that. It is the first thing
 to do to it.
 
-**This also settles the auth question it was found under.** `p2panda-auth`'s
+</details>
+
+**And it settles the auth question it was found under.** `p2panda-auth`'s
 operations name actors the same way, so adopting it wholesale would import the
-same leak. Whatever carries grants has to name a per-relationship tag, which is
-what D13's log already does — so the existing signed, hash-chained grant log is
-not obviously the thing to replace here.
+same leak unless its handles are tags too. Whatever carries grants has to name a
+per-relationship tag — which is what D13's log already does — so the existing
+signed, hash-chained grant log is not obviously the thing to replace here.
 
 ⚠️ **What is still not built.** Replication itself, the auth layer, and the
 reader in the tests shares the subject's directory rather than having replicated
