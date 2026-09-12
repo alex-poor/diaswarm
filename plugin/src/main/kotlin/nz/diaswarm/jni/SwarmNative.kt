@@ -372,6 +372,36 @@ object SwarmNative {
      */
     external fun keysSealChecked(handle: Long, epoch: Long, ndjson: String): String
 
+    /**
+     * This vault's own key bundle as text, for putting in an invite.
+     *
+     * **THE HALF OF A PAIRING THE INVITE DOES NOT CARRY YET.** A grant needs
+     * both sides' bundles — the subject grants against the reader's, the reader
+     * needs the subject's to derive the same tag and open its welcome. Empty on
+     * failure.
+     */
+    external fun keysBundle(handle: Long): String
+
+    /**
+     * Grant a reader from the bundle they published. Returns their tag, or
+     * `error …`.
+     *
+     * The tag is the subject's private name for the relationship and belongs in
+     * the subject's own book; the grant itself names nobody. The welcome is in
+     * the control log before this returns — a grant that is not in the log has
+     * not happened.
+     */
+    external fun keysGrant(handle: Long, readerBundle: String, purpose: String): String
+
+    /**
+     * Withdraw a reader by the tag [keysGrant] returned. 0 on success.
+     *
+     * Rotates the group secret, so it bites the day it happens in rather than
+     * from midnight. Days already finished keep their own secret and stay
+     * readable — a withdrawal, not a deletion.
+     */
+    external fun keysRevoke(handle: Long, tagHex: String): Long
+
     /** The spec version this Kotlin was written against. */
     const val EXPECTED_SPEC_VERSION = 3
 

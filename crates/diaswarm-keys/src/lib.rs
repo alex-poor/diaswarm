@@ -69,6 +69,14 @@ use p2panda_core::SigningKey;
 /// `p2panda-encryption` — the JNI layer wants exactly this and nothing else
 /// from it.
 pub use p2panda_encryption::Rng;
+
+/// The store a control log lives in, re-exported for the same reason.
+///
+/// [`wire::publish_control`] takes one, so anything that grants needs the type.
+/// Re-exporting keeps the exact-version pin (`=0.7.1`) in one crate instead of
+/// every caller, and a mismatch there is the kind that shows up as a trait not
+/// being implemented for a type that visibly implements it.
+pub use p2panda_store::{SqliteStore, SqliteStoreBuilder};
 use p2panda_encryption::crypto::x25519::SecretKey;
 use p2panda_encryption::crypto::xchacha20::XAeadNonce;
 use p2panda_encryption::data_scheme::{

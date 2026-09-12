@@ -1389,6 +1389,13 @@ const KEYS_TAG: u64 = 0x6b65_7973_7661_756c; // "keysvaul"
 
 struct KeysVault {
     tag: u64,
+    /// **THE STORE IS NOT OPTIONAL, BECAUSE A GRANT IS NOT A LOCAL EVENT.**
+    /// `Vault::grant` returns a message; until `wire::publish_control` has put
+    /// it in the control log, no reader can ever receive it and no peer can
+    /// replicate it. A vault without a store can seal and nothing else.
+    runtime: tokio::runtime::Runtime,
+    store: diaswarm_keys::SqliteStore,
+    signing: p2panda_core::SigningKey,
     vault: diaswarm_keys::Vault,
 }
 
@@ -1429,6 +1436,22 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysOpen<'a>(
     };
 
     let signing = p2panda_core::SigningKey::from_bytes(&identity.signing.to_bytes());
+    if std::fs::create_dir_all(&dir).is_err() {
+        return 0;
+    }
+    let Ok(runtime) = tokio::runtime::Runtime::new() else { return 0 };
+
+    let url = format!("sqlite://{}", dir.join("keys.sqlite").display());
+    let Ok(store) = runtime.block_on(async {
+        diaswarm_keys::SqliteStoreBuilder::new()
+            .database_url(&url)
+            .create_database(true)
+            .build()
+            .await
+    }) else {
+        return 0;
+    };
+
     let Ok(mut vault) = diaswarm_keys::Vault::open(&dir, offset_ms, &signing) else {
         return 0;
     };
@@ -1440,11 +1463,19 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysOpen<'a>(
     if !vault.is_welcomed() {
         let rng = diaswarm_keys::Rng::default();
         let Ok((manager, _bundle)) = diaswarm_keys::Vault::key_bundle(&rng) else { return 0 };
-        if vault.create(manager).is_err() {
+        let Ok(create) = vault.create(manager) else { return 0 };
+        // **PUBLISHED, NOT DISCARDED.** The control log is D13's grant log here,
+        // and one that starts at the first grant cannot show that nothing came
+        // before it. An earlier version of this dropped the message on the
+        // floor, so every vault made by it has a log beginning mid-history.
+        if runtime
+            .block_on(diaswarm_keys::wire::publish_control(&store, &signing, &create))
+            .is_err()
+        {
             return 0;
         }
     }
-    Box::into_raw(Box::new(KeysVault { tag: KEYS_TAG, vault })) as jlong
+    Box::into_raw(Box::new(KeysVault { tag: KEYS_TAG, runtime, store, signing, vault })) as jlong
 }
 
 /// Close it. Safe to call with 0.
@@ -1515,6 +1546,120 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSealChecked<'a>(
     };
 
     to_jstring(env, seal_checked(&mut v.vault, epoch, &body))
+}
+
+/// This vault's own key bundle as text, for putting in an invite. Empty on failure.
+///
+/// **THE HALF OF A PAIRING THE INVITE DOES NOT CARRY YET.** A grant needs both
+/// sides' bundles — see [D27](../../docs/decisions.md) — and this is ours.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysBundle<'a>(
+    env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+) -> JString<'a> {
+    let Some(v) = keys_vault(handle) else {
+        return to_jstring(env, String::new());
+    };
+    match v.vault.my_bundle().and_then(|b| diaswarm_keys::encode_bundle(&b)) {
+        Ok(text) => to_jstring(env, text),
+        Err(_) => to_jstring(env, String::new()),
+    }
+}
+
+/// Grant a reader, from the bundle they published. Returns their tag, or `error …`.
+///
+/// **THE TAG IS THE SUBJECT'S PRIVATE NAME FOR THE RELATIONSHIP**, derived from
+/// the shared secret, and it is what the subject's own book should file them
+/// under. The grant itself names nobody: that is [D13](../../docs/decisions.md),
+/// and it is why this returns the tag rather than publishing it.
+///
+/// The welcome is published to the control log before this returns. A grant
+/// that is not in the log has not happened — no reader can receive it and no
+/// peer can replicate it.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGrant<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    reader_bundle: JString<'a>,
+    purpose: JString<'a>,
+) -> JString<'a> {
+    let (Ok(bundle), Ok(purpose)) = (env.get_string(&reader_bundle), env.get_string(&purpose))
+    else {
+        return to_jstring(env, "error bad-argument".to_string());
+    };
+    let (bundle, purpose) = (String::from(bundle), String::from(purpose));
+    let Some(v) = keys_vault(handle) else {
+        return to_jstring(env, "error no-vault".to_string());
+    };
+
+    let bundle = match diaswarm_keys::decode_bundle(&bundle) {
+        Ok(b) => b,
+        Err(e) => return to_jstring(env, format!("error bundle {e}")),
+    };
+    let (welcome, tag) = match v.vault.grant(bundle, &purpose) {
+        Ok(pair) => pair,
+        Err(e) => return to_jstring(env, format!("error grant {e}")),
+    };
+    if let Err(e) = v.runtime.block_on(diaswarm_keys::wire::publish_control(
+        &v.store,
+        &v.signing,
+        &welcome,
+    )) {
+        return to_jstring(env, format!("error publish {e}"));
+    }
+    let mut hex = String::with_capacity(64);
+    for b in &tag.0 {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    to_jstring(env, hex)
+}
+
+/// Withdraw a reader, by the tag [`Java_nz_diaswarm_jni_SwarmNative_keysGrant`]
+/// returned. 0 on success, negative otherwise.
+///
+/// **IT BITES THE DAY IT HAPPENS IN.** Removing a member rotates the group
+/// secret, and the current epoch is re-sealed under the new one the next time
+/// anything is sealed into it — so a reader revoked at noon does not read the
+/// afternoon. Days that were already finished keep their own secret and stay
+/// readable, which is what makes this a withdrawal rather than a deletion.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRevoke<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    tag_hex: JString<'a>,
+) -> jlong {
+    let Ok(tag_hex) = env.get_string(&tag_hex) else { return -1 };
+    let tag_hex = String::from(tag_hex);
+    if tag_hex.len() != 64 {
+        return -2;
+    }
+    let mut raw = [0u8; 32];
+    for i in 0..32 {
+        match u8::from_str_radix(&tag_hex[i * 2..i * 2 + 2], 16) {
+            Ok(b) => raw[i] = b,
+            Err(_) => return -2,
+        }
+    }
+    let Some(v) = keys_vault(handle) else { return -3 };
+
+    let message = match v.vault.revoke(diaswarm_keys::group::GrantTag(raw)) {
+        Ok(m) => m,
+        Err(_) => return -4,
+    };
+    // **THE REVOCATION MUST REACH THE OTHER READERS, NOT JUST THE LOG.** It
+    // carries the rotated secret as direct messages to everyone still in the
+    // group; a remaining reader that never processes it stops opening days at
+    // the moment somebody *else* was revoked, with nothing to say why.
+    if v.runtime
+        .block_on(diaswarm_keys::wire::publish_control(&v.store, &v.signing, &message))
+        .is_err()
+    {
+        return -5;
+    }
+    0
 }
 
 /// The whole of `keysSealChecked`, with no JNI in it.

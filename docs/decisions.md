@@ -713,6 +713,49 @@ record. The thing the TODOs are about is the thing this decision removes.
 per record somewhere, which would mean the separation is less clean than both
 the API and those TODOs suggest.
 
+### D27 · An existing follower migrates without re-pairing, and the proof is the secret they already share
+
+**Settled 2026-09-13, deliberately ahead of need.** Re-pairing is acceptable
+*now* — the only devices running this belong to the author. It stops being
+acceptable the moment the app is published and somebody is following their
+child. So the path has to exist before it is needed, and the JNI must not
+foreclose it.
+
+**The gap is one value.** A follower granted on `diaswarm-core` is known to the
+subject by `KnownReader { tag, reader, purpose }` — an X25519 public key and the
+relationship tag. `diaswarm-keys` grants against a `LongTermKeyBundle`, which is
+a different key type held by a different manager and **cannot be derived from
+the X25519 key**. So the follower has to publish a keys bundle once. That is
+unavoidable; what is avoidable is making a human re-scan a QR for it.
+
+**The subject must not simply believe the bundle.** Anyone who holds a replica
+of the grant log can read the tags in it — D13 hides *who* a reader is, not
+*that* a grant exists — so a tag is not a secret and cannot authenticate
+anything. An impostor submitting their own bundle against somebody else's tag
+would be granted that person's data.
+
+**What both sides already share is the ECDH secret**, the one
+`grant_tag_from_shared` derives the tag from. So:
+
+```text
+reader  → subject:  { tag, keys_bundle, HMAC(ECDH(subject, reader), keys_bundle) }
+```
+
+The subject recomputes the shared secret from `readers.json`'s X25519 key,
+checks the HMAC, and only then calls `Vault::grant(bundle, purpose)` — the
+ordinary grant path. No round trip, no new key material, and the proof binds the
+bundle to the relationship rather than to a tag anybody can copy.
+
+**Which means the migration primitive is already built**: it is `grant`, with a
+check in front of it. The JNI keeps `keysGrant` for a fresh pairing and gains a
+`keysAdopt` that takes the reader's core key and the proof. Nothing about the
+cutover forecloses this, which is the point of writing it down now.
+
+⚠️ **Not implemented.** The channel is the open question — the existing
+transport carries `Request::Offer` (D25) and could carry this, but a new request
+type is a wire change and wire changes cost an ALPN bump. Worth doing once,
+alongside the invite carrying a bundle, rather than twice.
+
 ### D25 · Sharing writes to the peer it dials, and that moved the wire to `diaswarm/6`
 
 **Settled 2026-09-11.** `Request::Offer` carries an invite *to* a peer, so the
