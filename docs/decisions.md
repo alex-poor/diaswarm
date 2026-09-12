@@ -363,9 +363,36 @@ is bookkeeping rather than cryptography — which is the whole argument for the
 trade — but it has to exist. Nothing in the spike replicates, persists or
 restarts either.
 
-*Reopens if:* writing those 242 lines turns out to need judgement about
-concurrent membership rather than bookkeeping, in which case it is bespoke
-security code after all and the argument weakens considerably.
+✅ **Read, 2026-09-12, and they are bookkeeping.** The reopens-if above asked
+whether those 242 lines need judgement about concurrent membership. They do not.
+
+`EncryptionGroupMembership` is a **declared placeholder** — its own comment says
+"most methods perform no actual actions as group management is handled by
+p2panda-auth". It is a `HashSet<MemberId>`, `add` and `remove` are no-ops
+because the state is updated before they are called, and `Error = Infallible`.
+About twenty lines of substance.
+
+`EncryptionOrderer` is not an orderer either: *"It does not take care of
+ordering of control and application messages; p2panda-spaces expects messages to
+be ordered before being processed."* It keeps a DAG to compute heads for
+dependency stamping and a FIFO gated on having been welcomed. `Infallible`
+throughout. The real causal ordering is somebody else's job — ours, now, via
+`p2panda-store`'s `OrdererStore`.
+
+**And the orderer carries two TODOs which are this decision's own argument, in
+upstream's words:** *"currently application messages are also included in the
+dependency graph, we want to separate these from control messages eventually in
+order to support pruning"*, and *"we keep all messages in memory currently which
+is bad"*.
+
+**Under D26 neither applies.** Application data never enters that system — it
+goes through `encrypt_data` into diaswarm's own segments — so the graph holds
+only control messages, which are one per group operation rather than one per
+record. The thing the TODOs are about is the thing this decision removes.
+
+*Reopens if:* the port finds that control messages alone still accumulate state
+per record somewhere, which would mean the separation is less clean than both
+the API and those TODOs suggest.
 
 ### D25 · Sharing writes to the peer it dials, and that moved the wire to `diaswarm/6`
 
