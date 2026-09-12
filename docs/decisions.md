@@ -432,11 +432,32 @@ That means D26 keeps D21's win rather than trading it away: `p2panda-net` log
 sync, push after catch-up, `wire.rs` still deleted — and flat reads, because the
 thing that made reads dear is not in the envelope.
 
-⚠️ **Reasoned, not measured.** What would settle it is the port carrying
-segments as operation bodies and a `readcost`-style run over the result, showing
-the recent read is still flat once replication is in the path. Nothing measured
-so far contradicts it, and the split in `Ingested` is why that can be said with
-any confidence at all.
+✅ **Measured, and the reasoning needed one correction.** `src/wire.rs` publishes
+segments as operations — epoch, secret id and nonce in the header, ciphertext in
+the body — and `tests/wire.rs` reads them back:
+
+| days in log | newest via operations | whole log |
+|---|---|---|
+| 7 | 0.244 ms | 0.636 ms |
+| 30 | 0.232 ms | 2.546 ms |
+| 90 | 0.278 ms | 7.833 ms |
+| 180 | **0.329 ms** | 16.731 ms |
+
+Flat for the recent end, linear for everything — the same shape as the on-disk
+layout, so the envelope is an envelope and D21 survives.
+
+**The correction, because the first attempt measured the opposite.** Reading the
+newest segment was linear — 0.67 ms at seven days, 17.1 ms at a hundred and
+eighty — because it fetched the whole log and filtered by epoch in Rust.
+*Filtering is not skipping.* The on-disk layout gets away with it because the
+epoch is in the filename and the directory is the index; a log has no such index
+but `get_log_entries` takes a sequence-number range, so the store does the
+skipping. Segments are appended in epoch order, so "the last N days" is "the
+last N entries", which is what a follower wants anyway.
+
+The claim was right in substance and wrong in the detail that decided whether it
+held — which is the argument for measuring rather than reasoning about
+performance, however good the reasoning looks.
 
 ✅ **FIXED 2026-09-12: a member is named by a per-relationship tag.**
 `MemberId` is `group::GrantTag` —

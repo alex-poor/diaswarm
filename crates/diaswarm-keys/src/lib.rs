@@ -22,6 +22,7 @@
 //! separate question this crate does not answer.
 
 pub mod group;
+pub mod wire;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

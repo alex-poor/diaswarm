@@ -23,6 +23,8 @@ publish = false
 [dependencies]
 p2panda-encryption = "=0.7.1"
 p2panda-core = "=0.7.1"
+p2panda-store = { version = "=0.7.1", features = ["macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 diaswarm-core = { path = "../diaswarm-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
