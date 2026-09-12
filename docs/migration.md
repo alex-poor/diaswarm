@@ -352,12 +352,45 @@ the window from creation, which is the expensive thing it was trying to avoid.
 The fresh reader above only worked because `FromNow` gave it a window with no
 prior tips.
 
-**So forgetting costs a re-pair.** The only way an existing follower gets a
-cheap vault is a new identity in a new window: a new key, a new grant, and the
-person scanning a code again. That is a real and comprehensible cost — the
-follower is a viewer of recent data, and losing what it can no longer afford to
-read is not much of a loss — but it is a cost the subject participates in, not
-something a client can do alone.
+**Re-pairing was the wrong answer and is withdrawn.** Following your child is
+permanent until revoked; a design that makes somebody rescan a code every few
+weeks to keep watching is not a design. What was actually worth testing is the
+move that needs no re-pair at all: the **subject** opens a new window and adds
+the same reader to it, using the key it already holds.
+
+Measured in `rotating_a_window_resets_what_a_long_standing_reader_pays`, at
+1,505 operations of history:
+
+```
+a day before rotation :  0.032s
+a day after rotation  :  0.230s      ← seven times worse
+```
+
+**Rotation makes it worse.** `Vault::seal` publishes into every window
+unconditionally — `for n in 0..self.windows` — with no test for whether anybody
+reads that window. A second live window doubles the publishing rather than
+resetting the cost, which is D20's per-window fan-out arriving where it was not
+expected.
+
+### So the shape of the problem, stated plainly
+
+A permanent follower who reads a fixed recent window is the flagship use case,
+and the vault has no way to express it:
+
+* reading today requires having processed the chain to today, because
+  `SpacesArgs::Application` depends on its space's previous tips and the
+  decryption state ratchets forward. The marginal cost of one operation is
+  roughly 21 µs × the history already processed — 0.032 s at 1,505 operations,
+  and seconds each at a year's worth;
+* a reader cannot join a window part-way, so it cannot skip what it does not
+  want;
+* a window cannot be closed, so rotating into a fresh one multiplies the
+  publishing instead of replacing it;
+* and discarding state loses the chain entirely (`held 577`, above).
+
+None of those four is fixable in this repository. Three are properties of
+`p2panda-spaces`; the fourth — publishing into windows nobody reads — is ours
+and is a small change, but it only helps once one of the others gives.
 
 The alternative is truncating a window, which would need `space_dependencies`
 to tolerate a gap. That is upstream's territory and does not exist for spaces.

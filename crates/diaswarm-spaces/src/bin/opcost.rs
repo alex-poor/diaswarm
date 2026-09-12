@@ -276,9 +276,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             c.held
         );
         println!();
-        println!("  If that is cheap AND reads records, an existing follower can forget");
-        println!("  without re-pairing. If it reads nothing, the grant died with the state");
-        println!("  and forgetting costs a new grant from the subject.");
+
+        // THE ONE THAT ACTUALLY MATCHES THE USE CASE. A parent follows their
+        // child permanently and reads a day. Nothing above tests the obvious
+        // move: the SUBJECT opens a new window and adds the same parent to it.
+        // No scan, no new key, no re-pair — the subject already holds their
+        // key. If spaces state is per-space, the parent processes the new
+        // window from its own beginning and the old one stops mattering.
+        println!("  the SAME long-standing reader, moved to a new window by the subject:");
+        let rotated = Vault::open(tmp("rotated-reader"), OFFSET).await?;
+        subject.register(&rotated).await?;
+        rotated.register(&subject).await?;
+
+        // Give them the aged experience first: a full history, processed.
+        let mut theirs = auth_only.clone();
+        theirs.extend(subject.grant(rotated.subject(), Reach::Everything).await?);
+        theirs.extend(day.clone());
+        let warm = rotated.ingest(&theirs).await?;
+        println!("    after a long stretch of following: {} records held", warm.records.len());
+
+        // Now the subject rotates: a new window, same reader added to it.
+        let rotate = subject.grant(rotated.subject(), Reach::FromNow).await?;
+        let mut after = rotate;
+        for i in 0..288i64 {
+            let t = 24_200 * EPOCH_MS + i * 300_000;
+            after.extend(subject.seal(&[reading(t, 120.0 + (i % 40) as f64)]).await?);
+        }
+
+        let t3 = Instant::now();
+        let d = rotated.ingest(&after).await?;
+        println!(
+            "    a day in the NEW window     : {:>7.2}s for {} records (held {})",
+            t3.elapsed().as_secs_f64(),
+            d.records.len(),
+            d.held
+        );
+        println!();
+        println!("  Cheap and reading means the subject can rotate windows on a schedule,");
+        println!("  the parent never re-pairs, and the cost resets. Expensive means state");
+        println!("  is shared across a subject's spaces and rotation buys nothing.");
     }
     Ok(())
 }

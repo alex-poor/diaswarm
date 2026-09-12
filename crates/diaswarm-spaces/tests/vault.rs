@@ -509,3 +509,58 @@ async fn a_published_key_bundle_makes_a_bare_key_grantable() {
         );
     }
 }
+
+/// A PERMANENT FOLLOWER WHO ONLY EVER READS A DAY — does the cost reset?
+///
+/// The parent case, stated exactly: they follow their child until revoked, and
+/// they look at the last 24 hours. The cost still grows, because
+/// `SpacesArgs::Application` chains to the previous tips of its space and the
+/// group's decryption state ratchets forward — so reading today means having
+/// processed every operation since the grant, whether or not any of those
+/// records are ever displayed.
+///
+/// The move that should fix it without anyone re-pairing: the **subject** opens
+/// a new window and adds the same reader to it. No scan, no new key — the
+/// subject already holds their key. If spaces state is per-space, the reader
+/// walks the new window from its own beginning and the old one stops costing.
+#[tokio::test]
+async fn rotating_a_window_resets_what_a_long_standing_reader_pays() {
+    let mut subject = peer("rot-subject").await;
+    let reader = peer("rot-reader").await;
+    subject.register(&reader).await.unwrap();
+    reader.register(&subject).await.unwrap();
+
+    let mut ops = Vec::new();
+    ops.extend(subject.seal(&[]).await.unwrap());
+    ops.extend(subject.grant(reader.subject(), Reach::Everything).await.unwrap());
+    // Enough to be in the range where the curve bites: opcost measures 2,000
+    // operations at roughly 22 seconds, and one seal is one operation here.
+    for e in 0..1500i64 {
+        ops.extend(subject.seal(&day(27_000 + e, 100.0 + (e % 80) as f64)).await.unwrap());
+    }
+
+    let warm = reader.ingest(&ops).await.unwrap();
+    assert!(warm.records.len() > 1, "the reader never got going: {:?}", warm.records.len());
+    let warmed = std::time::Instant::now();
+    let one_more = subject.seal(&day(27_100, 150.0)).await.unwrap();
+    let before = reader.ingest(&one_more).await.unwrap();
+    let cost_before = warmed.elapsed();
+
+    // The subject rotates: a new window, the same reader added to it.
+    let mut after = subject.grant(reader.subject(), Reach::FromNow).await.unwrap();
+    after.extend(subject.seal(&day(27_200, 160.0)).await.unwrap());
+
+    let at = std::time::Instant::now();
+    let got = reader.ingest(&after).await.unwrap();
+    let cost_after = at.elapsed();
+
+    eprintln!(
+        "  warm history {} ops · a day before rotation {:.3}s ({} records, held {})",
+        ops.len(), cost_before.as_secs_f64(), before.records.len(), before.held
+    );
+    eprintln!(
+        "  after rotation {:.3}s ({} records, held {})",
+        cost_after.as_secs_f64(), got.records.len(), got.held
+    );
+    assert!(got.records.len() > 0, "the reader read nothing after the rotation");
+}
