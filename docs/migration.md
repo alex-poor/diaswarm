@@ -207,10 +207,39 @@ output distinguishes those. Worth fixing before the decision, not after.
    has never added to it. Building a live comparison needs a granted reader's
    private key on a desktop, which is why it has not been done.
 
-   *Also unexplained:* the shadow vault is now **27 MB against the old vault's
-   11 MB**. [D21](decisions.md) measured 3.2 MB against 8.3 MB — the spaces
-   vault was the smaller one. The ratio has inverted and nobody has said why.
-   Not fan-out: `windows` is 1.
+   ⚠️ **AND THE LIVE PATH DEFEATS D20's BATCHING, WHICH IS NOT A DISK
+   PROBLEM.** The shadow vault is 27 MB against the old vault's 11 MB;
+   [D21](decisions.md) measured 3.2 against 8.3, so the ratio has inverted.
+   Pulled and counted:
+
+   | operations | count | body | header |
+   |---|---|---|---|
+   | under 2 KB | **4,596** | 836 KB | **1,929 KB** |
+   | 2–32 KB | 796 | 12.8 MB | 334 KB |
+   | over 32 KB | 124 | 7.6 MB | 52 KB |
+
+   The large ones are the backfill, batched into 64 KB bodies exactly as D20
+   intended: 0.7 % header overhead. The 4,596 small ones are **live sealing**,
+   one operation per pass, median body **99 bytes** inside a ~430-byte signed
+   header — 2.3× more header than payload, and 83 % of every operation in the
+   vault.
+
+   D20's conclusion was "never put bulk data through a spaces message", and its
+   fix was to batch. The backfill batches. The live path does not: it seals
+   whatever one pass accumulated, and with a one-minute sensor and a ~one-minute
+   pass that is a single reading.
+
+   **The cost that matters is not the megabytes.** D20 measured reads as
+   quadratic in operation count — 5 ms per operation at 537, 155 ms at 10,569,
+   twenty-seven minutes for 74 days — and concluded "at 79 operations for 74
+   days it stops mattering". It is now **5,516 and climbing by roughly 1,400 a
+   day**, from six weeks of one subject. Half way to the pathological figure,
+   with no bulk data involved. Every one of those also replicates.
+
+   Not fan-out: `windows` is 1. The fix is to batch live seals the way the
+   backfill already does — accumulate until a size or an epoch boundary rather
+   than sealing per pass — and it should land before any cutover, because the
+   operation count is what a follower catching up pays for.
 
    ~~Out-of-order arrival loses records silently.~~ **Closed 2026-09-12.**
    `ingest` used to process in arrival order and catch the resulting
