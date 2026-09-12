@@ -23,11 +23,12 @@
 //! cargo run --release --bin opcost
 //! ```
 
+use std::borrow::Borrow;
 use std::path::PathBuf;
 use std::time::Instant;
 
 use diaswarm_core::{EPOCH_MS, Record};
-use diaswarm_spaces::{Reach, Vault};
+use diaswarm_spaces::{Conditions, Reach, SpacesArgs, Vault};
 
 const OFFSET: i64 = 12 * 3_600_000;
 
@@ -149,6 +150,100 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  MEASURED: chunking changes nothing, and every chunk costs more than");
         println!("  the last. The cost of an operation rises with how much history is");
         println!("  already held, so no delivery schedule fixes it — only holding less.");
+    }
+    // DOES A FRESH READER ACTUALLY START CHEAP? The recommendation that falls
+    // out of the curve above is "forgetting, not pruning": a parent needs no
+    // history, so a reader periodically re-granted into a new window should
+    // start clean. That is a hypothesis about where the state lives, and it is
+    // worth one measurement before anyone designs around it.
+    println!();
+    println!("  a NEW reader joining a subject that already has history:");
+    {
+        let mut subject = Vault::open(tmp("aged-subject"), OFFSET).await?;
+        let early = Vault::open(tmp("aged-early"), OFFSET).await?;
+        subject.register(&early).await?;
+        early.register(&subject).await?;
+
+        let mut ops = Vec::new();
+        ops.extend(subject.seal(&[]).await?);
+        ops.extend(subject.grant(early.subject(), Reach::Everything).await?);
+        let mut n = 0i64;
+        while ops.len() < 1500 {
+            let t = 24_000 * EPOCH_MS + n * 60_000;
+            ops.extend(subject.seal(&[reading(t, 100.0 + (n % 80) as f64)]).await?);
+            n += 1;
+        }
+        println!("    subject now has {} operations of history", ops.len());
+
+        // A second reader, granted FROM NOW: a window that cannot contain any
+        // of the above.
+        let late = Vault::open(tmp("aged-late"), OFFSET).await?;
+        subject.register(&late).await?;
+        late.register(&subject).await?;
+
+        // THE AUTH HISTORY IS NOT OPTIONAL, AND IT IS NOT THE BULK. All of a
+        // subject's spaces share one global auth state (D20), so a reader
+        // granted into a brand-new window still needs every auth-carrying
+        // operation — the window creations and the grants. What it does NOT
+        // need is the application messages, which are the thousands.
+        //
+        // A first attempt handed the new reader only its own window and got
+        // "held 584": every operation waiting on an auth dependency it had
+        // never been given. That is the orderer reporting a test bug correctly.
+        let auth: Vec<_> = ops
+            .iter()
+            .filter(|o| {
+                !matches!(
+                    Borrow::<SpacesArgs<Conditions>>::borrow(*o),
+                    SpacesArgs::Application { .. }
+                )
+            })
+            .cloned()
+            .collect();
+        println!(
+            "    of which auth-carrying: {} ({} are application messages)",
+            auth.len(),
+            ops.len() - auth.len()
+        );
+        let mut fresh = auth;
+        fresh.extend(subject.grant(late.subject(), Reach::FromNow).await?);
+
+        // One day's worth for each of them, and time both.
+        let mut day = Vec::new();
+        for i in 0..288i64 {
+            let t = 24_100 * EPOCH_MS + i * 300_000;
+            day.extend(subject.seal(&[reading(t, 110.0 + (i % 60) as f64)]).await?);
+        }
+        fresh.extend(day.clone());
+        ops.extend(day.clone());
+
+        let t0 = Instant::now();
+        let a = early.ingest(&ops).await?;
+        let aged = t0.elapsed();
+
+        let t1 = Instant::now();
+        let b = late.ingest(&fresh).await?;
+        let clean = t1.elapsed();
+
+        println!(
+            "    reader with all the history : {:>7.2}s for {} records",
+            aged.as_secs_f64(),
+            a.records.len()
+        );
+        println!(
+            "    reader granted from now     : {:>7.2}s for {} records",
+            clean.as_secs_f64(),
+            b.records.len()
+        );
+        println!(
+            "      aged  refused {} held {} panicked {}   |   fresh ops {} refused {} held {} panicked {}",
+            a.refused, a.held, a.panicked,
+            fresh.len(), b.refused, b.held, b.panicked
+        );
+        println!();
+        println!("  If the second is cheap, forgetting works and a parent can be");
+        println!("  re-granted into a new window. If it is not, the state is shared");
+        println!("  across windows and a new window buys nothing.");
     }
     Ok(())
 }

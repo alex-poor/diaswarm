@@ -312,11 +312,32 @@ day is trivial. The problem is that a parent who follows continuously
 accumulates state for every operation they have ever ingested: they look at a
 day and pay for the year.
 
-**The answer is forgetting, not pruning.** A parent needs no history. A reader
-whose vault is periodically reset — or who is re-granted into a fresh window —
-starts clean and loses nothing they use, and the primitive already exists:
-`Reach::FromNow` opens a window that cannot contain what predates it. That is
-the cheap fix for the flagship and it needs no new concepts.
+**The answer is forgetting, not pruning — and that is measured, not asserted.**
+A parent needs no history, and `Reach::FromNow` opens a window that cannot
+contain what predates it. Against a subject holding 1,500 operations:
+
+```
+of 1,500 operations, 4 are auth-carrying; 1,496 are application messages
+
+reader with all the history :  22.97s for 1,496 records
+reader granted from now     :   0.89s for   289 records
+```
+
+**The auth history a new reader must process is four operations, not fifteen
+hundred.** All of a subject's spaces share one global auth state
+([D20](decisions.md)), so a reader joining a brand-new window still needs every
+window creation and every grant — but those are a handful. The bulk is
+application messages, and a `FromNow` reader is not a member of the window
+holding them.
+
+So a parent re-granted periodically pays for the auth chain plus the day they
+actually watch: about 26× cheaper here, and the ratio grows with the history
+they are skipping. No new concepts, and nothing the subject has to give up.
+
+*One wart, recorded rather than solved:* the fresh reader ends with 290
+operations `held` — the earlier window's application messages, waiting on
+dependencies it will never be given because they are not for it. Harmless, but
+a vault accumulating permanently-pending entries wants a way to discard them.
 
 **The clinician is a shape problem, not a scaling one.** Summarised statistics
 require reading all the raw data to compute them, and the alternative — the
