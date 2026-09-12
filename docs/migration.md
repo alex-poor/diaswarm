@@ -739,7 +739,42 @@ the author of a day spent removing exactly that shape from other people's code.
 and cannot complete a D26 pairing; and D27's existing-follower migration, which
 is designed and unbuilt.
 
+### ✅ The full history, on the phone that drives the pump — 2026-09-13
+
+77 epochs (20630..20709), roughly 30,000 records of this subject's real
+history, re-drained through both vaults with a comparison that compares:
+
+```
+swarm: shadow vault is generation 0, wanted 3 — re-reading everything
+swarm: drained 4000 — cgm=4000
+swarm: shadow agrees — given 4003, holds 4004, missing 0, lost 0, failures 0
+swarm: drained 4000 — cgm=4000
+swarm: shadow agrees — given 4000, holds 4148, missing 0, lost 0, failures 0
+```
+
+**The outcome is on disk and does not depend on the log**: the keys vault holds
+`20630.json` … `20709.json`, **77 segments for 77 epochs**, beside a 810-byte
+`group.cbor` and its SQLite store. Storage is **12M against the core vault's
+12M** — the doubling that was accepted, measured rather than estimated.
+
+⚠️ **What this does not prove.** The logcat ring buffer rotated during the
+backfill, so the verdicts from the middle passes are gone. Every verdict
+actually seen said `missing 0, lost 0, failures 0` and none ever said
+`DISAGREES`, but "every pass agreed" is not something this run can claim — only
+"every pass observed agreed, and all 77 epochs arrived". The buffer is now 16 MiB
+so the next run is fully observable.
+
+🐛 **And the first attempt was wasted by a bug the test phone hid.** `swarmJoin`
+never created `files/diaswarm/keys/`, and SQLite creates a database file but not
+the directory holding it — so the store failed to build, there was no
+replicator, and every pass said `keys carry unavailable (-3)` and `shadow vault
+would not open`. Phone B had passed because an *earlier* build's `keysOpen` made
+the directory as a side effect; a device that had never run that build failed
+every time. The generation bump had meanwhile consumed the backfill into the
+core vault and marked itself done, so the re-drain had to be triggered by hand
+afterwards.
+
 ⚠️ **Only the loop phone can demonstrate the whole thing**, because it is the
 only device with records to seal. `twokeys` proved the protocol between both
 phones; the *app* path — a v3 invite out of AAPS, scanned, granted, replicated,
-read — needs a publisher with data.
+read — needs a publisher with data, and now has one.
