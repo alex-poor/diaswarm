@@ -38,7 +38,12 @@ object Endpoint {
         SwarmNative.initAndroid(context.applicationContext)
         val h = SwarmNative.swarmJoin(
             SwarmPaths.store(context).absolutePath,
-            SwarmPaths.nodeKey(context).absolutePath
+            SwarmPaths.nodeKey(context).absolutePath,
+            // **THE ONE KEYS STORE, OWNED BY THE POOL.** Passed even when the
+            // keys vault is switched off: the store costs an empty SQLite file
+            // and having it means turning the preference on does not require a
+            // restart to take effect. See SwarmKeys.
+            SwarmKeys.dir(context).absolutePath
         )
         if (h == 0L) {
             Log.w(SyncWorker.TAG, "could not join the pool")
@@ -55,10 +60,7 @@ object Endpoint {
         val subject = SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)
         val node = SwarmNative.swarmNodeId(handle)
         if (subject.isEmpty() || node.isEmpty()) return ""
-        // **EMPTY: AYNI HAS NO KEYS VAULT YET**, so it hands out a v2 invite and
-        // cannot complete a D26 pairing. A subject scanning this can still grant
-        // it on the core vault, which is what ships today.
-        return SwarmNative.inviteFor(subject, node, Follower.PURPOSE, "")
+        return SwarmNative.inviteFor(subject, node, Follower.PURPOSE, SwarmKeys.identity(context))
     }
 
     /** Showing the code is the consent: accept a pushed invite from now. */

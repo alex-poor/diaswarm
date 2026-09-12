@@ -18,6 +18,7 @@ object Prefs {
     private const val UNITS_MMOL = "units_mmol"
     private const val LOW_LINE = "low_line_mgdl"
     private const val HIGH_LINE = "high_line_mgdl"
+    private const val KEYS_VAULT = "keys_vault"
 
     private fun p(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -37,6 +38,18 @@ object Prefs {
      * §2 normalises on the way out — so this is presentation only and changing
      * it can never alter what was received.
      */
+    /**
+     * Whether this follower has a `diaswarm-keys` identity (D26).
+     *
+     * **OFF BY DEFAULT, AND THE REASON IS THE INVITE.** Having one means
+     * handing out a v3 invite — which the subject has to be able to read. An
+     * AAPS build older than the field refuses it outright and says so, so
+     * turning this on before the person you follow has updated breaks pairing
+     * rather than degrading it. Off, this app behaves exactly as it shipped.
+     */
+    fun keysVault(c: Context): Boolean = p(c).getBoolean(KEYS_VAULT, false)
+    fun setKeysVault(c: Context, v: Boolean) = p(c).edit().putBoolean(KEYS_VAULT, v).apply()
+
     fun mmol(c: Context): Boolean = p(c).getBoolean(UNITS_MMOL, true)
     fun setMmol(c: Context, v: Boolean) = p(c).edit().putBoolean(UNITS_MMOL, v).apply()
 

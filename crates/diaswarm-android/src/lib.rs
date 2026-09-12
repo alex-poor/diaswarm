@@ -727,10 +727,16 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netFollowing<'a>(
         .map(|f| {
             let held = store.join(&f.subject).join("meta.json").exists();
             format!(
-                "{}\t{}\t{}",
+                "{}\t{}\t{}\t{}",
                 f.subject,
                 f.purpose.clone().unwrap_or_else(|| "relay".into()),
-                if held { "1" } else { "0" }
+                if held { "1" } else { "0" },
+                // **A FOURTH COLUMN, EMPTY FOR ANYBODY PAIRED BEFORE D26.** A
+                // follower needs this to read the keys vault at all: it holds
+                // the log author and the bundle it was granted against. Empty
+                // means the core vault and nothing else, which is every subject
+                // paired before the field existed.
+                f.keys.clone().unwrap_or_default()
             )
         })
         .collect::<Vec<_>>()
@@ -1665,6 +1671,103 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSealChecked<'a>(
     };
 
     to_jstring(env, seal_checked(&mut v.vault, epoch, &body))
+}
+
+/// A followed subject's readings out of the keys vault, in `netGlucose`'s shape.
+///
+/// **THE SAME ROWS, SO NOTHING ABOVE HAS TO CHANGE.** The follower's chart,
+/// its parsing and its units all consume `millis<TAB>mgdl<TAB>trend<TAB>src`
+/// from `netGlucose`. Returning anything else here would mean rewriting the
+/// screen to find out whether the vault works, and the screen is not what is
+/// being tested.
+///
+/// **BOUNDED BY DAYS, NOT BY EPOCH ARITHMETIC.** `netGlucose` converts
+/// `since_ms` to an epoch and reads from there; this asks the log for the last
+/// N entries, which the store satisfies by sequence number rather than by
+/// reading everything and filtering. A follower wanting six hours asks for two
+/// days and filters — the extra day is the epoch boundary, not slack.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGlucose<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    joined_dir: JString<'a>,
+    subject_keys: JString<'a>,
+    purpose: JString<'a>,
+    since_ms: jlong,
+    limit: jlong,
+) -> JString<'a> {
+    let (Ok(joined), Ok(keys), Ok(purpose)) =
+        (env.get_string(&joined_dir), env.get_string(&subject_keys), env.get_string(&purpose))
+    else {
+        return to_jstring(env, String::new());
+    };
+    let (joined, keys, purpose) = (String::from(joined), String::from(keys), String::from(purpose));
+    let Some(v) = keys_vault(handle) else { return to_jstring(env, String::new()) };
+    let offset = v.vault.offset();
+    let own_dir = v.vault.root().to_path_buf();
+
+    // Two days covers any window a follower shows, because `since_ms` falls
+    // inside an epoch and the epoch containing it has to be read whole.
+    let tail = if since_ms > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(since_ms);
+        let days = (now.saturating_sub(since_ms)) / 86_400_000 + 2;
+        days.max(2) as u64
+    } else {
+        0
+    };
+
+    let out = follow_read(
+        &own_dir,
+        Path::new(&joined),
+        &v.store,
+        &v.handle,
+        &v.signing,
+        &keys,
+        &purpose,
+        tail,
+        i64::MIN,
+        offset,
+    );
+    let Some(body) = out.strip_prefix("ok ").and_then(|rest| rest.split_once('\n')) else {
+        // An error is empty here rather than a message: the caller is a chart,
+        // and `netGlucose` answers the same way when it can open nothing.
+        return to_jstring(env, String::new());
+    };
+
+    let mut rows: Vec<(i64, f64, String, String)> = body
+        .1
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| Record::from_json(l).ok())
+        .filter(|r| r.kind() == "cgm")
+        .filter(|r| r.t() > since_ms)
+        .filter_map(|r| {
+            Some((
+                r.t(),
+                r.get("mgdl")?.as_f64()?,
+                r.get("trend").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                r.get("src").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            ))
+        })
+        .collect();
+    rows.sort_by_key(|(t, _, _, _)| *t);
+    rows.dedup_by_key(|(t, _, _, _)| *t);
+    if limit > 0 {
+        rows.truncate(limit as usize);
+    }
+
+    to_jstring(
+        env,
+        rows.iter()
+            .map(|(t, mgdl, trend, src)| format!("{t}\t{mgdl}\t{trend}\t{src}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
 }
 
 /// Carry every keys log this phone should hold: its own, and each it follows.

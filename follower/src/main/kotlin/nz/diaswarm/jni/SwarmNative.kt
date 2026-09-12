@@ -458,6 +458,24 @@ object SwarmNative {
      */
     external fun keysCarryAll(poolHandle: Long, storePath: String, identityPath: String): Long
 
+    /**
+     * A followed subject's readings out of the keys vault, in [netGlucose]'s
+     * shape: `millis<TAB>mgdl<TAB>trend<TAB>src`, oldest first.
+     *
+     * **THE SAME ROWS, SO THE CHART DOES NOT CHANGE.** Returning anything else
+     * would mean rewriting the screen to find out whether the vault works, and
+     * the screen is not what is being tested. Empty when nothing can be
+     * opened — the same answer [netGlucose] gives.
+     */
+    external fun keysGlucose(
+        handle: Long,
+        joinedDir: String,
+        subjectKeys: String,
+        purpose: String,
+        sinceMs: Long,
+        limit: Long
+    ): String
+
     /** The spec version this Kotlin was written against. */
     const val EXPECTED_SPEC_VERSION = 3
 

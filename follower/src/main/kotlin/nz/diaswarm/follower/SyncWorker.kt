@@ -42,6 +42,20 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
             }
             val reached = SwarmNative.netRefresh(Endpoint.handle, store)
             Log.i(TAG, "refreshed $reached subject(s)")
+
+            // **CARRY THE KEYS LOGS TOO, AND SAY HOW MANY.** Without this the
+            // replicator subscribes to nothing and every keys read finds an
+            // empty store, which looks exactly like "not granted yet". Logged
+            // either way: a pass that carried nothing and a pass that carried
+            // everything must not read the same.
+            if (Prefs.keysVault(applicationContext) && Endpoint.handle != 0L) {
+                val carried = SwarmNative.keysCarryAll(
+                    Endpoint.handle,
+                    store,
+                    SwarmPaths.identity(applicationContext).absolutePath
+                )
+                Log.i(TAG, if (carried < 0) "keys carry unavailable ($carried)" else "keys carrying $carried log(s)")
+            }
             Result.success()
         } catch (e: Throwable) {
             // An unreachable peer is the ordinary condition of a swarm, not an

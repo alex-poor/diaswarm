@@ -47,7 +47,18 @@ object Follower {
     }
 
     /** Somebody this phone follows. */
-    data class Subject(val key: String, val purpose: String, val reached: Boolean) {
+    data class Subject(
+        val key: String,
+        val purpose: String,
+        val reached: Boolean,
+        /**
+         * The subject's keys identity, or empty.
+         *
+         * Empty is every subject paired before D26 and every subject whose
+         * phone has no keys vault — the core vault and nothing else.
+         */
+        val keys: String = ""
+    ) {
         /** Enough of the key to recognise, without pretending to be a name. */
         val short: String get() = key.take(8)
     }
@@ -62,7 +73,8 @@ object Follower {
                 Subject(
                     key = it.getOrElse(0) { "" },
                     purpose = it.getOrElse(1) { PURPOSE },
-                    reached = it.getOrElse(2) { "0" } == "1"
+                    reached = it.getOrElse(2) { "0" } == "1",
+                    keys = it.getOrElse(3) { "" }
                 )
             }
             .filter { it.key.isNotEmpty() }
@@ -96,6 +108,34 @@ object Follower {
     fun readings(context: Context, subject: Subject, hours: Int): List<Reading> {
         SwarmNative.check()
         val since = System.currentTimeMillis() - hours * 3_600_000L
+
+        // **THE KEYS VAULT FIRST, AND ONLY IF IT ANSWERS.** Falling back rather
+        // than switching means a follower whose subject has not enabled the new
+        // vault — or who has not been granted on it yet — keeps seeing the
+        // readings it saw yesterday, instead of an empty graph and no way to
+        // tell why. The two vaults hold the same records; whichever can open
+        // them is the right one to ask.
+        if (Prefs.keysVault(context) && subject.keys.isNotEmpty()) {
+            val handle = SwarmKeys.open(context)
+            if (handle != 0L) {
+                val fromKeys = try {
+                    SwarmNative.keysGlucose(
+                        handle,
+                        SwarmKeys.joinedDir(context, subject.key).absolutePath,
+                        subject.keys,
+                        subject.purpose,
+                        since,
+                        MAX_READINGS.toLong()
+                    )
+                } catch (e: Throwable) {
+                    ""
+                } finally {
+                    SwarmNative.keysClose(handle)
+                }
+                if (fromKeys.isNotBlank()) return parseReadings(fromKeys)
+            }
+        }
+
         return SwarmNative.netGlucose(
             SwarmPaths.store(context).absolutePath,
             subject.key,
@@ -103,13 +143,17 @@ object Follower {
             subject.purpose,
             since,
             MAX_READINGS
-        ).lines().filter { it.isNotBlank() }.mapNotNull { row ->
+        ).let(::parseReadings)
+    }
+
+    /** One row shape, parsed in one place, whichever vault produced it. */
+    private fun parseReadings(rows: String): List<Reading> =
+        rows.lines().filter { it.isNotBlank() }.mapNotNull { row ->
             val f = row.split('\t')
             val at = f.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
             val mgdl = f.getOrNull(1)?.toDoubleOrNull() ?: return@mapNotNull null
             if (at <= 0 || mgdl <= 0.0) null else Reading(at, mgdl, f.getOrNull(2).orEmpty())
         }
-    }
 
     /**
      * What was delivered to this subject over the last [hours].
