@@ -564,6 +564,42 @@ clinician or research use cases ever need delegation.
 ✅ **All three of these are now built** — auth, replication, and a reader that
 does not share the subject's directory. See below.
 
+🔴 **PUBLISH DELTAS, NOT THE MERGED DAY — 2026-09-13.** Found because a
+follower showed a reading four minutes old.
+
+`Vault::seal` merges a batch into the day on disk and returns the merged
+result. That is right for the subject's own copy and wrong as a thing to
+publish: every flush put the entire day so far into the log.
+
+| cadence | log per day | amplification |
+|---|---|---|
+| every 5 min | 22.9 MB | 144× |
+| every pass | 111.1 MB | 700× |
+| **deltas** | **0.16 MB** | **1×** |
+
+A 160 kB day cost 23 MB of log, on a phone whose whole keys vault is 12 MB for
+77 days. **Nothing would have alerted on it**: shadow mode compares records, not
+bytes, so it would have gone on reporting `missing 0` while the store grew
+without bound — the unbounded growth D26 exists to avoid, reintroduced inside
+it.
+
+`Vault::seal_delta` seals a batch without merging or writing, and that is what
+is published. One epoch becomes a run of segments that concatenate; each is
+sealed under the secret current when it was written, so revocation still bites
+forward. The reader changed with it — keeping only the newest segment per epoch
+was correct when a publish carried the whole day and discards 99% of one now.
+
+**The cadence looked load-bearing and was not.** Five minutes survived from the
+spaces vault, where cost was quadratic in operations, then on a different
+argument here: fewer flushes, less merging. With deltas the interval stops
+multiplying what crosses the wire, so it drops to the pass cadence and the
+follower stops being stale. The merge on disk is still O(day) per flush and is
+genuinely cheap — a fraction of a second of AEAD across a whole day.
+
+*Reopens if:* a subject flushes far more often than it drains, which would make
+the number of segments per epoch, rather than their total size, the thing to
+bound.
+
 🔴 **A GRANT REACHES BACK OVER EVERYTHING, AND CANNOT BE ASKED NOT TO —
 found 2026-09-13.** `EncryptionGroup::add` hands the joiner `&y.secrets`, the
 whole secret bundle, so a reader granted today opens every day the subject still
