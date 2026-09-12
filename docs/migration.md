@@ -276,12 +276,62 @@ output distinguishes those. Worth fixing before the decision, not after.
      16:48:04, 16:48:24, 16:55:32 and the shadow at 16:47:28 and then 16:55:33
      with four records in one operation.
    * **Chunked or incremental catch-up** buys nothing. Measured.
-   * **Pruning** is the only one that bounds the count, and therefore the only
-     structural answer. `LogStore::prune_entries` is implemented on
-     `SqliteStore` and callable today; the README's "there is no pruning" is
-     wrong about the local half. What it must never touch is the auth and grant
-     operations — [D13](decisions.md) makes their permanence the thing that
-     stops a subject quietly shortening their own grant history.
+   * **Pruning does not help either, and this was measured rather than
+     assumed.** The cost is not in `operations_v1`. It is in `spaces_v1.state`,
+     which grows linearly at about 500 bytes per operation and is read, mutated
+     and written back on *every* operation — so processing N operations moves
+     roughly N² × 500 bytes:
+
+     | ops | `spaces_v1.state` | per op |
+     |---|---|---|
+     | 125 | 64,564 B | 516 B |
+     | 500 | 251,977 B | 503 B |
+     | 2000 | 994,233 B | 497 B |
+
+     That state is p2panda's own structure and grows with every operation a
+     vault has **ever processed**, whether or not the operation is still held.
+     `LogStore::prune_entries` is implemented and callable, and dropping
+     operations would change none of it.
+
+     On the loop phone the *subject's* state is only 42 B/op. A reader
+     accumulates roughly twelve times more, tracking decryption state per
+     message, so the expensive side is the reading side.
+
+### What that means per use case
+
+At 288 operations a day, after the batching above:
+
+| | window | operations processed | state | verdict |
+|---|---|---|---|---|
+| **Parent / partner** | 24 h, continuous | 288/day, **cumulative for ever** | 52 MB after a year | breaks, and it is the flagship |
+| **Clinician** | 90 days, summarised | ~26,000 | 13 MB | ~1.5 h on a desktop, hours on a phone |
+| **Research** | a year, or from a date | ~105,000 | 52 MB | ~27 h, but it runs on a gateway |
+
+**The parent is the case this design serves worst, and 24 hours is not why.** A
+day is trivial. The problem is that a parent who follows continuously
+accumulates state for every operation they have ever ingested: they look at a
+day and pay for the year.
+
+**The answer is forgetting, not pruning.** A parent needs no history. A reader
+whose vault is periodically reset — or who is re-granted into a fresh window —
+starts clean and loses nothing they use, and the primitive already exists:
+`Reach::FromNow` opens a window that cannot contain what predates it. That is
+the cheap fix for the flagship and it needs no new concepts.
+
+**The clinician is a shape problem, not a scaling one.** Summarised statistics
+require reading all the raw data to compute them, and the alternative — the
+subject publishing summaries — is what [D6](decisions.md) forbids: `tdd` was
+removed from the vocabulary precisely because a derived field in a stream
+becomes a second source of truth. A one-off desktop ingest, or a rethink.
+
+**Research is the only one the current shape already fits.**
+[D5](decisions.md)'s commons gateway is always-on institutional hardware doing
+occasional runs, and `Reach::FromNow` already expresses "from a start point
+onwards".
+
+Whatever else is true, the auth and grant operations must never be dropped —
+[D13](decisions.md) makes their permanence the thing that stops a subject
+quietly shortening their own grant history.
 
    For scale: the loop phone holds 5,516 operations after six weeks and gains
    about 1,400 a day. At that depth a single day's catch-up is already tens of

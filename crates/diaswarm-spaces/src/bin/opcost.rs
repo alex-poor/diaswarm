@@ -53,8 +53,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     for target in [125usize, 250, 500, 1000, 2000] {
-        let mut subject = Vault::open(tmp("subject"), OFFSET).await?;
-        let reader = Vault::open(tmp("reader"), OFFSET).await?;
+        let subject_dir = tmp("subject");
+        let reader_dir = tmp("reader");
+        let mut subject = Vault::open(subject_dir.clone(), OFFSET).await?;
+        let reader = Vault::open(reader_dir.clone(), OFFSET).await?;
         subject.register(&reader).await?;
         reader.register(&subject).await?;
 
@@ -91,6 +93,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if got.panicked > 0 || got.held > 0 {
             println!("        panicked {} · held {}", got.panicked, got.held);
         }
+        // WHERE THE COST ACTUALLY LIVES DECIDES WHETHER PRUNING HELPS. If it is
+        // the operations table, dropping old operations bounds it. If it is the
+        // spaces state blob — read, mutated and written back on every single
+        // operation — then pruning operations changes nothing at all.
+        println!("        reader vault: {}", reader_dir.display());
     }
 
     // THE QUESTION THE CURVE ABOVE CANNOT ANSWER. All-at-once ingest being
