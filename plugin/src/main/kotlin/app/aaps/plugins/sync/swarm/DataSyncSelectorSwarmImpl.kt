@@ -484,10 +484,29 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         val vault = SwarmPaths.vault(context, this::class.java).absolutePath
         val identity = SwarmPaths.identity(context).absolutePath
         val shadow = openShadow()
+        // **NOTHING ACCUMULATES WHILE THE SHADOW IS OFF, AND IT USED TO.**
+        //
+        // `shadowPending` was appended to unconditionally, and `flushShadow`
+        // returns at once when the handle is 0. Shadow mode is off by default,
+        // so on every phone that has never enabled it — including the one
+        // driving a pump — every record ever drained accumulated in a
+        // StringBuilder in memory and was never written, read or freed. About
+        // 160 KB a day at this subject's rate, for the lifetime of the process.
+        //
+        // `openShadow`'s own comment records an out-of-memory crash in this
+        // same area. This is that shape again, and it was invisible because the
+        // feature it belongs to is disabled.
+        //
+        // Found on a phone: the first verdict line read `given 17` where the
+        // core vault had sealed 16, because one record left over from a pass
+        // before the preference was switched on came along with the rest.
+        // Harmless in itself — `missing 0` — and the only visible symptom of
+        // something that is not harmless at all.
+        if (shadow == 0L) shadowPending.clear()
         try {
         for ((epoch, body) in pending) {
             val text = body.toString()
-            shadowPending.getOrPut(epoch) { StringBuilder() }.append(text)
+            if (shadow != 0L) shadowPending.getOrPut(epoch) { StringBuilder() }.append(text)
             val n = SwarmNative.vaultSeal(vault, identity, epoch, offsetMs, text)
             if (n < 0) {
                 aapsLogger.error(LTag.CORE, "swarm: sealing epoch $epoch failed with $n")

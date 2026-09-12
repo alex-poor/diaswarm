@@ -37,7 +37,8 @@ the JNI surface and the Kotlin plugin.
 | A peer carries a stranger's data knowing only a topic | `tests/replicate.rs`, on log sync | More than two peers |
 | **The whole chain composes** — subject seals, stranger carries, granted reader reads *from the stranger* | `a_granted_reader_gets_a_subject_from_a_peer_that_is_not_the_subject`, reading out of the carrier's own store | Two processes, not two phones |
 | It runs on the phone | Self-test binary on the loop phone: five days sealed in 31 ms, 2,016 records read in 181 ms | Anything inside AAPS |
-| It runs *inside* AAPS | Shadow mode, hundreds of live passes without a crash | ~~agreeing pass for pass~~ — **that comparison was never made; see below** |
+| It runs *inside* AAPS | Shadow mode, hundreds of live passes without a crash | ~~agreeing pass for pass~~ — that comparison was never made; a real one now exists, see below |
+| **The new vault returns what it was handed, on a phone** | `shadow agrees — given 17, holds 17, missing 0, lost 0, failures 0` — phone B, 2026-09-12, 17 records over 4 epochs | A long run, and the loop phone |
 | Identity survives a restart | Shadow passes either side of an app upgrade, different pids | A device reboot, a factory reset, a restore from backup |
 
 ## What is not yet true
@@ -76,10 +77,48 @@ rather than appending to it, so every five-minute flush destroyed the day so
 far. See D26. No test caught it because no test sealed an epoch twice, and no
 shadow pass caught it because shadow mode was not looking.
 
-⚠️ **So the on-device evidence for correctness is now: none, yet.** The
-comparison exists and is tested on a desktop; it has not run on the phone. That
-is the next measurement, and it is cheap — switch the preference on and read one
-log line.
+✅ **And it has now run on a phone.** Phone B, 2026-09-12, the generation bump
+forcing a full re-read:
+
+```
+swarm: shadow vault is generation 0, wanted 3 — re-reading everything
+swarm: drained 16 — event=16
+swarm: sealed epoch 20705, 1 records … 20706, 10 … 20707, 4 … 20708, 1
+swarm: shadow agrees — given 17, holds 17, missing 0, lost 0, failures 0
+```
+
+That is the first on-device correctness evidence this migration has ever had:
+the JNI resolves, `diaswarm-keys` creates a vault on Android storage, seals, and
+returns every record it was given.
+
+🐛 **And the first line it produced found a bug, which is the argument for
+device runs in one sentence.** `given 17` where the core vault sealed 16.
+`shadowPending` was appended to unconditionally while `flushShadow` returns at
+once when the shadow handle is 0 — the default on every phone, including the one
+driving a pump. So every record ever drained accumulated in memory, never
+flushed, never freed; about 160 KB a day at this subject's rate, for the life of
+the process. `openShadow`'s own comment records an out-of-memory crash in the
+same area. Pre-existing, arrived with the five-minute batching, and invisible to
+the desktop suite because the leak only exists in the configuration the tests do
+not run.
+
+Fixed, rebuilt, reinstalled, and re-measured:
+
+```
+swarm: drained 1 — event=1
+swarm: sealed epoch 20708, 1 records
+swarm: shadow agrees — given 1, holds 3, missing 0, lost 0, failures 0
+```
+
+`given 1` matches the core vault exactly — no leftovers. And `holds 3` is the
+other fix proving itself: that epoch already held 2 records, one more was
+appended, and the read returned 3. Before `seal` stopped replacing segments it
+would have returned 1. **The append path is verified on a real device against
+real files.**
+
+⚠️ **What this is still not.** One phone, 17 records, four epochs, minutes. Not a
+long run, not a full history, and not the loop phone. What it establishes is that
+the mechanism works and now reports honestly; the soak is still ahead.
 
 **2. ~~The device drains more than the snapshot tool sees.~~ Chased, and it was
 a real difference between the vaults.** The device drained 30,188 CGM records
