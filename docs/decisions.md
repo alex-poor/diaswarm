@@ -647,6 +647,33 @@ group's `Create`, leaving a vault with a subject, a member id, no secrets, and a
 first read reporting `NotGranted` — which reads like a revoked reader rather
 than a join that never happened.
 
+🐛 **And `seal` replaced the day instead of appending to it.** Found by asking
+what shadow mode would have to compare, which is a better question than it
+sounds: the comparison is between a vault and what it was given, and the first
+thing to check is whether the vault kept it.
+
+A caller passes what it has just collected, not the whole day — the AAPS plugin
+accumulates records between drains and flushes on a five-minute cadence, so one
+epoch is written to dozens of times as it happens. `seal` was `fs::write`, so
+each flush destroyed everything sealed into that epoch before it. Silently, from
+the only copy the subject has. `diaswarm-core`'s seal carries the same comment
+and the incident that produced it — "a reader's record count fall from 32,150 to
+27,874 between two fetches" — so this is that bug, reintroduced in the vault
+meant to replace it.
+
+**No test here could see it, because no test sealed an epoch twice.** Every one
+sealed each day once, which is not how a phone uses this.
+
+The merge re-seals the accumulated day **under the latest secret**, not the one
+the segment already named, and that is the part worth arguing about. The cheaper
+merge keeps the existing secret — and then a reader revoked at noon goes on
+reading the rest of that day, because the segment they can already open is the
+one still being appended to. Revocation would not bite until midnight. The price
+of the other choice is stated rather than discovered: a revoked reader loses the
+part of *today* it could previously open, and a reader granted at noon can read
+back to midnight. Closed days keep their own secret and are untouched.
+`a_revocation_bites_the_day_it_happens_in` asserts both halves.
+
 **And a revocation is not only a subtraction.** `Group::remove` generates a
 fresh group secret and encrypts it towards everyone still in the member set, as
 direct messages inside the control message it returns. A remaining reader that

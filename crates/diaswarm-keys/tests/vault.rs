@@ -390,3 +390,112 @@ async fn revoking_one_reader_leaves_the_other_reading() {
         "a revoked reader got the new secret out of its own revocation"
     );
 }
+
+/// SEALING A DAY TWICE MUST NOT THROW THE FIRST HALF AWAY.
+///
+/// **THE BUG NO TEST HERE COULD SEE, BECAUSE NO TEST SEALED AN EPOCH TWICE.**
+/// Every test in this file sealed each day once, which is not how a phone uses
+/// this: the AAPS plugin accumulates records between drains and flushes them on
+/// a five-minute cadence, so one epoch is written to dozens of times as it
+/// happens. `seal` was `fs::write` — each flush replaced the day with whatever
+/// had arrived since the last one.
+///
+/// `diaswarm-core`'s seal carries the same comment and the incident behind it:
+/// a reader's record count falling from 32,150 to 27,874 between two fetches.
+#[test]
+fn sealing_a_day_in_pieces_keeps_all_of_it() {
+    let rng = Rng::default();
+    let subject_key = SigningKey::from_bytes(&rand32());
+    let mut subject = Vault::open(tmp("pieces"), OFFSET, &subject_key).expect("vault");
+    let (mgr, _bundle) = Vault::key_bundle(&rng).expect("bundle");
+    subject.create(mgr).expect("create");
+
+    // A day arriving in twelve flushes, the way a phone delivers one.
+    let whole = day(25_000);
+    for chunk in whole.chunks(24) {
+        subject.seal(25_000, chunk).expect("seal a chunk");
+    }
+
+    let got = subject.read_from(25_000).expect("read");
+    let back = got.get(&25_000).expect("the day is there");
+    assert_eq!(
+        back.len(),
+        whole.len(),
+        "sealing a day in pieces kept {} of {} records",
+        back.len(),
+        whole.len()
+    );
+    assert_eq!(
+        back.iter().map(|r| r.to_canonical_json()).collect::<Vec<_>>(),
+        whole.iter().map(|r| r.to_canonical_json()).collect::<Vec<_>>(),
+        "the records came back changed or reordered"
+    );
+
+    // And a record offered twice is stored once: a full resync re-drains
+    // everything, and the segment must not double.
+    subject.seal(25_000, &whole).expect("re-seal the whole day");
+    let again = subject.read_from(25_000).expect("read");
+    assert_eq!(
+        again.get(&25_000).map(Vec::len),
+        Some(whole.len()),
+        "re-sealing a day it already held doubled it"
+    );
+}
+
+/// A REVOCATION BITES THE DAY IT HAPPENS IN, NOT THE NEXT ONE.
+///
+/// **THE REASON THE MERGE RE-SEALS UNDER THE LATEST SECRET.** The cheaper merge
+/// keeps the secret the segment already names, and then a reader revoked at
+/// noon goes on reading the rest of that day: the segment they can already open
+/// is the one still being appended to. Revocation would not bite until
+/// midnight.
+///
+/// The price is stated in `seal` and asserted here: the revoked reader loses
+/// the part of *today* it could previously open, and keeps every day that was
+/// already finished.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_revocation_bites_the_day_it_happens_in() {
+    let rng = Rng::default();
+    let subject_key = SigningKey::from_bytes(&rand32());
+    let reader_key = SigningKey::from_bytes(&rand32());
+    let root = tmp("bites");
+    let store = SqliteStoreBuilder::memory().build().await.expect("store");
+
+    let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("subject");
+    let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
+    let (reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("bundle");
+    subject.create(subject_mgr).expect("create");
+    let (welcome, tag) = subject.grant(reader_bundle, "follow").expect("grant");
+    let welcome = deliver(&store, &subject_key, &welcome).await;
+
+    let mut reader = Vault::open(tmp("bites-reader"), OFFSET, &reader_key).expect("reader");
+    let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("reg");
+    reader.join(reader_mgr, registry, &subject_bundle, "follow", &welcome).expect("join");
+
+    // A day that finishes, and the first half of the next.
+    let closed = subject.seal(26_000, &day(26_000)).expect("seal a closed day");
+    let morning = subject.seal(26_001, &day(26_001)[..144]).expect("seal the morning");
+    assert!(reader.open_segment(&closed).is_ok(), "the reader could not open a granted day");
+    assert!(reader.open_segment(&morning).is_ok(), "the reader could not open the morning");
+
+    // Revoked at noon, and the afternoon is sealed into the same epoch.
+    subject.revoke(tag).expect("revoke");
+    let afternoon = subject.seal(26_001, &day(26_001)[144..]).expect("seal the afternoon");
+
+    assert!(
+        reader.open_segment(&afternoon).is_err(),
+        "a reader revoked at noon went on reading the afternoon"
+    );
+    assert!(
+        reader.open_segment(&closed).is_ok(),
+        "a revocation reached back into a day that was already finished"
+    );
+
+    // And the subject has lost nothing: the whole day is still there for them.
+    let mine = subject.read_from(26_001).expect("subject reads its own day");
+    assert_eq!(
+        mine.get(&26_001).map(Vec::len),
+        Some(288),
+        "the subject lost records when the day was re-sealed"
+    );
+}

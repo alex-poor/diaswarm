@@ -386,15 +386,77 @@ impl Vault {
     /// enters the control history, so the cost of sealing does not depend on how
     /// much has been sealed before.
     pub fn seal(&mut self, epoch: i64, records: &[Record]) -> Result<Segment, Error> {
+        let path = self.root.join("segments").join(format!("{epoch}.json"));
+
+        // **APPEND, DO NOT REPLACE**, and this used to replace.
+        //
+        // A caller passes what it has just collected, not the whole day: the
+        // AAPS plugin accumulates records between drains and flushes them on a
+        // cadence, so one epoch is written to dozens of times as it happens.
+        // `fs::write` over the segment destroyed everything sealed into it
+        // earlier — silently, from the only copy the subject has, with a reader
+        // who could read it yesterday unable to today and no error anywhere.
+        //
+        // `diaswarm-core`'s seal carries the same comment and the incident that
+        // produced it: "found by watching a reader's record count fall from
+        // 32,150 to 27,874 between two fetches". This is that bug, reintroduced
+        // in the vault meant to replace it, and found by asking what shadow
+        // mode would have to compare.
+        //
+        // A segment that will not open is an ERROR, not an empty start. Reading
+        // it as "nothing was there" is how one bad decrypt turns into a deleted
+        // day.
+        let existing: Vec<Record> = match std::fs::read(&path) {
+            Ok(bytes) => {
+                let segment: Segment = serde_json::from_slice(&bytes)?;
+                self.open_segment(&segment)?.0
+            }
+            Err(_) => Vec::new(),
+        };
+
+        // Anything already in the segment is skipped. The high-water marks
+        // upstream stop a record being drained twice, but a full resync would
+        // otherwise append the whole history again.
+        let seen: std::collections::HashSet<String> =
+            existing.iter().map(|r| r.to_canonical_json()).collect();
+        let mut merged = existing;
+        for record in records {
+            if seen.contains(&record.to_canonical_json()) {
+                continue;
+            }
+            merged.push(record.clone());
+        }
+
         let state = self.state.as_ref().ok_or(Error::NoSecret)?;
+        // **UNDER THE LATEST SECRET, NOT THE ONE THE SEGMENT ALREADY NAMED**,
+        // and the difference is a revocation being real.
+        //
+        // Reusing the secret already on disk would be the cheaper merge and
+        // would mean a reader revoked at noon kept reading the rest of that day
+        // — the segment they can already open goes on being appended to. The
+        // whole accumulated day is therefore re-sealed under the current
+        // secret, so a revocation bites from the moment it happens rather than
+        // from midnight.
+        //
+        // The price, stated rather than discovered: a reader loses the part of
+        // *today* they could previously open, and a reader granted at noon can
+        // read back to midnight. Closed days are untouched and keep their own
+        // secret, so a revoked reader keeps every day that was already
+        // finished — which is what `a_granted_reader_opens_segments_and_a_revoked_one_stops`
+        // asserts, and still does.
         let secret = state.secrets.latest().ok_or(Error::NoSecret)?;
         let nonce: XAeadNonce = self.rng.random_array().map_err(|e| Error::Crypto(e.to_string()))?;
-        let plaintext = encode_records(records).into_bytes();
+        let plaintext = encode_records(&merged).into_bytes();
         let ciphertext = encrypt_data(&plaintext, secret, nonce)
             .map_err(|e| Error::Crypto(e.to_string()))?;
         let segment = Segment { epoch, secret_id: secret.id(), nonce, ciphertext };
-        let path = self.root.join("segments").join(format!("{epoch}.json"));
-        std::fs::write(path, serde_json::to_vec(&segment)?)?;
+
+        // Written beside and renamed: a seal interrupted half way would
+        // otherwise leave a truncated segment, which `open_segment` reports as
+        // undecryptable and which is the day gone.
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec(&segment)?)?;
+        std::fs::rename(&tmp, &path)?;
         Ok(segment)
     }
 
