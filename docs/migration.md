@@ -774,6 +774,47 @@ every time. The generation bump had meanwhile consumed the backfill into the
 core vault and marked itself done, so the re-drain had to be triggered by hand
 afterwards.
 
+### ✅ CLOSED — a follower read real glucose out of the new vault, 2026-09-13
+
+Two phones, nothing shared between them but two invites:
+
+```
+(loop phone)  swarm: keys granted as 265a21af855bdaf6…
+              swarm: shadow agrees — given 1, holds 864, missing 0, lost 0, failures 0
+(ayni)        keys carrying 2 log(s)
+              keys read 407 reading(s) for 552f688a
+```
+
+On screen at that moment: **6.8 mmol/L, 47 seconds old**, with the chart and the
+basal trace — all of it opened from segments that arrived as p2panda operation
+bodies, under a secret handed over in a welcome the follower found for itself.
+
+The whole chain, each link on real hardware: AAPS seals into the keys vault and
+publishes each segment as a signed operation · hands out a v3 invite carrying
+both of its keys · scans the follower's invite and grants it on the keys vault ·
+the grant is a signed control message in a replicated log · Ayni carries both
+logs, finds its own welcome among nine grants without any message naming a
+recipient, derives the same `GrantTag` independently, joins with the identity it
+published, and reads.
+
+**The cryptography was never the problem.** The pairing — unlinkable tags
+derived separately on two devices — worked first time. Every failure was
+plumbing at a seam:
+
+| | |
+|---|---|
+| `seal` replaced the day instead of appending | no test sealed an epoch twice |
+| `shadowPending` grew unbounded while disabled | the leak only exists when the feature is off |
+| the v3 invite carried one key of two | the log author and the bundle are different keys |
+| `netFollowing` omitted the keys column | the follower had a bundle and no log to fetch |
+| `swarmJoin` never created the keys directory | the test phone had it from an earlier build |
+| a grant decoded an identity as a bundle | every test encodes and decodes with the same pair |
+| segments were sealed but never published | files on one phone, nothing in the log |
+| one epoch became many operations | "last N entries are the last N days" stopped holding |
+
+Eight, in a suite of ~57 that was green throughout. Each lives between two
+components; none is visible to a test that exercises one.
+
 ⚠️ **Only the loop phone can demonstrate the whole thing**, because it is the
 only device with records to seal. `twokeys` proved the protocol between both
 phones; the *app* path — a v3 invite out of AAPS, scanned, granted, replicated,
