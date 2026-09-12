@@ -571,7 +571,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             // No pool means no keys store, and shadow mode simply does nothing.
             val pool = SwarmEndpoint.handle
             if (pool == 0L) return 0L
-            val dir = File(SwarmPaths.base(context), "keys").absolutePath
+            val dir = SwarmKeys.dir(context).absolutePath
             val identity = SwarmPaths.identity(context).absolutePath
             SwarmNative.keysOpen(pool, dir, identity, offsetMs).also {
                 if (it == 0L) aapsLogger.error(LTag.CORE, "swarm: shadow vault would not open")
@@ -727,6 +727,16 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             aapsLogger.debug(LTag.CORE, "swarm: pool pass failed")
             return
         }
+        // **CARRY THE KEYS LOGS TOO.** Without this the replicator exists,
+        // subscribes to nothing, and every keys read finds an empty store —
+        // which looks exactly like "not granted yet".
+        val carried = SwarmNative.keysCarryAll(
+            handle,
+            SwarmPaths.store(context).absolutePath,
+            SwarmPaths.identity(context).absolutePath
+        )
+        if (carried < 0) aapsLogger.debug(LTag.CORE, "swarm: keys carry unavailable ($carried)")
+
         val f = report.split('\t')
         aapsLogger.info(
             LTag.CORE,
@@ -907,7 +917,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         val subject = SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)
         val endpoint = SwarmNative.swarmNodeId(handle)
         if (subject.isEmpty() || endpoint.isEmpty()) return ""
-        return SwarmNative.inviteFor(subject, endpoint, PURPOSE)
+        return SwarmNative.inviteFor(subject, endpoint, PURPOSE, SwarmKeys.identity(context, preferences))
     }
 
     /**

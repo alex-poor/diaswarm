@@ -1089,13 +1089,22 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_inviteFor<'a>(
     subject: JString<'a>,
     endpoint: JString<'a>,
     purpose: JString<'a>,
+    keys: JString<'a>,
 ) -> JString<'a> {
     let (Ok(s), Ok(e), Ok(p)) =
         (env.get_string(&subject), env.get_string(&endpoint), env.get_string(&purpose))
     else {
         return to_jstring(env, String::new());
     };
-    match diaswarm_core::invite::Invite::new(&String::from(s), &String::from(e), &String::from(p)) {
+    // **EMPTY KEYS MEANS A v2 INVITE, AND THAT IS THE MIGRATION STORY.** A
+    // phone with no keys vault hands out exactly what it handed out before, so
+    // every build already installed can still read it. Only a phone that can
+    // actually grant on the keys vault emits something older builds refuse —
+    // which they then say clearly, rather than half-working.
+    let keys = env.get_string(&keys).map(String::from).unwrap_or_default();
+    match diaswarm_core::invite::Invite::new(&String::from(s), &String::from(e), &String::from(p))
+        .and_then(|inv| inv.with_keys(&keys))
+    {
         Ok(inv) => to_jstring(env, inv.encode()),
         Err(_) => to_jstring(env, String::new()),
     }
@@ -1656,6 +1665,77 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSealChecked<'a>(
     };
 
     to_jstring(env, seal_checked(&mut v.vault, epoch, &body))
+}
+
+/// Carry every keys log this phone should hold: its own, and each it follows.
+///
+/// **ONE CALL, BECAUSE THE DECODING BELONGS IN RUST.** A follow records the
+/// subject's keys identity as it arrived in their invite, and what `carry`
+/// needs out of it is the Ed25519 signer. Handing those to Kotlin so it could
+/// hand them straight back would put a hex-decode and a CBOR-decode in the
+/// language with no types for either.
+///
+/// **OUR OWN LOG IS CARRIED TOO, AND THAT IS THE PUBLISHING HALF.** A subject
+/// that does not announce its own bucket is a subject nobody can replicate
+/// from — the pool would hold followers and no source.
+///
+/// Returns how many were carried, or negative. A follow with no keys identity
+/// is skipped rather than failed: it is somebody paired before the field
+/// existed, or a subject with no keys vault, and neither is an error.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarryAll<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    pool: jlong,
+    store_path: JString<'a>,
+    identity_path: JString<'a>,
+) -> jlong {
+    if pool == 0 {
+        return -1;
+    }
+    let (Ok(store), Ok(id_s)) = (env.get_string(&store_path), env.get_string(&identity_path))
+    else {
+        return -2;
+    };
+    let store = PathBuf::from(String::from(store));
+    let Some(identity) = load_or_create_identity(&PathBuf::from(String::from(id_s))) else {
+        return -2;
+    };
+    let pooled = unsafe { &*(pool as *const Pooled) };
+    let Some(replicator) = pooled.keys_replicator.as_ref() else { return -3 };
+
+    let members = pooled
+        .runtime
+        .block_on(pooled.swarm.pool_members())
+        .map(|m| m.len())
+        .unwrap_or(2)
+        .max(2);
+    let depth = diaswarm_net::pool::depth_for(members);
+
+    let mut wanted: Vec<String> = Vec::new();
+    // Ours: the same Ed25519 key `keysOpen` signs the logs with.
+    wanted.push(
+        p2panda_core::SigningKey::from_bytes(&identity.signing.to_bytes())
+            .verifying_key()
+            .to_hex(),
+    );
+    for follow in diaswarm_net::peer::load_follows(&store).unwrap_or_default() {
+        let Some(keys) = follow.keys.as_deref() else { continue };
+        let Ok(id) = diaswarm_keys::decode_identity(keys) else { continue };
+        wanted.push(id.signer.to_hex());
+    }
+
+    let mut carried = 0i64;
+    for subject in wanted {
+        let topic = diaswarm_net::pool::bucket_topic(
+            depth,
+            diaswarm_net::pool::bucket_of(&subject, depth),
+        );
+        if pooled.runtime.block_on(replicator.carry(topic, &subject)).is_ok() {
+            carried += 1;
+        }
+    }
+    carried
 }
 
 /// This vault's identity as text, for putting in an invite. Empty on failure.

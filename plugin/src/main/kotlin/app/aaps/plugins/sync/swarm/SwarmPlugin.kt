@@ -315,7 +315,12 @@ class SwarmPlugin @Inject constructor(
         val subject = SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)
         val endpoint = SwarmNative.swarmNodeId(serving)
         if (subject.isEmpty() || endpoint.isEmpty()) return ""
-        return SwarmNative.inviteFor(subject, endpoint, DataSyncSelectorSwarmImpl.PURPOSE)
+        return SwarmNative.inviteFor(
+            subject,
+            endpoint,
+            DataSyncSelectorSwarmImpl.PURPOSE,
+            SwarmKeys.identity(context, preferences)
+        )
     }
 
     /** Why there is no invite, in words a person can act on. */

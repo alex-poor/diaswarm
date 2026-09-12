@@ -142,7 +142,7 @@ object SwarmNative {
      * Built in Rust so the phone and the CLI cannot drift into two formats
      * that look alike and are not. Empty if any part is malformed.
      */
-    external fun inviteFor(subject: String, endpoint: String, purpose: String): String
+    external fun inviteFor(subject: String, endpoint: String, purpose: String, keys: String): String
 
     /** Read one back as `subject<TAB>endpoint<TAB>purpose`; empty if not valid. */
     external fun inviteParse(text: String): String
@@ -446,6 +446,17 @@ object SwarmNative {
      * segments has nothing to open. 0 on success.
      */
     external fun keysCarry(poolHandle: Long, subjectHex: String): Long
+
+    /**
+     * Carry every keys log this phone should hold: its own, and each it
+     * follows. Returns how many, or negative.
+     *
+     * **OUR OWN IS THE PUBLISHING HALF** — a subject that does not announce its
+     * own bucket is one nobody can replicate from. A follow with no keys
+     * identity is skipped rather than failed: somebody paired before the field
+     * existed, or a subject with no keys vault, and neither is an error.
+     */
+    external fun keysCarryAll(poolHandle: Long, storePath: String, identityPath: String): Long
 
     /** The spec version this Kotlin was written against. */
     const val EXPECTED_SPEC_VERSION = 3
