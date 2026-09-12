@@ -392,6 +392,34 @@ None of those four is fixable in this repository. Three are properties of
 `p2panda-spaces`; the fourth — publishing into windows nobody reads — is ours
 and is a small change, but it only helps once one of the others gives.
 
+### And the vault being replaced does not have the problem
+
+Measured with `crates/diaswarm-core/src/bin/readcost.rs`, a day of a five-minute
+sensor per epoch:
+
+| days held | whole vault | recent day only | records |
+|---|---|---|---|
+| 7 | 0.004 s | 0.001 s | 2,016 |
+| 30 | 0.013 s | 0.000 s | 8,640 |
+| 90 | 0.041 s | 0.001 s | 25,920 |
+| 180 | 0.082 s | **0.001 s** | 51,840 |
+
+**Reading the recent end is flat**, whether the subject holds a week or six
+months, and a full catch-up is linear rather than quadratic — 51,840 records in
+0.082 s. The spaces vault took 22.97 s for 1,496.
+
+It is structural, not luck. Segments are sealed independently per epoch, named
+by epoch, each under its own key wrapped per reader — so opening epoch N needs
+segment N and its wrap and nothing else, and `read_as_from` discards older
+segments by filename before decrypting anything. There is no chain to walk and
+no state that grows.
+
+So the migration as it stands would trade a vault that does exactly what the
+flagship needs for one that cannot express it. That is not an argument against
+`p2panda-spaces` — it deletes 1,159 lines of unreviewed cryptography, which is
+the whole point ([D20](decisions.md)) — but it is the cost, and it was not on
+the list before today.
+
 The alternative is truncating a window, which would need `space_dependencies`
 to tolerate a gap. That is upstream's territory and does not exist for spaces.
 
