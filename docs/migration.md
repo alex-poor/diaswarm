@@ -117,7 +117,25 @@ would have returned 1. **The append path is verified on a real device against
 real files.**
 
 ⚠️ **What this is still not.** One phone, 17 records, four epochs, minutes. Not a
-long run, not a full history, and not the loop phone. What it establishes is that
+long run, not a full history, and not the loop phone.
+
+**Decided 2026-09-12, for when it reaches the loop phone:**
+
+* **Full backfill.** The generation bump re-reads the whole AAPS history through
+  both vaults — ~74 days, 30,000+ CGM records — in bounded passes. It is the
+  strongest evidence available: the entire history through the new seal path,
+  including the merge-and-append behaviour at a scale phone B cannot reach. This
+  is the current behaviour; nothing needs changing to get it.
+* **Accept the storage doubling.** The shadow vault is a second sealed copy of
+  every record, so the plugin's footprint roughly doubles for as long as it is
+  on. Shadow mode is temporary and off by default, so the cost is bounded by the
+  soak. **Delete the `keys/` directory when the question is settled**, or when
+  the cutover makes the core vault the shadow instead.
+
+Both were considered against bounding the backfill, pruning the shadow vault,
+and not shadowing the loop phone at all. The narrower options all buy less load
+by buying less evidence, and the thing being bought is the only reason the
+feature exists. What it establishes is that
 the mechanism works and now reports honestly; the soak is still ahead.
 
 **2. ~~The device drains more than the snapshot tool sees.~~ Chased, and it was
