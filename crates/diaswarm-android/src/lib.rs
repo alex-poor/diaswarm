@@ -441,6 +441,20 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmJoin<'a>(
     // exactly as it did before, which is what keeps this switch-off-able.
     let (keys_store, keys_replicator) = match keys_dir {
         Some(dir) => {
+            // **CREATE THE DIRECTORY FIRST, AND THIS IS WHY THE LOOP PHONE
+            // COULD NOT OPEN A KEYS VAULT AT ALL.** SQLite will create the
+            // database file but not the directory holding it, so on any device
+            // where `files/diaswarm/keys/` did not already exist the store
+            // build failed, there was no replicator, and every pass reported
+            // `keys carry unavailable (-3)` and `shadow vault would not open`.
+            //
+            // The test phone hid it: an earlier build's `keysOpen` made the
+            // directory itself, so by the time this code ran it was there. A
+            // device that had never run that build — which is every device but
+            // one — failed every time.
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                eprintln!("diaswarm: keys directory {}: {e}", dir.display());
+            }
             let url = format!("sqlite://{}", dir.join("keys.sqlite").display());
             match runtime.block_on(async {
                 let store = diaswarm_keys::SqliteStoreBuilder::new()
@@ -460,7 +474,14 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmJoin<'a>(
                 Ok::<_, String>((store, replicator))
             }) {
                 Ok((store, repl)) => (Some(store), Some(repl)),
-                Err(_) => (None, None),
+                Err(e) => {
+                    // **SAY WHY.** Swallowing this is what made the failure
+                    // above undiagnosable from the device: the phone could
+                    // report that it had no keys store and not one word about
+                    // the reason.
+                    eprintln!("diaswarm: keys store unavailable: {e}");
+                    (None, None)
+                }
             }
         }
         None => (None, None),

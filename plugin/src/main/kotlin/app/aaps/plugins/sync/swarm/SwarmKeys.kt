@@ -23,7 +23,7 @@ object SwarmKeys {
     val offsetMs: Long get() = TimeZone.getDefault().rawOffset.toLong()
 
     /** Where the keys vault lives. Also where its SQLite store is. */
-    fun dir(context: Context): File = File(SwarmPaths.base(context), "keys")
+    fun dir(context: Context): File = File(SwarmPaths.base(context), "keys").also { it.mkdirs() }
 
     /**
      * This phone's keys identity for an invite, or empty.
