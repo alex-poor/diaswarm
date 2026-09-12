@@ -674,3 +674,42 @@ A bundle is a few hundred bytes, so a QR code is unbothered.
 
 Only then is the cutover a sequence of testable steps rather than a cliff. The
 migration of existing followers is a separate question and is still unanswered.
+
+### ✅ Unblocked, 2026-09-13 — and proven on two phones
+
+`Vault::my_bundle` returns the identity a vault actually holds, and
+`encode_bundle`/`decode_bundle` put it in text. `crates/diaswarm-net/src/bin/twokeys.rs`
+is the proof, and it ran on the two phones:
+
+```
+  (phone B)  granted e33147ca11e8ea74…
+             sealed  3 days
+  (loop phone)  following 617a18315c06ea97…
+                joined after 4s, as e33147ca11e8ea74…
+                READ 36 records from 3 segments, off a phone it was never introduced to
+```
+
+The tag the follower derived is the one the publisher granted, and neither side
+ever held the other's `LongTermKeyBundle` as a value until it had been through a
+string. The bundles travelled on the command line, which is not a shortcut: it
+is exactly the two hops the real thing uses — the subject's in the invite, the
+reader's in `Request::Offer`. Moving them into those fields is app plumbing;
+whether the protocol works at all was this.
+
+**A follower needs one identity and several vaults**, which is not obvious and
+would have broken the JNI silently. A `Vault` holds one group state, so
+following three people means three vaults — but the bundle the device published
+belongs to *one* key manager, so all three must join with that same manager.
+A vault that minted its own would be a different member to the one that was
+granted, and would read nothing while looking healthy: no error, no crash, an
+empty graph. `Vault::manager_state` exists for this and says so.
+
+⚠️ **`ndk-context` panics in a bare binary** — "android context was not
+initialized", raised inside a tokio task, caught, the task dies and the swarm
+carries on without network-change detection. Already documented in
+`crates/diaswarm-android/Cargo.toml`; harmless for a wifi test, and not a new
+problem.
+
+**Remaining for a cutover:** the bundle into the invite and `Request::Offer`;
+the JNI, shaped by the one-identity-many-vaults constraint above; Ayni's read
+path; and the existing-followers migration, still unanswered.

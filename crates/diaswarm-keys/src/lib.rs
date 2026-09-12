@@ -390,6 +390,27 @@ impl Vault {
             .map_err(|e| Error::Crypto(e.to_string()))
     }
 
+    /// This vault's key manager, for joining somebody else's group with the
+    /// same identity.
+    ///
+    /// **A FOLLOWER NEEDS ONE IDENTITY AND SEVERAL VAULTS, WHICH IS NOT
+    /// OBVIOUS.** A `Vault` holds exactly one group state, so following three
+    /// people means three vaults. But the bundle this device published — the
+    /// one each subject granted against — belongs to *one* key manager, so all
+    /// three have to join using that same manager. A vault that generated its
+    /// own would be a different member to the one that was granted, and would
+    /// read nothing while looking perfectly healthy.
+    ///
+    /// ⚠️ **THIS IS SECRET KEY MATERIAL**, not a handle: it is the identity
+    /// secret and every prekey secret this device holds. It is exposed because
+    /// [`Vault::join`] needs it and the alternative is for each vault to mint
+    /// its own, which is the bug above. It must not be logged, written outside
+    /// a 0600 vault directory, or sent anywhere.
+    pub fn manager_state(&self) -> Result<KeyManagerState, Error> {
+        let state = self.state.as_ref().ok_or(Error::NoSecret)?;
+        Ok(state.dcgka.my_keys.clone())
+    }
+
     /// A key registry holding the bundles a joiner needs.
     ///
     /// A reader opening its welcome has to be able to encrypt towards whoever
