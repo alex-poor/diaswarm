@@ -330,9 +330,37 @@ window creation and every grant — but those are a handful. The bulk is
 application messages, and a `FromNow` reader is not a member of the window
 holding them.
 
-So a parent re-granted periodically pays for the auth chain plus the day they
-actually watch: about 26× cheaper here, and the ratio grows with the history
-they are skipping. No new concepts, and nothing the subject has to give up.
+So a **new** reader in a **new** window pays for the auth chain plus the day it
+actually watches: about 26× cheaper here, and the ratio grows with the history
+being skipped.
+
+⚠️ **AND THAT IS THE ONLY CASE IT WORKS FOR. An existing reader cannot shed its
+state.** This section first claimed a parent could simply be "re-granted into a
+fresh window", which does not follow — a new grant does not touch the reader's
+own `spaces.sqlite`, and a parent who has followed for a year still has a year
+of state in it. Tested directly: discard the state, keep `credentials.json`,
+hand back the auth chain and a day —
+
+```
+kept identity, dropped state:  0.06s for 0 records (held 577)
+```
+
+Nothing. `SpacesArgs::Application` carries `space_dependencies` — the previous
+tips of that space — so application messages form a chain, and a reader with no
+state cannot process today without having processed yesterday. It must replay
+the window from creation, which is the expensive thing it was trying to avoid.
+The fresh reader above only worked because `FromNow` gave it a window with no
+prior tips.
+
+**So forgetting costs a re-pair.** The only way an existing follower gets a
+cheap vault is a new identity in a new window: a new key, a new grant, and the
+person scanning a code again. That is a real and comprehensible cost — the
+follower is a viewer of recent data, and losing what it can no longer afford to
+read is not much of a loss — but it is a cost the subject participates in, not
+something a client can do alone.
+
+The alternative is truncating a window, which would need `space_dependencies`
+to tolerate a gap. That is upstream's territory and does not exist for spaces.
 
 *One wart, recorded rather than solved:* the fresh reader ends with 290
 operations `held` — the earlier window's application messages, waiting on

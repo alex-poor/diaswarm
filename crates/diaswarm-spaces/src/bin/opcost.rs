@@ -160,7 +160,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  a NEW reader joining a subject that already has history:");
     {
         let mut subject = Vault::open(tmp("aged-subject"), OFFSET).await?;
-        let early = Vault::open(tmp("aged-early"), OFFSET).await?;
+        let early_dir = tmp("aged-early");
+        let early = Vault::open(early_dir.clone(), OFFSET).await?;
         subject.register(&early).await?;
         early.register(&subject).await?;
 
@@ -205,6 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             auth.len(),
             ops.len() - auth.len()
         );
+        let auth_only = auth.clone();
         let mut fresh = auth;
         fresh.extend(subject.grant(late.subject(), Reach::FromNow).await?);
 
@@ -241,9 +243,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             fresh.len(), b.refused, b.held, b.panicked
         );
         println!();
-        println!("  If the second is cheap, forgetting works and a parent can be");
-        println!("  re-granted into a new window. If it is not, the state is shared");
-        println!("  across windows and a new window buys nothing.");
+
+        // THE QUESTION THE ABOVE DOES NOT ANSWER, AND THE ONE THAT MATTERS.
+        // `late` was a brand-new vault. A parent who has followed for a year is
+        // not: their accumulated state is in their own spaces.sqlite, and a new
+        // grant does not touch it. So can an EXISTING reader shed that state and
+        // keep its grant?
+        //
+        // The identity is `credentials.json`; the state is `spaces.sqlite`.
+        // Dropping the second and keeping the first leaves the same member with
+        // no memory — which only works if everything it needs can be handed to
+        // it again, and in a swarm it can, because the operations are in the
+        // pool.
+        println!("  the SAME aged reader, after discarding its state:");
+        let aged_dir = early_dir.clone();
+        drop(early);
+        for f in ["spaces.sqlite", "spaces.sqlite-shm", "spaces.sqlite-wal"] {
+            let _ = std::fs::remove_file(aged_dir.join(f));
+        }
+        let reborn = Vault::open(aged_dir, OFFSET).await?;
+        reborn.register(&subject).await?;
+
+        // Auth chain plus one day — what a pool would hand back.
+        let mut catchup = auth_only.clone();
+        catchup.extend(day.clone());
+        let t2 = Instant::now();
+        let c = reborn.ingest(&catchup).await?;
+        println!(
+            "    kept identity, dropped state: {:>7.2}s for {} records (held {})",
+            t2.elapsed().as_secs_f64(),
+            c.records.len(),
+            c.held
+        );
+        println!();
+        println!("  If that is cheap AND reads records, an existing follower can forget");
+        println!("  without re-pairing. If it reads nothing, the grant died with the state");
+        println!("  and forgetting costs a new grant from the subject.");
     }
     Ok(())
 }
