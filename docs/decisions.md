@@ -409,9 +409,38 @@ upstream defect, all deletable the day those markers gain a derive — and squar
 in the family [D20](#) documented for spaces: the public API returning state the
 public API cannot store.
 
-⚠️ **What is still not built.** No replication, no auth layer, and the reader in
-the tests shares the subject's directory rather than having replicated it. Those
-are the port's remaining work, not unknowns about the design.
+**HOW SEGMENTS REPLICATE, AND WHY [D21](#) SURVIVES.** The obvious worry is that
+this decision resurrects `wire.rs` — the bespoke `Have`/`Manifest`/`Segment`/
+`Wraps` pull protocol D21 set out to delete. It does not, and the reason is
+where the cost actually was.
+
+`Ingested` has separated the two halves since it was written: `processing` is
+time inside `p2panda-spaces`' `manager.process`, and `persisting` is writing its
+CRDT state back to SQLite. Both grew quadratically. **Neither is operation
+storage** — a carrier's whole job in `replicate.rs` is one `insert_operation`,
+a SQL insert, and it was never implicated.
+
+So the chain was never a property of p2panda *operations*. It was
+`SpacesArgs::Application`'s `space_dependencies` and the CRDT behind them. An
+operation carrying a sealed segment in its **body** is an envelope: log sync
+fetches it, the signature and backlink establish integrity, and decrypting it
+needs the body and the secret it names and nothing else. `spike/p2panda-logsync`
+already measured that bodies replicate intact to at least 4 MB, which is two
+orders of magnitude above a day of records.
+
+That means D26 keeps D21's win rather than trading it away: `p2panda-net` log
+sync, push after catch-up, `wire.rs` still deleted — and flat reads, because the
+thing that made reads dear is not in the envelope.
+
+⚠️ **Reasoned, not measured.** What would settle it is the port carrying
+segments as operation bodies and a `readcost`-style run over the result, showing
+the recent read is still flat once replication is in the path. Nothing measured
+so far contradicts it, and the split in `Ingested` is why that can be said with
+any confidence at all.
+
+⚠️ **What is still not built.** Replication itself, the auth layer, and the
+reader in the tests shares the subject's directory rather than having replicated
+it. Those are the port's remaining work, not unknowns about the design.
 
 ✅ **Read, 2026-09-12, and they are bookkeeping.** The reopens-if above asked
 whether those 242 lines need judgement about concurrent membership. They do not.
