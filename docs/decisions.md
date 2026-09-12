@@ -438,6 +438,33 @@ the recent read is still flat once replication is in the path. Nothing measured
 so far contradicts it, and the split in `Ingested` is why that can be said with
 any confidence at all.
 
+🔴 **AND A PRIVACY DEFECT IN WHAT IS BUILT, FOUND WHILE LOOKING AT THE AUTH
+LAYER.** `ControlMessage::Add { added: ID }` and `Remove { removed: ID }`
+publish the member's identifier in clear. `diaswarm-keys` sets
+`ID = VerifyingKey`, so a grant would publish the reader's public key — **the
+same key in every subject's log**. That is precisely what [D13](#) removed:
+*"one clinician granted by fifty people appeared identically fifty times, which
+identifies them and clusters their patients."*
+
+**The fix is available and cheap, and the type already compiles.**
+`IdentityHandle` requires only `Copy + Debug + PartialEq + Eq + Hash`, is not
+sealed, and the 2SM key agreement uses the key *bundle* and never the handle —
+so the handle is a label the application chooses. D13 already says what the
+label should be: `HKDF(ECDH(subject, reader), "diaswarm-grant-tag-v1" ||
+purpose)`. `group::GrantTag` is that type and implements `IdentityHandle`;
+switching `MemberId` to it makes a grant name an identifier that differs in
+every subject's log and is computable only by the two parties.
+
+Until that switch lands, this vault is **worse on privacy than the one it would
+replace**, and no benchmark in this decision touches that. It is the first thing
+to do to it.
+
+**This also settles the auth question it was found under.** `p2panda-auth`'s
+operations name actors the same way, so adopting it wholesale would import the
+same leak. Whatever carries grants has to name a per-relationship tag, which is
+what D13's log already does — so the existing signed, hash-chained grant log is
+not obviously the thing to replace here.
+
 ⚠️ **What is still not built.** Replication itself, the auth layer, and the
 reader in the tests shares the subject's directory rather than having replicated
 it. Those are the port's remaining work, not unknowns about the design.

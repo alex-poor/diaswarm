@@ -34,6 +34,31 @@ use serde::{Deserialize, Serialize};
 pub type MemberId = VerifyingKey;
 pub type OperationId = Hash;
 
+/// A per-relationship name for a member, so a control message names nobody.
+///
+/// ⚠️ **NOT YET USED, AND `MemberId` ABOVE IS A PRIVACY DEFECT UNTIL IT IS.**
+/// `ControlMessage::Add { added: ID }` publishes the identifier in clear, and
+/// with `ID = VerifyingKey` that identifier is the reader's public key — *the
+/// same key in every subject's log*. [D13](../../docs/decisions.md) removed
+/// exactly this: "one clinician granted by fifty people appeared identically
+/// fifty times, which identifies them and clusters their patients."
+///
+/// `IdentityHandle` requires only `Copy + Debug + PartialEq + Eq + Hash` and is
+/// not sealed, so the handle does not have to be a key. The 2SM key agreement
+/// uses the *bundle*, never the handle, so the handle is a label the application
+/// chooses — and D13 already says what it should be:
+/// `HKDF(ECDH(subject, reader), "diaswarm-grant-tag-v1" || purpose)`. Registered
+/// under the tag, a grant names an identifier that is different in every
+/// subject's log and computable only by the two parties.
+///
+/// The compile below is the whole claim: a tag is a valid `IdentityHandle`.
+/// Switching `MemberId` to it is the fix, and it ripples through the registry
+/// keys and the grant API, so it is a change rather than a rename.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, std::hash::Hash, Serialize, Deserialize)]
+pub struct GrantTag(pub [u8; 32]);
+
+impl p2panda_encryption::traits::IdentityHandle for GrantTag {}
+
 /// Who is in the group.
 ///
 /// A set, and nothing else. Membership decisions are made where they belong —
