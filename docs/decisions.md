@@ -290,6 +290,69 @@ its own right.
 Engage upstream *before* writing the patch. Extensions age better than forks
 against a moving codebase.
 
+### D26 · Drop to `p2panda-encryption`, and keep segments
+
+**Proposed 2026-09-12, not yet built.** The spaces migration would trade a vault
+that does what the flagship needs for one that cannot express it
+([migration.md](migration.md)). This is the way out, and it is one layer down
+rather than a different library.
+
+**THE PROBLEM IS `p2panda-spaces`' MESSAGE LAYER, NOT THE CRYPTOGRAPHY UNDER
+IT.** `SpacesArgs::Application` carries `space_dependencies` — the previous tips
+of its space — so application messages form a chain: reading today requires
+having processed everything since the grant, the per-operation cost rises with
+history already held (~21 µs × depth, measured), and a reader can neither join a
+window part-way nor close one.
+
+`p2panda-encryption`'s data scheme has none of that, and its own documentation
+describes the shape we want:
+
+> *"When sending new data into the group we look up the latest secret in the
+> bundle ... and use XChaCha20Poly1305 as an AEAD to encrypt the payload with a
+> random nonce. Next to each ciphertext the used nonce and group secret id is
+> mentioned so other members of the group can decrypt the data."*
+
+A secret is fetched by id — `SecretBundleState::get(id)`, documented as "retrieve
+a secret to decrypt data where we know which secret id has been used".
+`encrypt_data` and `decrypt_data` are public free functions over a
+`GroupSecret`. **There is no chain and no ratchet.** Random access, which is
+exactly what a follower reading the last day needs.
+
+**So: `EncryptionGroup` for membership and secrets, and diaswarm keeps its
+segments.** A segment on disk becomes `(ciphertext, nonce, secret_id)` instead of
+`(ciphertext, per-reader wraps)`. Reading epoch N needs segment N and the secret
+it names, and nothing else — the property `readcost.rs` measures today and the
+one the spaces vault loses.
+
+**What this still deletes, which is the whole point of [D20](#).** Epoch key
+derivation, per-recipient X25519 wrapping, and the key agreement behind it all
+become p2panda's: `create`, `add`, `remove`, `update`, and a welcome that hands a
+joiner the whole secret bundle. SECURITY.md's headline warning is about that
+code, and it still goes. What survives is the segment layout, which is file
+naming rather than cryptography.
+
+**Why not the alternatives.**
+
+* *An abstraction over `p2panda-spaces`.* The chain is in the message type. A
+  layer above it cannot remove a dependency the layer below records.
+* *Willow / Meadowcap.* Willow is a data model with sparse ranges and Meadowcap
+  is capabilities; neither supplies group key agreement, so the layer this
+  decision is about would still have to come from somewhere. Possibly relevant
+  to replication and to D19's topic leak, not to this.
+* *Staying on `diaswarm-core`.* Works today and is measured, but leaves 1,159
+  lines of hand-composed cryptography that nobody has reviewed, which is the
+  thing D20 exists to remove.
+
+⚠️ **Nothing here is built.** The APIs are read and quoted, not exercised. What
+would settle it is a spike that creates a group, adds a reader, seals segments
+under `encrypt_data`, removes the reader, and shows the next segment is
+unreadable to them — plus `readcost`-style numbers showing the recent read stays
+flat.
+
+*Reopens if:* the welcome message turns out to carry the secret bundle in a way
+that is itself linear in history, which would move the cost rather than remove
+it.
+
 ### D25 · Sharing writes to the peer it dials, and that moved the wire to `diaswarm/6`
 
 **Settled 2026-09-11.** `Request::Offer` carries an invite *to* a peer, so the
