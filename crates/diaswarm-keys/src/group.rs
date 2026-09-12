@@ -176,18 +176,23 @@ impl Message {
 
     /// Stamp the sender and a content-derived id, which the orderer cannot do
     /// because it does not hold the identity.
+    ///
+    /// **THE SENDER GOES ON BEFORE THE HASH, AND THE FIRST VERSION DID IT THE
+    /// OTHER WAY.** Hashing first meant the id did not commit to who sent it, so
+    /// two members publishing structurally identical control messages — two
+    /// subjects each creating a group, say — derived the *same* id. The
+    /// orderer keys its `messages` map and its seen-set on that id, so one
+    /// would have silently displaced the other.
     pub fn stamp(mut self, sender: MemberId) -> Self {
+        match &mut self {
+            Message::Control { sender: s, .. } | Message::Application { sender: s, .. } => {
+                *s = sender;
+            }
+        }
         let bytes = serde_json::to_vec(&self).unwrap_or_default();
         let id = Hash::digest(&bytes);
         match &mut self {
-            Message::Control { id: i, sender: s, .. } => {
-                *i = id;
-                *s = sender;
-            }
-            Message::Application { id: i, sender: s, .. } => {
-                *i = id;
-                *s = sender;
-            }
+            Message::Control { id: i, .. } | Message::Application { id: i, .. } => *i = id,
         }
         self
     }

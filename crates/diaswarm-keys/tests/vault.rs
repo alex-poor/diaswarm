@@ -238,3 +238,49 @@ fn one_reader_is_a_different_member_to_every_subject() {
     let (_w, b) = subject.grant(reader_bundle, "clinician").expect("grant");
     assert_ne!(a, b, "the same reader under two purposes got one name");
 }
+
+/// A SHORT ANSWER MUST NEVER BE A SILENT ONE.
+///
+/// Three things can stop a segment being read and only one of them is the
+/// architecture working. Before `read_reporting` they were indistinguishable
+/// from the outside: all three produced "fewer days than you expected" and no
+/// way to tell which.
+#[test]
+fn a_read_says_what_it_could_not_open() {
+    let rng = Rng::default();
+    let subject_key = SigningKey::from_bytes(&rand32());
+    let reader_key = SigningKey::from_bytes(&rand32());
+    let root = tmp("skipped");
+
+    let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("vault");
+    let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
+    let (reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("bundle");
+    subject.create(subject_mgr).expect("create");
+
+    // A day before the grant: sealed under a secret the reader never gets.
+    subject.seal(20_000, &day(20_000)).expect("seal");
+    let (welcome, _tag) = subject.grant(reader_bundle, "follow").expect("grant");
+    subject.seal(20_001, &day(20_001)).expect("seal");
+
+    let mut reader = Vault::open(&root, OFFSET, &reader_key).expect("reader");
+    let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("registry");
+    reader.join(reader_mgr, registry, &subject_bundle, "follow", welcome).expect("join");
+
+    let (got, skipped) = reader.read_reporting(i64::MIN).expect("read");
+    assert!(!got.is_empty(), "the reader opened nothing at all");
+    assert_eq!(skipped.lost(), 0, "a read lost data: {skipped:?}");
+
+    // Corrupt a segment on disk and check it is counted rather than vanishing.
+    let victim = root.join("segments").join("20001.json");
+    let mut raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&victim).expect("segment")).expect("json");
+    raw["ciphertext"] = serde_json::json!(vec![0u8, 1, 2, 3]);
+    std::fs::write(&victim, serde_json::to_vec(&raw).expect("json")).expect("write");
+
+    let (_got, skipped) = reader.read_reporting(i64::MIN).expect("read");
+    assert_eq!(
+        skipped.undecryptable, 1,
+        "a segment that will not decrypt was not reported: {skipped:?}"
+    );
+    assert!(skipped.lost() > 0, "lost() did not notice real loss");
+}

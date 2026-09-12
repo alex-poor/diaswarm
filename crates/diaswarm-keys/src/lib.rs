@@ -20,6 +20,20 @@
 //!
 //! Auth — who may grant, and the tamper-evident record of grants ([D13]) — is a
 //! separate question this crate does not answer.
+//!
+//! 🔴 **CONTROL MESSAGES ARE NOT AUTHENTICATED, AND NOTHING HERE CARRIES THEM
+//! YET.** [`group::Message`] is a plain struct with a `sender` field anybody can
+//! set, and [`Vault::receive`] processes one without checking who sent it.
+//! `p2panda-spaces` avoids this by making every message a signed
+//! `p2panda_core::Operation`; [`wire`] does that for *segments* and not for
+//! control messages, so there is currently no transport for a grant at all.
+//!
+//! That makes it incomplete rather than exploitable as it stands — a forged
+//! message has to reach `receive`, and nothing delivers one — but it is the
+//! next thing to fix and it must be fixed before anything replicates grants.
+//! The shape is the same as `wire::publish`: put the control message in an
+//! operation, let the signature say who sent it, and check it against the
+//! member the message claims to be from.
 
 pub mod group;
 pub mod wire;
@@ -62,6 +76,29 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+}
+
+/// What a read could not open, so that a short answer is never a silent one.
+///
+/// `not_ours` is the architecture working and the others are not, which is the
+/// whole reason they are counted separately.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Skipped {
+    /// Sealed under a secret this vault was never given. Expected.
+    pub not_ours: usize,
+    /// The file would not read or would not parse as a segment.
+    pub unreadable: usize,
+    /// The secret was held and the ciphertext still would not open.
+    pub undecryptable: usize,
+    /// A line inside a decrypted segment was not a record.
+    pub unparseable: usize,
+}
+
+impl Skipped {
+    /// Anything here that is not access control doing its job.
+    pub fn lost(&self) -> usize {
+        self.unreadable + self.undecryptable + self.unparseable
+    }
 }
 
 /// A sealed day, exactly as it sits on disk.
@@ -279,8 +316,26 @@ impl Vault {
     /// epoch, so older ones are skipped before anything is decrypted, and each
     /// is opened with the secret it names. Nothing is walked.
     pub fn read_from(&self, from_epoch: i64) -> Result<BTreeMap<i64, Vec<Record>>, Error> {
+        Ok(self.read_reporting(from_epoch)?.0)
+    }
+
+    /// The same read, and what it could not open.
+    ///
+    /// **SILENCE IS THE FAILURE THIS PROJECT KEEPS BEING BITTEN BY.** The first
+    /// version of `read_from` dropped three different things on the floor with
+    /// a bare `continue`: a segment whose secret this vault does not hold, a
+    /// segment that will not decrypt, and a record that will not parse. The
+    /// first is access control working; the other two are data loss, and from
+    /// the outside all three looked like "fewer days than you expected".
+    ///
+    /// `diaswarm-spaces::Ingested` returns `refused`, `held` and `panicked` for
+    /// exactly this reason, and its own comment says why: "a reader that
+    /// silently received four days out of five is precisely the failure this
+    /// project keeps being bitten by". This is that, for segments.
+    pub fn read_reporting(&self, from_epoch: i64) -> Result<(BTreeMap<i64, Vec<Record>>, Skipped), Error> {
         let state = self.state.as_ref().ok_or(Error::NoSecret)?;
         let mut out = BTreeMap::new();
+        let mut skipped = Skipped::default();
         for entry in std::fs::read_dir(self.root.join("segments"))? {
             let path = entry?.path();
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
@@ -288,19 +343,38 @@ impl Vault {
             if epoch < from_epoch {
                 continue;
             }
-            let segment: Segment = serde_json::from_slice(&std::fs::read(&path)?)?;
-            let Some(secret) = state.secrets.get(&segment.secret_id) else { continue };
-            let Ok(plain) = decrypt_data(&segment.ciphertext, secret, segment.nonce) else {
+            let Ok(bytes) = std::fs::read(&path) else {
+                skipped.unreadable += 1;
                 continue;
             };
-            let records: Vec<Record> = String::from_utf8_lossy(&plain)
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .filter_map(|l| Record::from_json(l).ok())
-                .collect();
+            let Ok(segment) = serde_json::from_slice::<Segment>(&bytes) else {
+                skipped.unreadable += 1;
+                continue;
+            };
+            // NOT AN ERROR. A segment sealed under a secret this vault was never
+            // given is the access control working — a day from before a grant,
+            // or after a revocation.
+            let Some(secret) = state.secrets.get(&segment.secret_id) else {
+                skipped.not_ours += 1;
+                continue;
+            };
+            let Ok(plain) = decrypt_data(&segment.ciphertext, secret, segment.nonce) else {
+                skipped.undecryptable += 1;
+                continue;
+            };
+            let mut records = Vec::new();
+            for line in String::from_utf8_lossy(&plain).lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                match Record::from_json(line) {
+                    Ok(r) => records.push(r),
+                    Err(_) => skipped.unparseable += 1,
+                }
+            }
             out.insert(epoch, records);
         }
-        Ok(out)
+        Ok((out, skipped))
     }
 
     /// Add a reader, named by the tag this relationship derives.
