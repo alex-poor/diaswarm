@@ -355,13 +355,39 @@ would have moved rather than gone. A year of *daily* key rotation is a
 366-secret bundle and a **0.76 ms** welcome, because a secret is generated per
 group operation and not per message — the bundle tracks rotations, not data.
 
-⚠️ **What is still not built, and it is not nothing.** `p2panda-spaces` keeps
-its production DGM and orderer behind `pub(crate)`, so the spike runs on the
-crate's `test_utils` ones. Shipping this means about **242 lines** of our own
-membership and ordering code, or persuading upstream to export theirs. That code
-is bookkeeping rather than cryptography — which is the whole argument for the
-trade — but it has to exist. Nothing in the spike replicates, persists or
-restarts either.
+✅ **Built, 2026-09-12: `crates/diaswarm-keys`.** The third vault, alongside
+`diaswarm-core` and `diaswarm-spaces`, so the three can be compared the way
+[D20](#) compared two. Entirely production types — `IdentityHandle` is
+implemented for `p2panda_core::VerifyingKey` and `OperationId` for `Hash`, so no
+`test_utils` anywhere — with our own DGM and orderer in `group.rs` and segments
+written to and read from a directory.
+
+Measured by `tests/vault.rs`, a separate vault per history depth so the question
+is what a reader pays when the *subject* has been sealing longer:
+
+| days held | newest day |
+|---|---|
+| 7 | 0.653 ms |
+| 30 | 0.315 ms |
+| 90 | 0.356 ms |
+| 180 | **0.351 ms** |
+
+**Flat.** And reading everything stays linear: 180 days in 105 ms. A granted
+reader opens what it was given; a revoked one cannot open the next segment and
+keeps what it already had.
+
+⚠️ **The `test_utils` friction D20 documented is here too, in the same place.**
+`SecretKey::from_bytes` is test-only, so an encryption identity can be neither
+exported nor restored as bytes — meaning this vault must serialise its manager
+state exactly as `diaswarm-spaces` serialises `credentials.json`, and for the
+same reason: a vault returning from a reboot as a new member invalidates every
+grant. `KeyManager::init_and_generate_prekey` is also test-only; `init` then
+`rotate_prekey` is the public route.
+
+⚠️ **What is still not built.** No persistence of group state across a reopen,
+no replication, no auth layer, and the reader in the tests shares the subject's
+directory rather than having replicated it. Those are the port's remaining work,
+not unknowns about the design.
 
 ✅ **Read, 2026-09-12, and they are bookkeeping.** The reopens-if above asked
 whether those 242 lines need judgement about concurrent membership. They do not.

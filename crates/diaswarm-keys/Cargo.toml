@@ -1,0 +1,30 @@
+[package]
+name = "diaswarm-keys"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# THE THIRD VAULT, AND THE POINT OF ITS EXISTING ALONGSIDE THE OTHER TWO.
+#
+# `diaswarm-core` reads the recent end in constant time and is 1,159 lines of
+# cryptography nobody has reviewed. `diaswarm-spaces` deletes that code and
+# cannot express a follower who reads only the last day, because
+# `SpacesArgs::Application` chains to its space's previous tips.
+#
+# D26: take p2panda's key layer and keep diaswarm's segments. Group membership
+# and secret rotation are `p2panda-encryption`'s; a segment is sealed with
+# `encrypt_data` under the current group secret and names the secret that opens
+# it, so reading epoch N needs segment N and nothing else.
+#
+# NOTE THE DEPENDENCY LIST. No `p2panda-spaces`: its message layer is the thing
+# being avoided. `test_utils` is NOT enabled — IdentityHandle is implemented for
+# p2panda_core::VerifyingKey and OperationId for p2panda_core::Hash, so the
+# whole thing runs on production types.
+[dependencies]
+p2panda-encryption = "=0.7.1"
+p2panda-core = "=0.7.1"
+diaswarm-core = { path = "../diaswarm-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
