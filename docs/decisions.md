@@ -583,15 +583,34 @@ test asserted 2 days and got 3. `a_grant_reaches_back_over_days_sealed_before_it
 now pins the real behaviour, so a future change is a failing test rather than a
 surprise on somebody's phone.
 
-**For the flagship this is arguably right** — a parent who starts following
-their child probably should see last week. For `clinician` and `cohort`, which
-spec §7.2 makes separate key trees precisely so they can be scoped differently,
-it is not obviously acceptable, and there is currently no mechanism to make it
-so. Revocation is unaffected and still bites forward.
+✅ **Accepted 2026-09-13, and it is over-granting rather than a feature.** The
+first framing of this entry said reaching back was "arguably right for the
+flagship, since a parent probably should see last week". That is too generous
+and would have let the constraint calcify as a design choice.
 
-*Reopens if:* a purpose needs "from now on", which means either rotating the
-secret at grant time and accepting that every existing reader must process the
-rotation, or carrying the wrap-per-segment idea forward from `diaswarm-core`.
+**A parent needs 24 hours.** That is what D11's flagship use case asks for, what
+the follower UI shows, and what every read-cost measurement in this project is
+built around. So a grant that hands over the entire history gives a reader
+months of data to satisfy a one-day need: more than least privilege allows, and
+more than the relationship requires. It is accepted because nothing currently
+turns on it and the alternatives all cost more today — not because it is right.
+
+Two consequences worth keeping in view. The **privacy** one is that a follower
+compromised at any point exposes everything the subject ever sealed, not the day
+they were watching. The **cost** one is the same fact from the other side: a
+reader who wants a day still receives secrets for everything, and the welcome
+grows with the history rather than with the need.
+
+For `clinician` and `cohort` — separate key trees under spec §7.2 precisely so
+they can be scoped differently — accepting this would be harder to defend, and
+there is no mechanism to make it so.
+
+*Reopens if:* any purpose needs "from now on", or the flagship's least-privilege
+story has to be written down for somebody other than its author. The fix is
+either rotating the secret at grant time — every existing reader must then
+process the rotation, which `revoking_one_reader_leaves_the_other_reading`
+already shows is a real requirement — or carrying `diaswarm-core`'s
+wrap-per-segment idea forward.
 
 ✅ **Replication, 2026-09-12.** `diaswarm-net`'s `Replicator` is now generic
 over the extension type and over *which logs a subject has*, so both vaults use

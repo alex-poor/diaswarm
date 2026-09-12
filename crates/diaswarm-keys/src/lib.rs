@@ -655,10 +655,15 @@ impl Vault {
     /// **THAT IS LESS THAN BOTH VAULTS THIS REPLACES.** `diaswarm-core` wraps
     /// per segment, so the subject chooses what a reader can open;
     /// [D20](../../docs/decisions.md)'s spaces grant takes an explicit
-    /// `history` boolean. For the flagship — a parent following a child —
-    /// reaching back is arguably what you want. For `clinician` or `cohort`,
-    /// which spec §7.2 makes separate key trees precisely so they can be
-    /// scoped differently, it is not obviously acceptable.
+    /// `history` boolean.
+    ///
+    /// **AND IT IS OVER-GRANTING, NOT A FEATURE.** The flagship is a parent
+    /// watching a child and it needs *24 hours* — that is what D11 asks for and
+    /// what the follower shows. Handing over the whole history to satisfy a
+    /// one-day need is more than least privilege allows, and it means a
+    /// follower compromised at any point exposes everything the subject ever
+    /// sealed rather than the day they were watching. Accepted because nothing
+    /// turns on it yet and the alternatives cost more today; see D26.
     ///
     /// Revocation is unaffected and still bites forward: see [`Vault::revoke`]
     /// and `seal`'s note on re-sealing under the latest secret.
