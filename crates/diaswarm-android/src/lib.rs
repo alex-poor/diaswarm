@@ -562,6 +562,9 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netFollow<'a>(
         Some(&inv.purpose),
         // Their relay, as they published it — see peer::Follow::relay.
         Some(inv.relay.as_str()),
+        // Kept for when this reader joins the subject's keys group — which
+        // happens when the welcome replicates, not when the invite is scanned.
+        (!inv.bundle.is_empty()).then_some(inv.bundle.as_str()),
     ) {
         Ok(true) => 1,
         Ok(false) => 0,

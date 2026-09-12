@@ -112,6 +112,12 @@ fn take_offer(store: &Path, invite: &str) -> Vec<u8> {
         &inv.endpoint,
         Some(&inv.purpose),
         Some(inv.relay.as_str()),
+        // **THE SUBJECT'S KEYS BUNDLE, ARRIVING BY THE ROUTE THAT ALREADY
+        // EXISTED.** `Offer` carries an invite, and an invite now carries a
+        // bundle, so the reader's half of the D26 pairing needs no new request
+        // and no ALPN bump — which is the whole reason for putting the bundle
+        // in the invite rather than in a message of its own.
+        (!inv.bundle.is_empty()).then_some(inv.bundle.as_str()),
     ) {
         Ok(_) => serde_json::to_vec(&inv.subject).unwrap_or_default(),
         Err(_) => Vec::new(),

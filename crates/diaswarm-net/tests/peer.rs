@@ -15,7 +15,7 @@ use std::path::Path;
 
 use diaswarm_core::vault::{hex, Identity, Store, Vault};
 use diaswarm_core::{Record, EPOCH_MS};
-use diaswarm_net::peer::{add_follow, refresh_all, refresh_one, Follow};
+use diaswarm_net::peer::{add_follow, add_follow_via, load_follows, refresh_all, refresh_one, Follow};
 use diaswarm_net::wire::{fetch_with, serve_with};
 use iroh::SecretKey;
 
@@ -148,6 +148,7 @@ async fn a_dead_first_endpoint_does_not_stop_a_refresh() {
         from: vec![dead.clone(), live.clone()],
         purpose: Some("follow".into()),
         relay: None,
+        bundle: None,
     };
     let r = refresh_one(&store, &follow, true).await;
 
@@ -207,7 +208,7 @@ async fn unreachable_is_reported_per_endpoint() {
     let a = format!("{}@127.0.0.1:1", SecretKey::generate().public());
     let b = format!("{}@127.0.0.1:2", SecretKey::generate().public());
     let follow =
-        Follow { subject: subject.clone(), from: vec![a.clone(), b.clone()], purpose: None, relay: None };
+        Follow { subject: subject.clone(), from: vec![a.clone(), b.clone()], purpose: None, relay: None, bundle: None };
 
     let r = refresh_one(&store, &follow, true).await;
     assert!(!r.reached());
@@ -221,3 +222,39 @@ async fn unreachable_is_reported_per_endpoint() {
 // three tested a discovery mechanism this crate no longer has — p2panda's is
 // the only one now — and the property they were protecting, a follower
 // surviving the subject going away, is tested against the pool in `swarm.rs`.
+
+/// A BUNDLE IS ONLY EVER ADDED, NEVER CLEARED BY SOMEBODY NOT MENTIONING IT.
+///
+/// **THE FAILURE THIS PREVENTS IS PERMANENT AND SILENT.** A reader needs the
+/// subject's keys bundle to derive the tag it was granted under and to open its
+/// welcome, and it arrives once, in an invite that is then scanned and thrown
+/// away. If a later v2 invite for the same subject — one from a build with no
+/// keys vault, or an older code still in a chat thread — were read as "they no
+/// longer have a bundle", the reader would lose the one value it cannot get
+/// back, and would then fail to join with nothing to say why.
+///
+/// Rotation is a real change and takes effect. Absence is not a statement.
+#[test]
+fn a_later_invite_without_a_bundle_does_not_erase_the_one_we_have() {
+    let store = tmp("bundle-keep");
+    let subject = "11".repeat(32);
+    let a = "22".repeat(32);
+    let first = "aabbcc00";
+    let rotated = "ddeeff11";
+
+    add_follow_via(&store, &subject, &a, Some("follow"), Some(""), Some(first)).unwrap();
+    let held = |s: &Path| {
+        load_follows(s).unwrap().into_iter().find(|f| f.subject == subject).unwrap().bundle
+    };
+    assert_eq!(held(&store).as_deref(), Some(first));
+
+    // A v2 invite for the same subject: no bundle in it at all.
+    add_follow_via(&store, &subject, &a, Some("follow"), Some(""), None).unwrap();
+    assert_eq!(held(&store).as_deref(), Some(first), "an absent bundle erased a stored one");
+
+    // A v3 invite with a different bundle is the subject saying it rotated.
+    let changed =
+        add_follow_via(&store, &subject, &a, Some("follow"), Some(""), Some(rotated)).unwrap();
+    assert!(changed, "a rotated bundle was not recorded as a change");
+    assert_eq!(held(&store).as_deref(), Some(rotated));
+}

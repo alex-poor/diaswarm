@@ -99,6 +99,19 @@ pub struct Follow {
     /// "however this build reaches people by default".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay: Option<String>,
+    /// The subject's `diaswarm-keys` bundle, as it arrived in their invite.
+    ///
+    /// **KEPT BECAUSE JOINING HAPPENS LATER THAN PAIRING.** A reader needs this
+    /// to derive the tag the subject granted it under and to open its welcome,
+    /// and the welcome may not have replicated yet when the invite is scanned —
+    /// or for hours, if the subject's phone is asleep. Throwing the bundle away
+    /// at pairing time would mean the one moment it is available is the one
+    /// moment it is not needed.
+    ///
+    /// `None` is a v1 or v2 invite: a subject with no keys vault, or one from
+    /// before the field existed. Nothing about the old vault needs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<String>,
 }
 
 impl Follow {
@@ -140,16 +153,18 @@ pub fn save_follows(store: &Path, follows: &[Follow]) -> Result<()> {
 /// Add a subject to what this peer keeps, or add an upstream to an existing
 /// one. Returns true if anything changed.
 pub fn add_follow(store: &Path, subject: &str, from: &str, purpose: Option<&str>) -> Result<bool> {
-    add_follow_via(store, subject, from, purpose, None)
+    add_follow_via(store, subject, from, purpose, None, None)
 }
 
 /// The same, recording which relay this subject said to reach them through.
+#[allow(clippy::too_many_arguments)]
 pub fn add_follow_via(
     store: &Path,
     subject: &str,
     from: &str,
     purpose: Option<&str>,
     relay: Option<&str>,
+    bundle: Option<&str>,
 ) -> Result<bool> {
     let subject = subject.to_ascii_lowercase();
     if subject.len() != 64 || !subject.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -178,6 +193,17 @@ pub fn add_follow_via(
                 existing.relay = relay.map(str::to_string);
                 changed = true;
             }
+            // **A BUNDLE IS ONLY EVER ADDED, NEVER CLEARED BY OMISSION.** A v2
+            // invite for somebody already followed carries none, and reading
+            // that as "they no longer have a keys vault" would drop the one
+            // value a reader needs to join — from a record it may never get
+            // back, because the invite that carried it has been scanned and
+            // thrown away. Rotation is a real change and takes effect; absence
+            // is not a statement.
+            if bundle.is_some() && existing.bundle.as_deref() != bundle {
+                existing.bundle = bundle.map(str::to_string);
+                changed = true;
+            }
             if changed {
                 save_follows(store, &follows)?;
             }
@@ -189,6 +215,7 @@ pub fn add_follow_via(
                 from: vec![from.to_string()],
                 purpose: purpose.map(str::to_string),
                 relay: relay.map(str::to_string),
+                bundle: bundle.map(str::to_string),
             });
             save_follows(store, &follows)?;
             Ok(true)
