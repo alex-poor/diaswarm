@@ -37,16 +37,49 @@ the JNI surface and the Kotlin plugin.
 | A peer carries a stranger's data knowing only a topic | `tests/replicate.rs`, on log sync | More than two peers |
 | **The whole chain composes** — subject seals, stranger carries, granted reader reads *from the stranger* | `a_granted_reader_gets_a_subject_from_a_peer_that_is_not_the_subject`, reading out of the carrier's own store | Two processes, not two phones |
 | It runs on the phone | Self-test binary on the loop phone: five days sealed in 31 ms, 2,016 records read in 181 ms | Anything inside AAPS |
-| It runs *inside* AAPS | Shadow mode, hundreds of live passes, agreeing pass for pass | A full backfill without incident — see below |
+| It runs *inside* AAPS | Shadow mode, hundreds of live passes without a crash | ~~agreeing pass for pass~~ — **that comparison was never made; see below** |
 | Identity survives a restart | Shadow passes either side of an app upgrade, different pids | A device reboot, a factory reset, a restore from backup |
 
 ## What is not yet true
 
-**1. ~~A backfill has never completed cleanly.~~ It does now, and the vaults
-agree.** With thinning withdrawn, a full re-drain on the loop phone ran in
-bounded passes with no crash, and **the shadow vault sealed exactly what it was
-handed on every pass**. The two implementations have never once disagreed about
-a record.
+**1. ~~A backfill has never completed cleanly.~~ It does now — but "and the
+vaults agree" was never established, and this entry used to say it was.**
+
+With thinning withdrawn, a full re-drain on the loop phone ran in bounded passes
+with no crash. That part stands. What does not is everything after it.
+
+🔴 **The agreement was a number compared with itself.** `spacesSeal` returns
+`records.len()` — the length of its own argument — on success. The plugin added
+that up and logged it, and nothing anywhere compared it to the other vault or to
+anything the shadow vault actually held. "The shadow vault sealed exactly what
+it was handed on every pass" was therefore true by construction and could not
+have come out otherwise: a shadow vault that stored nothing at all would have
+produced the same line. "The two implementations have never once disagreed about
+a record" is not a measurement, it is a restatement of an identity.
+
+What those hundreds of passes do establish, and it is not nothing: the vault
+opens on the phone, seals without throwing, and does not destabilise AAPS or
+the loop. That is a liveness result. It is not a correctness one.
+
+✅ **Fixed 2026-09-12.** Shadow mode now seals into the `diaswarm-keys` vault
+(D26 decided against spaces, so shadowing spaces was measuring the wrong thing),
+**reads the epoch back off disk**, and counts records that did not come back.
+The pass line says `shadow agrees` or `shadow DISAGREES` with the counts behind
+it, and a disagreement logs at error rather than info. "Agree" means the new
+vault returns what it was given — ground truth, rather than a second opinion
+from the vault being replaced, and strictly stronger, because two vaults can
+agree by losing the same record.
+
+**And asking what it would have to compare is what found the bug** that made it
+worth doing: `diaswarm_keys::Vault::seal` was `fs::write`, replacing each epoch
+rather than appending to it, so every five-minute flush destroyed the day so
+far. See D26. No test caught it because no test sealed an epoch twice, and no
+shadow pass caught it because shadow mode was not looking.
+
+⚠️ **So the on-device evidence for correctness is now: none, yet.** The
+comparison exists and is tested on a desktop; it has not run on the phone. That
+is the next measurement, and it is cheap — switch the preference on and read one
+log line.
 
 **2. ~~The device drains more than the snapshot tool sees.~~ Chased, and it was
 a real difference between the vaults.** The device drained 30,188 CGM records

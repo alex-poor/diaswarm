@@ -5,17 +5,28 @@ import app.aaps.core.keys.interfaces.BooleanPreferenceKey
 /**
  * Switches, and at present only one.
  *
- * SHADOW MODE EXISTS BECAUSE THE ALTERNATIVE IS A CUTOVER. `diaswarm-spaces`
+ * SHADOW MODE EXISTS BECAUSE THE ALTERNATIVE IS A CUTOVER. `diaswarm-keys`
  * replaces the hand-composed sealing construction with p2panda's key layer
- * (D20) and log sync (D21). It agrees with the old vault record-for-record over
- * 74 days of this subject's real history, and it runs on this phone. Neither of
- * those is the same as having run inside AAPS, on a device driving a pump, for
- * a week.
+ * (D26). It agrees with the old vault record-for-record over 74 days of this
+ * subject's real history, and it runs on this phone. Neither of those is the
+ * same as having run inside AAPS, on a device driving a pump, for a week.
  *
  * So the first thing it does on a phone is nothing anybody depends on: seal the
- * same records into both vaults and log whether they agree. The old vault stays
- * authoritative, every screen keeps reading from it, and if the new one throws
- * or disagrees the only consequence is a log line.
+ * same records into the new vault, **read them back off disk**, and log whether
+ * every one survived. The old vault stays authoritative, every screen keeps
+ * reading from it, and if the new one throws or loses a record the only
+ * consequence is a log line.
+ *
+ * **THE READ-BACK IS THE POINT, AND FOR A LONG TIME IT WAS NOT HAPPENING.**
+ * This comment said "log whether they agree" and the code added up how many
+ * records the shadow vault reported sealing. Nothing was compared with
+ * anything, so a shadow vault silently keeping four days out of five read
+ * exactly like one working perfectly. Asking what it would have to compare is
+ * what found `Vault::seal` replacing a day instead of appending to it.
+ *
+ * And "agree" means the new vault returns what it was given, not that the two
+ * vaults match. The old vault is the thing being replaced and is itself
+ * fallible; two vaults can agree by losing the same record.
  */
 enum class SwarmBooleanKey(
     override val key: String,
@@ -33,11 +44,12 @@ enum class SwarmBooleanKey(
 ) : BooleanPreferenceKey {
 
     /**
-     * Also seal into the p2panda-spaces vault, and report whether it agrees.
+     * Also seal into the `diaswarm-keys` vault, read it back, and report.
      *
      * **Off, and it changes nothing while it is off.** On, it costs a second
-     * seal of the same records — measured at 31 ms for five days on this
-     * hardware — and writes one line per pass saying what each vault holds.
+     * seal of the same records plus a read of the epoch it just wrote, and
+     * writes one line per pass saying whether every record survived —
+     * `shadow agrees` or `shadow DISAGREES` with the counts behind it.
      */
     ShadowSpacesVault("swarm_shadow_spaces_vault", false),
 }

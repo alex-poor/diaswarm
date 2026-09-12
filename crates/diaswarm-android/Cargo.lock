@@ -829,6 +829,7 @@ name = "diaswarm-android"
 version = "0.1.0"
 dependencies = [
  "diaswarm-core",
+ "diaswarm-keys",
  "diaswarm-net",
  "diaswarm-spaces",
  "iroh",

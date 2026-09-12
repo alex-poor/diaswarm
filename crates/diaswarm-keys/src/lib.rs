@@ -65,7 +65,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use p2panda_core::SigningKey;
-use p2panda_encryption::Rng;
+/// Re-exported so a caller needs a key bundle without also depending on
+/// `p2panda-encryption` — the JNI layer wants exactly this and nothing else
+/// from it.
+pub use p2panda_encryption::Rng;
 use p2panda_encryption::crypto::x25519::SecretKey;
 use p2panda_encryption::crypto::xchacha20::XAeadNonce;
 use p2panda_encryption::data_scheme::{

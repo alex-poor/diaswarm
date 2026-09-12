@@ -334,6 +334,44 @@ object SwarmNative {
     /** One line: windows and readers. */
     external fun spacesStatus(handle: Long): String
 
+
+    // -----------------------------------------------------------------------
+    // The keys vault (D26) — what shadow mode actually shadows
+    // -----------------------------------------------------------------------
+    //
+    // The spaces entry points above stay because the code is still there and
+    // still measured, but D26 decided against that message layer: it cannot
+    // express a follower who reads only the last day. Shadowing it was
+    // measuring the thing that is not going to ship.
+
+    /**
+     * Open or create the keys vault under [dir], signing as the identity at
+     * [identityPath] — the same one the core vault's grant log is signed with,
+     * so a subject is one subject whichever vault is asked.
+     *
+     * Returns a handle, or 0.
+     */
+    external fun keysOpen(dir: String, identityPath: String, offsetMs: Long): Long
+
+    /** Close it. Safe with 0. */
+    external fun keysClose(handle: Long)
+
+    /** The subject's own member tag, short form. Empty on failure. */
+    external fun keysSubject(handle: Long): String
+
+    /**
+     * Seal a batch into one epoch, read it back off disk, and report.
+     *
+     * **THE READ-BACK IS THE POINT.** A seal count is a statement about the
+     * argument, not about the vault. This re-opens the segment afterwards and
+     * checks every record handed in comes back out.
+     *
+     * Returns one line, always parseable, never throwing:
+     * `ok epoch=20342 given=37 held=1586 missing=0 lost=0`, or `error <what>`.
+     * `missing` is the number this whole feature exists to produce.
+     */
+    external fun keysSealChecked(handle: Long, epoch: Long, ndjson: String): String
+
     /** The spec version this Kotlin was written against. */
     const val EXPECTED_SPEC_VERSION = 3
 

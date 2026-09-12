@@ -43,7 +43,7 @@
     <string name="swarm_follow_invite">Follow someone by invite</string>
     <string name="swarm_follow_invite_summary">Paste an invite they sent you. Following costs them nothing; you cannot read anything until they share with you.</string>
     <string name="swarm_shadow_spaces">Shadow the new vault (experimental)</string>
-    <string name="swarm_shadow_spaces_summary">Also seal into the p2panda-spaces vault and log whether it agrees. Nothing reads it; the existing vault stays in charge.</string>
+    <string name="swarm_shadow_spaces_summary">Also seal into the new vault, read it back, and log whether every record survived. Nothing reads it; the existing vault stays in charge.</string>
     <string name="swarm_resync">Re-read everything from the database</string>
     <string name="swarm_resync_summary">Forget how far the drain got and seal the whole history again. Safe to repeat; takes a while.</string>
     <string name="swarm_resync_confirm">This re-reads every record AAPS holds and seals it again. Nothing in the AAPS database is changed, and sealing the same record twice does nothing — but it will take several minutes and use battery.\n\nGo ahead?</string>

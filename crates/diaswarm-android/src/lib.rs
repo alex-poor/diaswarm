@@ -1340,3 +1340,297 @@ fn verifying_key(hex: &str) -> Option<p2panda_core::VerifyingKey> {
     }
     p2panda_core::VerifyingKey::from_bytes(&bytes).ok()
 }
+
+// ---------------------------------------------------------------------------
+// The keys vault, and what shadow mode is actually for
+// ---------------------------------------------------------------------------
+//
+// SHADOW MODE SHADOWS THE VAULT THAT IS GOING TO SHIP, AND UNTIL NOW IT DID
+// NOT. It sealed into `diaswarm-spaces`, which D26 decided against: spaces
+// cannot express a follower who reads only the last day, because its
+// application messages chain to their space's previous tips. Shadowing it was
+// measuring the thing that is not going to happen.
+//
+// AND IT COMPARED NOTHING. Four places said it logs "whether they agree" — the
+// preference summary a user reads included — and the code added up how many
+// records the shadow vault sealed and logged that number beside an unrelated
+// status line from the other vault. A shadow vault that silently kept four days
+// out of five read exactly like one working perfectly, which is the failure
+// shape this project keeps being bitten by, sitting inside the component whose
+// job is catching it.
+//
+// SO "AGREE" MEANS SOMETHING DIFFERENT HERE, AND THE CHANGE IS DELIBERATE. Not
+// "the two vaults agree with each other" — the old vault is the thing being
+// replaced and is itself fallible — but "the new vault gives back exactly the
+// records it was handed". That is ground truth rather than a second opinion,
+// it is what `diaswarm-keys/tests/differential.rs` already asserts offline
+// against 74 days of real history, and it is a strictly stronger claim: two
+// vaults can agree by losing the same record.
+//
+// It is also what found the bug that made this worth doing. Asking what shadow
+// mode would have to compare is what exposed `Vault::seal` replacing a day
+// rather than appending to it — because the comparison is between a vault and
+// what it was given, and the first thing to check is whether the vault kept it.
+
+/// An open keys vault.
+///
+/// **THE TAG IS NOT DECORATION.** Every vault handle crosses JNI as a bare
+/// `jlong`, so nothing in the type system stops Kotlin passing a keys handle to
+/// `spacesClose` — and `SwarmNative`'s own comment says why that matters: "two
+/// native handle types reachable from Kotlin is a crash waiting for whoever
+/// passes the wrong one". It happened during this very change: the close in
+/// `sealPending`'s `finally` was left as `spacesClose`, which would have freed
+/// this struct as a `SpacesVault` on a phone driving an insulin pump.
+///
+/// A leading magic word turns that from undefined behaviour into a refusal with
+/// a log line. It cannot catch a *stale* pointer, only a wrongly-typed one, and
+/// that is still the difference between a bug and a memory-safety incident.
+const KEYS_TAG: u64 = 0x6b65_7973_7661_756c; // "keysvaul"
+
+struct KeysVault {
+    tag: u64,
+    vault: diaswarm_keys::Vault,
+}
+
+/// Borrow a handle, or `None` if it is not one of ours.
+fn keys_vault<'h>(handle: jlong) -> Option<&'h mut KeysVault> {
+    if handle == 0 {
+        return None;
+    }
+    let v = unsafe { &mut *(handle as *mut KeysVault) };
+    if v.tag != KEYS_TAG { None } else { Some(v) }
+}
+
+/// Open, or create, the keys vault under a directory. Returns a handle, or 0.
+///
+/// **IT REUSES THE PHONE'S EXISTING IDENTITY**, the same 32-byte Ed25519 seed
+/// the core vault signs its grant log with, so a subject is one subject
+/// whichever vault is asked. Minting a second key would make the shadow vault a
+/// different person — every invite, every grant and every pool bucket would be
+/// somebody else's, and the comparison would be against a stranger's history.
+///
+/// The encryption identity cannot come from that seed: `SecretKey::from_bytes`
+/// is `test_utils` only, so `Vault::key_bundle` generates one and the manager
+/// state is persisted in `group.cbor`. That happens once, on the first open.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysOpen<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    dir: JString<'a>,
+    identity_path: JString<'a>,
+    offset_ms: jlong,
+) -> jlong {
+    let (Ok(dir), Ok(id_s)) = (env.get_string(&dir), env.get_string(&identity_path)) else {
+        return 0;
+    };
+    let dir = PathBuf::from(String::from(dir));
+    let Some(identity) = load_or_create_identity(&PathBuf::from(String::from(id_s))) else {
+        return 0;
+    };
+
+    let signing = p2panda_core::SigningKey::from_bytes(&identity.signing.to_bytes());
+    let Ok(mut vault) = diaswarm_keys::Vault::open(&dir, offset_ms, &signing) else {
+        return 0;
+    };
+
+    // No group on disk means this is the first open. Creating one generates the
+    // encryption identity and writes it out; a vault that came back from a
+    // reboot without it would be a new member and every grant to it would be
+    // dead.
+    if !vault.is_welcomed() {
+        let rng = diaswarm_keys::Rng::default();
+        let Ok((manager, _bundle)) = diaswarm_keys::Vault::key_bundle(&rng) else { return 0 };
+        if vault.create(manager).is_err() {
+            return 0;
+        }
+    }
+    Box::into_raw(Box::new(KeysVault { tag: KEYS_TAG, vault })) as jlong
+}
+
+/// Close it. Safe to call with 0.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysClose<'a>(
+    _env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+) {
+    if keys_vault(handle).is_none() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(handle as *mut KeysVault) });
+}
+
+/// The subject's public key, hex. Empty on failure.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSubject<'a>(
+    env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+) -> JString<'a> {
+    let Some(v) = keys_vault(handle) else {
+        return to_jstring(env, String::new());
+    };
+    to_jstring(env, format!("{}", v.vault.subject()))
+}
+
+/// Seal a batch into one epoch, read it back, and say whether it survived.
+///
+/// **THE READ-BACK IS THE WHOLE POINT.** Sealing returns a count of what it was
+/// given, which is a statement about the argument and not about the vault. This
+/// re-opens the segment from disk afterwards and checks that every record
+/// handed in comes back out, byte for byte in canonical form.
+///
+/// Returns a single line, always parseable, never an exception:
+///
+/// ```text
+/// ok epoch=20342 given=37 held=1586 missing=0 lost=0
+/// ```
+///
+/// * `given` — records in this batch;
+/// * `held` — records the epoch holds afterwards, which is larger because a day
+///   arrives in pieces;
+/// * `missing` — records handed in that did not come back. **Must be 0.** This
+///   is the number the whole feature exists to produce, and the one that was
+///   never computed.
+/// * `lost` — segments that would not open or lines that would not parse, from
+///   [`diaswarm_keys::Skipped::lost`]. Also must be 0.
+///
+/// A failure comes back as `error <what>` rather than a negative number,
+/// because a shadow that fails is a log line and the log line should say what
+/// happened.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSealChecked<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    epoch: jlong,
+    ndjson: JString<'a>,
+) -> JString<'a> {
+    let Ok(body) = env.get_string(&ndjson) else {
+        return to_jstring(env, "error bad-argument".to_string());
+    };
+    let body = String::from(body);
+    let Some(v) = keys_vault(handle) else {
+        return to_jstring(env, "error no-vault".to_string());
+    };
+
+    to_jstring(env, seal_checked(&mut v.vault, epoch, &body))
+}
+
+/// The whole of `keysSealChecked`, with no JNI in it.
+///
+/// Split out so the line the Kotlin parses can be asserted on a desktop. The
+/// two halves of that contract are in different languages and are linked by
+/// name at load time on a phone — `plugin/README.md` says why that repository
+/// layout exists — so the format is exactly the kind of thing that drifts
+/// silently. And the Kotlin's failure mode if it drifts is the bad one: a field
+/// it cannot find would read as `missing=0`, which is "agrees".
+pub fn seal_checked(vault: &mut diaswarm_keys::Vault, epoch: i64, body: &str) -> String {
+    let given: Vec<Record> = body
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| Record::from_json(l).ok())
+        .map(Record::normalise)
+        .collect();
+
+    if let Err(e) = vault.seal(epoch, &given) {
+        return format!("error seal {e}");
+    }
+
+    // **READ BACK OFF DISK RATHER THAN TRUSTING WHAT WAS JUST WRITTEN.** A seal
+    // returns a count of its argument, which is a statement about the caller.
+    let (held, skipped) = match vault.read_reporting(epoch) {
+        Ok(pair) => pair,
+        Err(e) => return format!("error read {e}"),
+    };
+    let day = held.get(&epoch).cloned().unwrap_or_default();
+    let present: std::collections::HashSet<String> =
+        day.iter().map(|r| r.to_canonical_json()).collect();
+    let missing = given.iter().filter(|r| !present.contains(&r.to_canonical_json())).count();
+
+    format!(
+        "ok epoch={epoch} given={} held={} missing={missing} lost={}",
+        given.len(),
+        day.len(),
+        skipped.lost()
+    )
+}
+
+#[cfg(test)]
+mod shadow_tests {
+    use super::seal_checked;
+
+    fn vault(tag: &str) -> (diaswarm_keys::Vault, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "diaswarm-shadow-{tag}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let signing = p2panda_core::SigningKey::generate();
+        let mut v = diaswarm_keys::Vault::open(&root, 12 * 3_600_000, &signing).unwrap();
+        let rng = diaswarm_keys::Rng::default();
+        let (manager, _bundle) = diaswarm_keys::Vault::key_bundle(&rng).unwrap();
+        v.create(manager).unwrap();
+        (v, root)
+    }
+
+    fn ndjson(from: i64, n: i64) -> String {
+        (0..n)
+            .map(|i| {
+                diaswarm_core::Record::new(from + i * 300_000, "cgm")
+                    .set("mgdl", Some((100.0 + i as f64).into()))
+                    .to_canonical_json()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// THE LINE THE KOTLIN PARSES, PINNED.
+    ///
+    /// Every field the plugin reads by name is here and is a number. A rename
+    /// on this side without one on the other turns into "missing 0", which
+    /// reads as agreement — so this test is the thing standing between a
+    /// refactor and a shadow mode that silently passes.
+    #[test]
+    fn the_report_says_what_the_plugin_reads() {
+        let (mut v, _root) = vault("format");
+        let report = seal_checked(&mut v, 20_000, &ndjson(20_000 * 86_400_000, 12));
+
+        assert!(report.starts_with("ok "), "unexpected report: {report}");
+        let fields: std::collections::HashMap<&str, &str> = report
+            .split(' ')
+            .filter_map(|f| f.split_once('='))
+            .collect();
+        for key in ["epoch", "given", "held", "missing", "lost"] {
+            let value = fields.get(key).unwrap_or_else(|| panic!("no {key} in {report}"));
+            value.parse::<i64>().unwrap_or_else(|_| panic!("{key} is not a number in {report}"));
+        }
+        assert_eq!(fields["given"], "12");
+        assert_eq!(fields["missing"], "0", "a fresh seal lost records: {report}");
+        assert_eq!(fields["lost"], "0");
+    }
+
+    /// A DAY ARRIVING IN PIECES STILL REPORTS NOTHING MISSING.
+    ///
+    /// The shape a phone actually produces: the plugin flushes what has
+    /// accumulated since the last cadence, not the whole day. `held` grows and
+    /// `missing` stays at zero — and when `seal` replaced the segment instead
+    /// of appending to it, this is the test that would have said so.
+    #[test]
+    fn a_day_sealed_in_pieces_reports_nothing_missing() {
+        let (mut v, _root) = vault("pieces");
+        let base = 20_001 * 86_400_000;
+        let mut held = 0i64;
+        for chunk in 0..6 {
+            let report = seal_checked(&mut v, 20_001, &ndjson(base + chunk * 12 * 300_000, 12));
+            let fields: std::collections::HashMap<&str, &str> =
+                report.split(' ').filter_map(|f| f.split_once('=')).collect();
+            assert_eq!(fields["missing"], "0", "flush {chunk} lost records: {report}");
+            held = fields["held"].parse().unwrap();
+        }
+        assert_eq!(held, 72, "the day did not accumulate across flushes");
+    }
+}

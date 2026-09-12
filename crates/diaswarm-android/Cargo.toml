@@ -18,6 +18,7 @@ jni = "0.21"
 serde_json = "1"
 p2panda-core = "=0.7.1"
 diaswarm-spaces = { path = "../diaswarm-spaces" }
+diaswarm-keys = { path = "../diaswarm-keys" }
 # Hands Android's Context to the iroh stack — see `initAndroid`.
 ndk-context = "0.1.1"
 

@@ -61,7 +61,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
 
     companion object {
         /**
-         * How often the spaces vault is sealed. See [flushShadow].
+         * How often the shadow vault is sealed. See [flushShadow].
          *
          * The CGM's own clinical cadence, and the bucket the loop reasons in.
          */
@@ -95,8 +95,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
          *
          * 1 — CGM thinned to one reading per five minutes.
          * 2 — nothing thinned; spec §3.3 withdrawn.
+         * 3 — the shadow is the `diaswarm-keys` vault, not the spaces one
+         *     (D26), so an existing shadow directory holds a different vault's
+         *     data and has to be refilled rather than added to.
          */
-        const val SHADOW_GENERATION = 2L
+        const val SHADOW_GENERATION = 3L
 
         const val FOLLOW_POLL_SECONDS = 120L
     }
@@ -308,6 +311,24 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private var shadowSealed = 0L
 
     /**
+     * What the comparison found this pass, and why each is counted separately.
+     *
+     * `missing` is records handed to the shadow vault that did not come back
+     * out of it — the number this feature exists to produce, and the one that
+     * was never computed. `lost` is segments that would not open or lines that
+     * would not parse. `failures` is the vault throwing or refusing, which used
+     * to be the *only* thing shadow mode could detect.
+     *
+     * Zero of all three is the only passing result. They are summed over a pass
+     * rather than collected, for the reason [shadowSealed] gives: the shadow
+     * vault is worth nothing and must cost nothing.
+     */
+    private var shadowHeld = 0L
+    private var shadowMissing = 0L
+    private var shadowLost = 0L
+    private var shadowFailures = 0L
+
+    /**
      * Records waiting to be sealed into the spaces vault, held ACROSS passes.
      *
      * **BECAUSE AN OPERATION IS EXPENSIVE FOR EVER, NOT JUST ONCE.** The core
@@ -476,27 +497,36 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         }
             flushShadow(shadow)
         } finally {
-            if (shadow != 0L) SwarmNative.spacesClose(shadow)
+            // keysClose, NOT spacesClose. They take the same jlong and free
+            // different types: closing a keys handle as a spaces one is a
+            // type-confused Box::from_raw on a phone driving an insulin pump.
+            // SwarmNative's own comment warns about exactly this — "two native
+            // handle types reachable from Kotlin is a crash waiting for whoever
+            // passes the wrong one" — and this line was that whoever.
+            if (shadow != 0L) SwarmNative.keysClose(shadow)
         }
         pending.clear()
         aapsLogger.info(LTag.CORE, "swarm: ${SwarmNative.vaultStatus(vault)}")
-        if (shadowSealed > 0) {
-            aapsLogger.info(LTag.CORE, "swarm: shadow sealed $shadowSealed")
+        // ONE LINE THAT SAYS WHETHER IT AGREED, which is what four doc
+        // comments and a user-facing preference summary have always claimed
+        // this printed.
+        if (shadowSealed > 0 || shadowFailures > 0) {
+            val agreed = shadowMissing == 0L && shadowLost == 0L && shadowFailures == 0L
+            val line =
+                "swarm: shadow ${if (agreed) "agrees" else "DISAGREES"} — " +
+                    "given $shadowSealed, holds $shadowHeld, missing $shadowMissing, " +
+                    "lost $shadowLost, failures $shadowFailures"
+            // AT THE LEVEL THE VERDICT DESERVES. A disagreement logged at info
+            // is a disagreement nobody greps for.
+            if (agreed) aapsLogger.info(LTag.CORE, line) else aapsLogger.error(LTag.CORE, line)
             shadowSealed = 0L
+            shadowHeld = 0L
+            shadowMissing = 0L
+            shadowLost = 0L
+            shadowFailures = 0L
         }
     }
 
-    /**
-     * Seal the same records into the spaces vault too, and say whether it agrees.
-     *
-     * **NOTHING DEPENDS ON THE RESULT.** The vault above stays authoritative;
-     * this writes to a separate directory, is read by no screen, and its worst
-     * failure is a log line. That is the whole point: D20 and D21 agree with
-     * the old vault over 74 days of real history and run on this hardware, and
-     * neither of those is the same as having run inside AAPS for a week.
-     *
-     * Off by default. See [SwarmBooleanKey.ShadowSpacesVault].
-     */
     /**
      * Open the shadow vault once, for the whole pass.
      *
@@ -512,8 +542,14 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private fun openShadow(): Long {
         if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return 0L
         return try {
-            val dir = File(SwarmPaths.base(context), "spaces").absolutePath
-            SwarmNative.spacesOpen(dir, offsetMs).also {
+            // **THE KEYS VAULT, NOT THE SPACES ONE.** D26 decided against the
+            // spaces message layer — it cannot express a follower who reads
+            // only the last day — so shadowing it was measuring the thing that
+            // is not going to ship. Its JNI is still there and still measured;
+            // nothing calls it from here.
+            val dir = File(SwarmPaths.base(context), "keys").absolutePath
+            val identity = SwarmPaths.identity(context).absolutePath
+            SwarmNative.keysOpen(dir, identity, offsetMs).also {
                 if (it == 0L) aapsLogger.error(LTag.CORE, "swarm: shadow vault would not open")
             }
         } catch (e: Throwable) {
@@ -534,11 +570,16 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     /**
      * Seal the accumulated records into the spaces vault, on a cadence.
      *
-     * **FIVE MINUTES, AND THE NUMBER IS A TRADE RATHER THAN A TUNING.** Cost is
-     * quadratic in the operation count, so fewer, fatter operations are cheaper
-     * quadratically: one a pass is about 1,400 a day, one every five minutes is
-     * 288, and the read cost falls by roughly 25×. Going further — fifteen
-     * minutes, an hour — keeps paying, and buys it with staleness.
+     * **FIVE MINUTES, AND THE NUMBER IS A TRADE RATHER THAN A TUNING.** It was
+     * chosen when the shadow was the spaces vault, whose cost is quadratic in
+     * the operation count: one seal a pass is about 1,400 a day, one every five
+     * minutes is 288, and the read cost fell by roughly 25×.
+     *
+     * **THE KEYS VAULT DOES NOT HAVE THAT COST, AND THE CADENCE STILL EARNS ITS
+     * PLACE.** One segment per epoch means sealing is flat in the number of
+     * flushes — but each flush now re-opens the accumulated day, merges, and
+     * re-seals it, so flushing on every pass would re-encrypt a growing day
+     * some 1,400 times instead of 288. Same direction, smaller stakes.
      *
      * Five is where it stops being free. It is the cadence the loop itself
      * reasons in, it is what `spec/records.md` buckets to, and the follower
@@ -552,7 +593,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * memory waiting for a cadence that only fires while records are arriving.
      *
      * **AND IT IS SAFE TO LOSE.** If the process dies with records accumulated,
-     * they are missing from the spaces vault until a re-drain. That vault is
+     * they are missing from the shadow vault until a re-drain. That vault is
      * authoritative for nothing, is read by no screen, and D21's shadow mode
      * exists precisely so its failures cost a log line. The core vault still
      * seals every pass and is what a follower reads.
@@ -569,24 +610,74 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         if (ready.isEmpty()) return
 
         for (epoch in ready) {
-            shadowPending.remove(epoch)?.let { shadowSeal(handle, it.toString()) }
+            shadowPending.remove(epoch)?.let { shadowSeal(handle, epoch, it.toString()) }
         }
         shadowSealedAt = now
     }
 
-    private fun shadowSeal(handle: Long, ndjson: String) {
+    /**
+     * Seal one epoch into the shadow vault, and check it came back.
+     *
+     * **THIS IS WHERE SHADOW MODE STOPPED BEING A CLAIM.** Four places said it
+     * logs "whether they agree", including the preference summary a user reads.
+     * What the code did was add up how many records the shadow vault reported
+     * sealing and print that number beside an unrelated status line from the
+     * other vault. Nothing was compared with anything. A shadow vault that
+     * silently kept four days out of five read exactly like one working
+     * perfectly — which is the failure shape this project keeps being bitten
+     * by, sitting inside the component whose job is catching it.
+     *
+     * **AND "AGREE" NOW MEANS SOMETHING STRONGER.** Not "the two vaults agree
+     * with each other" — the old vault is the thing being replaced and is
+     * itself fallible, and two vaults can agree by losing the same record — but
+     * "the new vault gives back exactly the records it was handed".
+     * `keysSealChecked` seals, re-opens the segment from disk, and counts what
+     * did not come back.
+     */
+    private fun shadowSeal(handle: Long, epoch: Long, ndjson: String) {
         if (handle == 0L || ndjson.isBlank()) return
         try {
-            val n = SwarmNative.spacesSeal(handle, ndjson)
-            if (n < 0) {
-                aapsLogger.error(LTag.CORE, "swarm: shadow seal failed with $n")
-            } else {
-                shadowSealed += n
+            val report = SwarmNative.keysSealChecked(handle, epoch, ndjson)
+            val fields = report.split(' ')
+                .mapNotNull { f -> f.split('=', limit = 2).takeIf { it.size == 2 } }
+                .associate { it[0] to it[1] }
+
+            if (!report.startsWith("ok ")) {
+                shadowFailures += 1
+                aapsLogger.error(LTag.CORE, "swarm: shadow seal: $report")
+                return
+            }
+            // **A REPORT THIS CANNOT READ IS A FAILURE, NOT A ZERO.** Falling
+            // back to 0 for a field that is not there turns "the Kotlin and the
+            // Rust disagree about the format" into "missing 0", which reads as
+            // agreement — the same silent-success shape this whole change
+            // exists to remove. The contract is one line of `k=v` pairs from
+            // `keysSealChecked`; if it is not that, say so.
+            val given = fields["given"]?.toLongOrNull()
+            val held = fields["held"]?.toLongOrNull()
+            val missing = fields["missing"]?.toLongOrNull()
+            val lost = fields["lost"]?.toLongOrNull()
+            if (given == null || held == null || missing == null || lost == null) {
+                shadowFailures += 1
+                aapsLogger.error(LTag.CORE, "swarm: shadow report not understood: $report")
+                return
+            }
+            shadowSealed += given
+            shadowHeld += held
+            shadowMissing += missing
+            shadowLost += lost
+
+            // A disagreement is logged at the moment it happens, with the epoch,
+            // rather than only as a total at the end of the pass. A total tells
+            // you something is wrong; the epoch tells you which day to look at.
+            if (missing > 0 || lost > 0) {
+                aapsLogger.error(LTag.CORE, "swarm: shadow DISAGREES: $report")
             }
         } catch (e: Throwable) {
             // CAUGHT, INCLUDING ERRORS. This runs on a phone driving an insulin
             // pump and is worth precisely nothing; an UnsatisfiedLinkError from
             // a stale .so must not take the sync worker down with it.
+            shadowFailures += 1
             aapsLogger.error(LTag.CORE, "swarm: shadow seal threw: $e")
         }
     }
