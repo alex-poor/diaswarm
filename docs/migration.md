@@ -144,17 +144,42 @@ output distinguishes those. Worth fixing before the decision, not after.
 
 ## What would have to be true
 
-In order, none of them yet done:
+> **This list said "none of them yet done" while the section above it struck
+> two of them through, and item 2 asked about a "563" that no longer appears
+> anywhere in this document** — `1bdcffd` rewrote that finding around 6,941 and
+> left the checklist behind. A gate list that disagrees with its own evidence is
+> worse than no gate list, because it is the thing a cutover decision would be
+> read off. Corrected 2026-09-12, and item 6 is new.
 
-1. A full backfill completes on the loop phone without incident, and the
-   per-kind counts match `canon.py`.
-2. The 563 is attributed.
-3. Shadow mode runs for several days, across a reboot, a Doze period and a
-   sensor change, still agreeing.
-4. Two phones replicate a subject over log sync, and a granted reader on one
-   opens what the other sealed.
-5. Someone decides whether (5) above — worse first contact — is acceptable, or
-   waits for upstream.
+1. ~~A full backfill completes on the loop phone without incident, and the
+   per-kind counts match `canon.py`.~~ **Done** — see (1) above.
+2. ~~The drain excess is attributed.~~ **Done** — 6,941 records published twice,
+   because AAPS's sync queue resolves every version row to its record and the
+   emitter's memory lasts one pass. Fixed by deduplicating on read.
+3. **Not done.** Shadow mode runs for several days, across a reboot, a Doze
+   period and a sensor change, still agreeing.
+4. **Not done, and now unmeasured rather than partial.** Two phones replicate a
+   subject over log sync, and a granted reader on one opens what the other
+   sealed. The 1-of-6 result above was taken before relays existed;
+   `twophone.rs` now dials `DEFAULT_RELAY` and has not been re-run.
+5. ~~Someone decides whether worse first contact is acceptable.~~ **Answered**
+   — three seconds, accept it.
+6. **Not done, and nothing else on this list knew about it.** An invite has to
+   be enough to grant somebody. `p2panda-spaces` needs a long-term **key
+   bundle** as well as a public key, and `diaswarm:2:` carries no such field —
+   so on the spaces vault, scanning a QR code cannot result in a share. The
+   shipping vault has no equivalent need: `vaultGrant` takes hex and wraps
+   straight to it, which is why sharing works on hardware today.
+
+   `a_grant_needs_more_than_the_key_an_invite_carries` holds this down. Closing
+   it means a `diaswarm:3:` invite carrying a bundle, plus something that
+   republishes one before it expires — `Manager` has both the expiry check and
+   the rotation call, and nothing in this repository calls either.
+
+   Found by reading upstream rather than by running anything: `Vault::register`
+   takes another `Vault`, which only ever exists with both peers in one
+   process, and its doc comment claims "on a phone this is what scanning an
+   invite does".
 
 Only then is deleting `vault.rs`, `seal.rs` and `wire.rs` a decision rather than
 a leap.

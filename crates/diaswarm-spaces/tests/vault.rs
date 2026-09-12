@@ -259,3 +259,50 @@ async fn a_record_sealed_twice_is_read_once() {
         readings.len()
     );
 }
+
+/// A GRANT NEEDS MORE THAN THE KEY AN INVITE CARRIES, AND NOTHING SAYS SO.
+///
+/// **THIS IS A CUTOVER BLOCKER, NOT A CURIOSITY.** Every other test in this
+/// file hands `register` the other party's whole [`Vault`] — which exists only
+/// because both peers are in one process. A phone has scanned a QR code and
+/// holds 64 characters of hex. `diaswarm:2:` carries a subject key, an
+/// endpoint, a purpose, a relay and a checksum; it carries no key bundle.
+///
+/// The shipping vault does not care: `vaultGrant` takes `reader_pub` as hex,
+/// `parse_reader` unhexes it, and X25519 goes straight to it. That is why
+/// sharing works on hardware today.
+///
+/// `p2panda-spaces` needs a **long-term key bundle** as well — the public
+/// material that lets somebody encrypt to a member who is not online — and
+/// upstream is explicit about where it expects that to come from:
+/// `Manager::register_member` is documented as taking "key bundle material
+/// which was provided through another channel (QR code scan etc.)".
+///
+/// So on the spaces vault, scanning an invite is not enough to share with
+/// anybody. It has not bitten because shadow mode seals and never grants; it
+/// would bite on the first real pairing after a cutover. Closing it means an
+/// invite that carries a bundle, and something that republishes it when it
+/// expires — `Manager` has both the expiry check and the rotation call.
+///
+/// Asserted rather than merely observed so that whoever fixes the invite
+/// format finds out here, at `cargo test`, rather than on a phone.
+#[tokio::test]
+async fn a_grant_needs_more_than_the_key_an_invite_carries() {
+    let mut subject = peer("invite-subject").await;
+    let reader = peer("invite-reader").await;
+
+    // Deliberately NOT registered: this is the whole question.
+    let key = reader.subject();
+
+    subject.seal(&[]).await.unwrap();
+    let err = subject
+        .grant(key, Reach::Everything)
+        .await
+        .expect_err("a bare public key was enough to grant — the invite may now carry a bundle");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("key bundle"),
+        "expected the grant to fail for want of a key bundle, got: {msg}"
+    );
+}
