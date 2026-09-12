@@ -158,6 +158,40 @@ pub struct Segment {
     pub ciphertext: Vec<u8>,
 }
 
+/// A key bundle as text, for an invite or a QR code.
+///
+/// **HEX OF CBOR, AND BOTH HALVES ARE DELIBERATE.** CBOR because that is what
+/// everything else here encodes with and because JSON cannot hold the maps
+/// involved; hex because an invite is a colon-separated string that gets
+/// scanned off a screen, and base64 has characters that fight with both.
+///
+/// A bundle is a few hundred bytes, so a QR code is unbothered.
+pub fn encode_bundle(bundle: &LongTermKeyBundle) -> Result<String, Error> {
+    let bytes =
+        p2panda_core::cbor::encode_cbor(bundle).map_err(|e| Error::Encode(e.to_string()))?;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in &bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    Ok(out)
+}
+
+/// The other direction. Rejects anything that is not a bundle rather than
+/// producing one that will fail mysteriously at key agreement.
+pub fn decode_bundle(text: &str) -> Result<LongTermKeyBundle, Error> {
+    if text.len() % 2 != 0 || text.is_empty() {
+        return Err(Error::Encode("a bundle is an even number of hex digits".into()));
+    }
+    let mut bytes = Vec::with_capacity(text.len() / 2);
+    for i in (0..text.len()).step_by(2) {
+        let byte = u8::from_str_radix(&text[i..i + 2], 16)
+            .map_err(|_| Error::Encode("a bundle is hex".into()))?;
+        bytes.push(byte);
+    }
+    p2panda_core::cbor::decode_cbor(&bytes[..])
+        .map_err(|e| Error::Encode(format!("not a key bundle: {e}")))
+}
+
 /// A control message whose sender has been proved against a signature.
 ///
 /// **THE POINT IS THAT THERE IS NO OTHER CONSTRUCTOR.** The field is private
@@ -330,6 +364,30 @@ impl Vault {
             .map_err(|e| Error::Crypto(e.to_string()))?;
         let bundle = KeyManager::prekey_bundle(&manager).map_err(|e| Error::Crypto(e.to_string()))?;
         Ok((manager, bundle))
+    }
+
+    /// **THIS VAULT'S OWN BUNDLE, FOR PUTTING IN AN INVITE.**
+    ///
+    /// [`Vault::key_bundle`] generates a *new* identity every call — it is for
+    /// creating a vault, not for describing one. Once a vault exists its
+    /// identity lives in the persisted key manager, and this is how to ask for
+    /// the public half of it.
+    ///
+    /// **A GRANT CANNOT HAPPEN WITHOUT BOTH SIDES' BUNDLES**, which is what
+    /// makes this the blocker for the whole cutover. The subject calls
+    /// [`Vault::grant`] with the *reader's* bundle; the reader needs the
+    /// *subject's* to derive the same [`GrantTag`] and to open its welcome.
+    /// `diaswarm-core`'s invite carries an X25519 key that serves the same
+    /// purpose for the old vault and is useless here.
+    ///
+    /// ⚠️ **The prekey inside has a lifetime** and this does not check it. A
+    /// bundle published in an invite that is scanned months later may carry an
+    /// expired prekey; `p2panda-spaces` has `key_bundle_expired` and a rotation
+    /// path for exactly this, and nothing here does yet.
+    pub fn my_bundle(&self) -> Result<LongTermKeyBundle, Error> {
+        let state = self.state.as_ref().ok_or(Error::NoSecret)?;
+        KeyManager::prekey_bundle(&state.dcgka.my_keys)
+            .map_err(|e| Error::Crypto(e.to_string()))
     }
 
     /// A key registry holding the bundles a joiner needs.

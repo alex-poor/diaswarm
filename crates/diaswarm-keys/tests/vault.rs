@@ -499,3 +499,101 @@ async fn a_revocation_bites_the_day_it_happens_in() {
         "the subject lost records when the day was re-sealed"
     );
 }
+
+/// A VAULT CAN DESCRIBE ITS OWN IDENTITY, AND THAT SURVIVES A RESTART.
+///
+/// **THE BLOCKER FOR THE WHOLE CUTOVER, IN ONE PROPERTY.** A grant needs both
+/// sides' bundles: the subject grants against the reader's, and the reader
+/// needs the subject's to derive the same tag and open its welcome. Until a
+/// vault could hand out its own, there was no way to grant anybody on this
+/// vault at all — `Vault::key_bundle` generates a *new* identity every call,
+/// which is for creating a vault rather than describing one.
+///
+/// The reopen half matters just as much: an invite carries this bundle, and an
+/// invite scanned tomorrow must still describe the vault that issued it.
+#[test]
+fn a_vault_hands_out_its_own_bundle_and_still_does_after_a_restart() {
+    let rng = Rng::default();
+    let key = SigningKey::from_bytes(&rand32());
+    let root = tmp("own-bundle");
+
+    let before = {
+        let mut v = Vault::open(&root, OFFSET, &key).expect("vault");
+        let (mgr, generated) = Vault::key_bundle(&rng).expect("bundle");
+        v.create(mgr).expect("create");
+        let mine = v.my_bundle().expect("my bundle");
+
+        // It is the identity the vault actually holds, not a fresh one.
+        let text = diaswarm_keys::encode_bundle(&mine).expect("encode");
+        let back = diaswarm_keys::decode_bundle(&text).expect("decode");
+        assert_eq!(
+            diaswarm_keys::encode_bundle(&back).expect("re-encode"),
+            text,
+            "a bundle did not survive the round trip through text"
+        );
+        assert_eq!(
+            text,
+            diaswarm_keys::encode_bundle(&generated).expect("encode generated"),
+            "my_bundle returned an identity the vault was not created with"
+        );
+        text
+    };
+
+    // Reopened — the same vault, so the same bundle. An invite issued before a
+    // restart has to keep working after one.
+    let v = Vault::open(&root, OFFSET, &key).expect("reopen");
+    let after = diaswarm_keys::encode_bundle(&v.my_bundle().expect("my bundle")).expect("encode");
+    assert_eq!(before, after, "the vault came back describing a different identity");
+
+    // And rubbish is refused rather than half-decoded.
+    assert!(diaswarm_keys::decode_bundle("").is_err());
+    assert!(diaswarm_keys::decode_bundle("zz").is_err());
+    assert!(diaswarm_keys::decode_bundle("abc").is_err(), "odd length accepted");
+    assert!(diaswarm_keys::decode_bundle("deadbeef").is_err(), "eight bytes is not a bundle");
+}
+
+/// AND THE BUNDLE IS ENOUGH TO GRANT WITH, WHICH IS THE WHOLE POINT.
+///
+/// End to end through text, the way an invite and a `Request::Offer` will carry
+/// it: the subject encodes its bundle, the reader decodes it and registers it;
+/// the reader encodes its own, the subject decodes it and grants against it.
+/// Neither side ever holds the other's `LongTermKeyBundle` as a Rust value
+/// until it has been through a string.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_vaults_can_pair_through_nothing_but_text() {
+    let rng = Rng::default();
+    let subject_key = SigningKey::from_bytes(&rand32());
+    let reader_key = SigningKey::from_bytes(&rand32());
+    let store = SqliteStoreBuilder::memory().build().await.expect("store");
+
+    let mut subject = Vault::open(tmp("pair-subject"), OFFSET, &subject_key).expect("subject");
+    let (subject_mgr, _b) = Vault::key_bundle(&rng).expect("bundle");
+    subject.create(subject_mgr).expect("create");
+
+    // The reader exists before it is granted anything, and publishes a bundle.
+    let mut reader = Vault::open(tmp("pair-reader"), OFFSET, &reader_key).expect("reader");
+    let (reader_mgr, _rb) = Vault::key_bundle(&rng).expect("bundle");
+    reader.create(reader_mgr.clone()).expect("reader creates its own group");
+    let reader_text = diaswarm_keys::encode_bundle(&reader.my_bundle().expect("bundle")).unwrap();
+    let subject_text = diaswarm_keys::encode_bundle(&subject.my_bundle().expect("bundle")).unwrap();
+
+    // ---- what the invite and the offer will carry ----
+    let reader_bundle = diaswarm_keys::decode_bundle(&reader_text).expect("decode reader");
+    let subject_bundle = diaswarm_keys::decode_bundle(&subject_text).expect("decode subject");
+
+    let (welcome, tag) = subject.grant(reader_bundle, "follow").expect("grant");
+    let welcome = deliver(&store, &subject_key, &welcome).await;
+
+    let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("reg");
+    let mut joined = Vault::open(tmp("pair-joined"), OFFSET, &reader_key).expect("joiner");
+    joined
+        .join(reader_mgr, registry, &subject_bundle, "follow", &welcome)
+        .expect("join from a bundle that came through text");
+    assert!(joined.is_welcomed());
+    assert_eq!(joined.subject(), tag, "the two sides derived different tags");
+
+    let segment = subject.seal(27_000, &day(27_000)).expect("seal");
+    let (records, bad) = joined.open_segment(&segment).expect("open");
+    assert_eq!(bad, 0);
+    assert_eq!(records.len(), 288, "the paired reader could not read a day");
+}
