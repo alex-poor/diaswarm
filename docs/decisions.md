@@ -384,6 +384,12 @@ same reason: a vault returning from a reboot as a new member invalidates every
 grant. `KeyManager::init_and_generate_prekey` is also test-only; `init` then
 `rotate_prekey` is the public route.
 
+✅ **And the same records come out.** `tests/differential.rs`, the test
+[D20](#) said would justify deleting `vault.rs`, asked of this vault instead:
+**39,596 records over 76 epochs of this subject's real history, through both
+implementations, identical** — sorted, deduplicated, counts equal. In 0.77
+seconds for both together, against the 22.97 s `diaswarm-spaces` took for 1,496.
+
 ⚠️ **What is still not built.** No persistence of group state across a reopen,
 no replication, no auth layer, and the reader in the tests shares the subject's
 directory rather than having replicated it. Those are the port's remaining work,
