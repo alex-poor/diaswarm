@@ -2026,9 +2026,18 @@ pub fn seal_checked(
         .map(Record::normalise)
         .collect();
 
-    let segment = match vault.seal(epoch, &given) {
+    if let Err(e) = vault.seal(epoch, &given) {
+        return format!("error seal {e}");
+    }
+
+    // **THE DELTA IS WHAT GETS PUBLISHED, NOT THE MERGED DAY.** `seal` returns
+    // the whole day so a follower could be handed 23 MB of log for 160 kB of
+    // data — 144× — and 700× if the cadence were raised to make the follower
+    // less stale. A delta is 1× at any cadence, which is what lets this publish
+    // on every pass instead of every five minutes.
+    let segment = match vault.seal_delta(epoch, &given) {
         Ok(s) => s,
-        Err(e) => return format!("error seal {e}"),
+        Err(e) => return format!("error seal-delta {e}"),
     };
 
     // **AND PUBLISH IT, OR NOBODY CAN EVER FETCH IT.** Sealing writes a file;
@@ -2178,29 +2187,37 @@ pub fn read_followed(
         // cover far more. A follower asking for one day must get one day —
         // `a_tail_read_returns_the_newest_days_and_no_others` caught this
         // returning thirty.
-        let mut days = newest_per_epoch(tail.into_iter().filter(|s| s.epoch >= from_epoch).collect());
-        if days.len() > tail_days as usize {
-            days.drain(..days.len() - tail_days as usize);
-        }
-        days
+        let run: Vec<diaswarm_keys::Segment> =
+            tail.into_iter().filter(|s| s.epoch >= from_epoch).collect();
+        // Keep every segment belonging to the newest `tail_days` epochs.
+        let epochs = epochs_of(&run);
+        let keep: std::collections::HashSet<i64> =
+            epochs.iter().rev().take(tail_days as usize).copied().collect();
+        run.into_iter().filter(|s| keep.contains(&s.epoch)).collect()
     } else {
-        let all = runtime
+        runtime
             .block_on(diaswarm_keys::wire::segments_from(store, subject, from_epoch))
-            .map_err(|e| format!("segments {e}"))?;
-        newest_per_epoch(all)
+            .map_err(|e| format!("segments {e}"))?
     };
 
     let mut out = String::new();
     let mut opened = 0usize;
     let mut unreadable = 0usize;
+    // **DEDUPED, BECAUSE A RE-DRAIN REPUBLISHES.** Deltas do not normally
+    // overlap, but a subject that re-reads its whole database seals the same
+    // records again, and a follower must not show a reading twice.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for segment in &segments {
         match vault.open_segment(segment) {
             Ok((records, bad)) => {
                 opened += 1;
                 unreadable += bad;
                 for record in records {
-                    out.push_str(&record.to_canonical_json());
-                    out.push('\n');
+                    let line = record.to_canonical_json();
+                    if seen.insert(line.clone()) {
+                        out.push_str(&line);
+                        out.push('\n');
+                    }
                 }
             }
             // NOT AN ERROR. A segment sealed before this reader was granted, or
@@ -2211,17 +2228,18 @@ pub fn read_followed(
     Ok((out, opened, unreadable))
 }
 
-/// One segment per epoch: the last, which supersedes the rest.
+/// The distinct epochs a run of segments covers, newest last.
 ///
-/// Input must be in log order, which `segments_tail` and `segments_from` both
-/// guarantee — they read by sequence number.
-fn newest_per_epoch(segments: Vec<diaswarm_keys::Segment>) -> Vec<diaswarm_keys::Segment> {
-    let mut by_epoch: std::collections::BTreeMap<i64, diaswarm_keys::Segment> =
-        std::collections::BTreeMap::new();
-    for segment in segments {
-        by_epoch.insert(segment.epoch, segment);
-    }
-    by_epoch.into_values().collect()
+/// **ONE EPOCH IS MANY SEGMENTS AND THEY ALL COUNT.** Each publish carries only
+/// the records added since the last one, so a day is the concatenation of its
+/// segments rather than the last of them. An earlier version kept only the
+/// newest per epoch, which was right when each publish carried the whole day
+/// and silently discards 99% of it now.
+fn epochs_of(segments: &[diaswarm_keys::Segment]) -> Vec<i64> {
+    let mut seen: Vec<i64> = segments.iter().map(|s| s.epoch).collect();
+    seen.sort_unstable();
+    seen.dedup();
+    seen
 }
 
 /// Join if we have not yet, then read everything we can from `from_epoch`.
@@ -2544,6 +2562,85 @@ mod shadow_tests {
             "a second read re-joined instead of reusing: {}",
             &second[..second.len().min(60)]
         );
+    }
+
+    /// A DAY PUBLISHED AS MANY DELTAS READS BACK AS THE WHOLE DAY.
+    ///
+    /// **THE SHAPE THE WIRE ACTUALLY CARRIES.** A subject publishes only the
+    /// records added since its last flush, so one epoch is a run of segments
+    /// that concatenate. Keeping just the newest — which was right when each
+    /// publish carried the whole re-sealed day — silently discards everything
+    /// but the last few minutes.
+    ///
+    /// Found because a follower showed a reading four minutes old: the cadence
+    /// that made it stale existed to bound the cost of publishing whole days,
+    /// and deltas remove both the cost and the reason.
+    #[test]
+    fn a_day_published_as_deltas_reads_back_whole() {
+        use diaswarm_keys::{Vault, encode_identity, wire};
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store = rt.block_on(async {
+            diaswarm_keys::SqliteStoreBuilder::memory().build().await.unwrap()
+        });
+        let rng = diaswarm_keys::Rng::default();
+
+        let me = p2panda_core::SigningKey::generate();
+        let own_dir = dir("d-own");
+        let mut own = Vault::open(&own_dir, 12 * 3_600_000, &me).unwrap();
+        let (own_mgr, _b) = Vault::key_bundle(&rng).unwrap();
+        own.create(own_mgr).unwrap();
+        let my_bundle = diaswarm_keys::encode_bundle(&own.my_bundle().unwrap()).unwrap();
+        drop(own);
+
+        let subject_key = p2panda_core::SigningKey::generate();
+        let mut subject = Vault::open(dir("d-subject"), 12 * 3_600_000, &subject_key).unwrap();
+        let (s_mgr, _sb) = Vault::key_bundle(&rng).unwrap();
+        let create = subject.create(s_mgr).unwrap();
+        rt.block_on(wire::publish_control(&store, &subject_key, &create)).unwrap();
+        let subject_keys = encode_identity(&subject.identity().unwrap()).unwrap();
+        let reader = diaswarm_keys::decode_bundle(&my_bundle).unwrap();
+        let (welcome, _t) = subject.grant(reader, "follow").unwrap();
+        rt.block_on(wire::publish_control(&store, &subject_key, &welcome)).unwrap();
+
+        // One day, twelve flushes, five records each — the way a phone does it.
+        let mut expected = 0usize;
+        for flush in 0..12i64 {
+            let batch: Vec<diaswarm_core::Record> = (0..5i64)
+                .map(|i| {
+                    diaswarm_core::Record::new(
+                        33_000 * 86_400_000 + (flush * 5 + i) * 300_000,
+                        "cgm",
+                    )
+                    .set("mgdl", Some((100.0 + i as f64).into()))
+                })
+                .collect();
+            subject.seal(33_000, &batch).unwrap();
+            let delta = subject.seal_delta(33_000, &batch).unwrap();
+            rt.block_on(wire::publish(&store, &subject_key, &delta)).unwrap();
+            expected += batch.len();
+        }
+
+        let author = subject_key.verifying_key();
+        let out = super::follow_read(
+            &own_dir,
+            &dir("d-joined"),
+            &store,
+            rt.handle(),
+            &me,
+            &subject_keys,
+            "follow",
+            1,
+            i64::MIN,
+            12 * 3_600_000,
+        );
+        assert!(out.starts_with("ok "), "read failed: {}", &out[..out.len().min(60)]);
+        let lines = out.lines().skip(1).filter(|l| !l.trim().is_empty()).count();
+        assert_eq!(
+            lines, expected,
+            "a day published as 12 deltas read back as {lines} of {expected} records"
+        );
+        let _ = author;
     }
 
     /// A FOLLOWER ASKING FOR A DAY GETS A DAY, NOT A HISTORY.

@@ -620,6 +620,34 @@ impl Vault {
         Ok(segment)
     }
 
+    /// Seal records into a segment without merging or writing anything.
+    ///
+    /// **WHAT GETS PUBLISHED IS THE NEW RECORDS, NOT THE WHOLE DAY.**
+    /// [`Vault::seal`] merges a batch into the day on disk and returns the
+    /// merged result, which is right for the subject's own copy and catastrophic
+    /// as a thing to publish: each flush would put the entire day so far into
+    /// the log, so a day of 160 kB would cost 23 MB of log at a five-minute
+    /// cadence and 111 MB at one flush per pass. 144× and 700× the data.
+    ///
+    /// A delta is 1×, at any cadence. That is what makes publishing often
+    /// affordable, and publishing often is what a follower watching current
+    /// glucose actually needs — the five-minute cadence exists to bound the
+    /// merge cost, and it was showing up on the follower's screen as readings
+    /// four minutes old.
+    ///
+    /// The reader's side of this is that one epoch is many segments and they
+    /// concatenate. Each is sealed under the secret current when it was
+    /// written, so a revoked reader still loses the ones that came after.
+    pub fn seal_delta(&self, epoch: i64, records: &[Record]) -> Result<Segment, Error> {
+        let state = self.state.as_ref().ok_or(Error::NoSecret)?;
+        let secret = state.secrets.latest().ok_or(Error::NoSecret)?;
+        let nonce: XAeadNonce = self.rng.random_array().map_err(|e| Error::Crypto(e.to_string()))?;
+        let plaintext = encode_records(records).into_bytes();
+        let ciphertext =
+            encrypt_data(&plaintext, secret, nonce).map_err(|e| Error::Crypto(e.to_string()))?;
+        Ok(Segment { epoch, secret_id: secret.id(), nonce, ciphertext })
+    }
+
     /// Open one segment, wherever it came from.
     ///
     /// **SEGMENTS DO NOT ONLY COME FROM DISK.** [`read_reporting`] walks a

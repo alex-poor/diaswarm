@@ -65,7 +65,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
          *
          * The CGM's own clinical cadence, and the bucket the loop reasons in.
          */
-        private const val SHADOW_SEAL_INTERVAL_MS = 5 * 60 * 1000L
+        private const val SHADOW_SEAL_INTERVAL_MS = 60 * 1000L
 
         /** Or sooner, if a backfill has handed over more than this at once. */
         private const val SHADOW_SEAL_BYTES = 32 * 1024
@@ -594,16 +594,25 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     /**
      * Seal the accumulated records into the spaces vault, on a cadence.
      *
-     * **FIVE MINUTES, AND THE NUMBER IS A TRADE RATHER THAN A TUNING.** It was
-     * chosen when the shadow was the spaces vault, whose cost is quadratic in
-     * the operation count: one seal a pass is about 1,400 a day, one every five
-     * minutes is 288, and the read cost fell by roughly 25×.
+     * **ONE MINUTE, AND IT WAS FIVE UNTIL A FOLLOWER SHOWED A STALE READING.**
      *
-     * **THE KEYS VAULT DOES NOT HAVE THAT COST, AND THE CADENCE STILL EARNS ITS
-     * PLACE.** One segment per epoch means sealing is flat in the number of
-     * flushes — but each flush now re-opens the accumulated day, merges, and
-     * re-seals it, so flushing on every pass would re-encrypt a growing day
-     * some 1,400 times instead of 288. Same direction, smaller stakes.
+     * Five was chosen when the shadow was the spaces vault, whose cost is
+     * quadratic in the operation count. It survived the move to the keys vault
+     * on a different argument — each flush re-seals the accumulated day, so
+     * fewer flushes meant less work — and then showed up on somebody's screen
+     * as a glucose reading four minutes old. For the flagship use case, a
+     * parent watching a child, that is the whole product.
+     *
+     * **WHAT MADE IT AFFORDABLE TO SHORTEN WAS PUBLISHING DELTAS.** The log
+     * carries only the records added since the last flush, so cadence no longer
+     * multiplies what goes over the wire: a 160 kB day costs 160 kB whatever
+     * the interval. Publishing the merged day instead would have cost 23 MB a
+     * day at five minutes and 111 MB at one flush per pass — 144× and 700× the
+     * data — which is why the cadence looked load-bearing and was not.
+     *
+     * The merge on disk is still O(day) per flush, and that is genuinely
+     * cheap: a day is ~160 kB, so even 1,400 flushes is a fraction of a second
+     * of AEAD across a whole day.
      *
      * Five is where it stops being free. It is the cadence the loop itself
      * reasons in, it is what `spec/records.md` buckets to, and the follower
