@@ -306,3 +306,143 @@ async fn a_grant_needs_more_than_the_key_an_invite_carries() {
         "expected the grant to fail for want of a key bundle, got: {msg}"
     );
 }
+
+/// Records as comparable text, sorted, so two reads differing only in the order
+/// they were assembled compare equal.
+fn canonical(records: &[Record]) -> Vec<String> {
+    let mut v: Vec<String> = records.iter().map(|r| r.to_canonical_json()).collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// A deterministic shuffle, so a failure is reproducible from its seed.
+fn shuffled<T: Clone>(items: &[T], seed: u64) -> Vec<T> {
+    let mut out = items.to_vec();
+    let mut state = seed | 1;
+    for i in (1..out.len()).rev() {
+        // xorshift64*, which is plenty for deciding an order and has no
+        // dependency attached to it.
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        let j = (state.wrapping_mul(0x2545F4914F6CDD1D) >> 33) as usize % (i + 1);
+        out.swap(i, j);
+    }
+    out
+}
+
+/// ARRIVAL ORDER IS NOT DEPENDENCY ORDER, AND IT NO LONGER HAS TO BE.
+///
+/// Log sync happens to deliver in dependency order, which is why nothing here
+/// ever tested the alternative. Nothing else guarantees it: a peer hearing one
+/// subject from two sources, a sync interrupted halfway, and — the case this
+/// was written for — a bundle handed over on a USB stick, where the reader
+/// walks a directory in whatever order it gets.
+///
+/// Upstream states the contract on `SpacesArgs::dependencies()`: "a message
+/// should only be processed once all of its dependencies have themselves been
+/// processed". Before the orderer, `ingest` processed in arrival order and
+/// caught the resulting panic, so an early operation was not delayed — it was
+/// dropped, and its records with it.
+///
+/// **EVERY READER HERE IS GRANTED.** An ungranted vault reads nothing, which is
+/// access control working and would make this test pass for the wrong reason.
+#[tokio::test]
+async fn a_shuffled_bundle_still_reads_completely() {
+    let mut subject = peer("shuffle-subject").await;
+    let orders: Vec<String> = vec!["in-order".into(), "reversed".into(),
+        "seed-1".into(), "seed-7".into(), "seed-99".into()];
+
+    let mut readers = Vec::new();
+    for name in &orders {
+        readers.push(peer(&format!("shuffle-{name}")).await);
+    }
+
+    let mut ops = Vec::new();
+    ops.extend(subject.seal(&[]).await.unwrap());
+    for r in &readers {
+        subject.register(r).await.unwrap();
+        r.register(&subject).await.unwrap();
+        ops.extend(subject.grant(r.subject(), Reach::Everything).await.unwrap());
+    }
+    for e in 0..5i64 {
+        ops.extend(subject.seal(&day(24_000 + e, 120.0 + e as f64)).await.unwrap());
+    }
+
+    let expected = canonical(&readers[0].ingest(&ops).await.unwrap().records);
+    assert!(!expected.is_empty(), "the in-order baseline read nothing");
+
+    // Reversed is the worst case an ordering bug can produce: every operation
+    // arrives before everything it depends on.
+    let permutations: Vec<Vec<_>> = vec![
+        ops.iter().rev().cloned().collect(),
+        shuffled(&ops, 1),
+        shuffled(&ops, 7),
+        shuffled(&ops, 99),
+    ];
+
+    for (i, permutation) in permutations.into_iter().enumerate() {
+        let name = &orders[i + 1];
+        let got = readers[i + 1].ingest(&permutation).await.unwrap();
+        assert_eq!(got.panicked, 0, "{name}: an operation panicked instead of waiting");
+        assert_eq!(
+            got.held, 0,
+            "{name}: operations still waiting on a dependency that was in the same bundle"
+        );
+        assert_eq!(
+            canonical(&got.records),
+            expected,
+            "{name}: a reordered bundle read different records from the same bundle in order"
+        );
+    }
+}
+
+/// A BUNDLE THAT ARRIVES IN TWO HALVES, WRONG HALF FIRST.
+///
+/// The realistic offline shape: somebody copies part of a vault and the rest
+/// follows later. The first pass must not lose what it cannot yet place, and
+/// the second must complete it without being handed the first half again.
+#[tokio::test]
+async fn a_dependency_arriving_late_releases_what_waited_for_it() {
+    let mut subject = peer("halves-subject").await;
+    let baseline = peer("halves-baseline").await;
+    let split_reader = peer("halves-split").await;
+
+    let mut ops = Vec::new();
+    ops.extend(subject.seal(&[]).await.unwrap());
+    for r in [&baseline, &split_reader] {
+        subject.register(r).await.unwrap();
+        r.register(&subject).await.unwrap();
+        ops.extend(subject.grant(r.subject(), Reach::Everything).await.unwrap());
+    }
+    for e in 0..4i64 {
+        ops.extend(subject.seal(&day(25_000 + e, 130.0 + e as f64)).await.unwrap());
+    }
+
+    let expected = canonical(&baseline.ingest(&ops).await.unwrap().records);
+    assert!(!expected.is_empty(), "the baseline read nothing");
+
+    let (first, second) = ops.split_at(ops.len() / 2);
+
+    // The SECOND half first: most of it depends on operations not here yet.
+    let early = split_reader.ingest(&second.to_vec()).await.unwrap();
+    assert_eq!(early.panicked, 0, "an out-of-order half panicked instead of waiting");
+    assert!(
+        early.held > 0,
+        "expected the tail of a bundle to be held pending its head, held = {}",
+        early.held
+    );
+
+    // Now the first half, and nothing from the second is handed over again.
+    let late = split_reader.ingest(&first.to_vec()).await.unwrap();
+    assert_eq!(late.panicked, 0, "completing the bundle panicked");
+
+    let mut all = early.records;
+    all.extend(late.records);
+    assert_eq!(
+        canonical(&all),
+        expected,
+        "a bundle delivered in two halves read differently from the same bundle in one"
+    );
+}

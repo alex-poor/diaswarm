@@ -53,7 +53,7 @@ use diaswarm_core::{Record, encode, encode_records};
 pub mod forge;
 pub mod operation;
 pub use forge::{LOG_ID, SwarmForge};
-pub use operation::Operation;
+pub use operation::{Inner, Operation};
 
 /// Access conditions. Unit for now.
 ///
@@ -566,11 +566,29 @@ impl Vault {
         let mut panicked = 0usize;
         let mut processing = std::time::Duration::ZERO;
         let mut persisting = std::time::Duration::ZERO;
+
+        // STORE EVERYTHING, THEN PROCESS WHAT IS READY. Arrival order is not
+        // dependency order, and `SpacesArgs::dependencies()` says so in as many
+        // words: "a message should only be processed once all of its
+        // dependencies have themselves been processed".
         for op in ops {
             if self.store_operation(op).await.is_err() {
                 refused += 1;
                 continue;
             }
+            let deps = Borrow::<SpacesArgs<Conditions>>::borrow(op).dependencies();
+            self.enqueue(op.hash(), deps).await?;
+        }
+
+        let mut seen = 0usize;
+        while let Some(id) = self.take_ready().await? {
+            let Some(op) = self.load(&id, ops).await else {
+                // Queued but not loadable: it was refused by the store above,
+                // or belongs to a log this vault no longer holds.
+                self.release(&id).await?;
+                continue;
+            };
+            seen += 1;
             // A READER NEEDS THE REPAIR DISCIPLINE TOO. Processing a space's
             // messages gives this peer state for that space whether or not it
             // is a member, so a reader that has seen two of a subject's windows
@@ -582,48 +600,145 @@ impl Vault {
             // messages; doing it before each one made ingest quadratic in the
             // history for no benefit, since an application message cannot
             // change anybody's membership.
-            if !matches!(Borrow::<SpacesArgs<Conditions>>::borrow(op), SpacesArgs::Application { .. })
+            if !matches!(Borrow::<SpacesArgs<Conditions>>::borrow(&op), SpacesArgs::Application { .. })
             {
                 let _ = self.repair().await;
             }
 
             let t = std::time::Instant::now();
-            let processed = std::panic::AssertUnwindSafe(self.manager.process(op))
+            let processed = std::panic::AssertUnwindSafe(self.manager.process(&op))
                 .catch_unwind()
                 .await;
             processing += t.elapsed();
-            let (groups_y, space_y, events) = match processed {
-                Ok(Ok(out)) => out,
+            let outcome = match processed {
+                Ok(Ok(out)) => Some(out),
                 Ok(Err(_)) => {
                     refused += 1;
-                    continue;
+                    None
                 }
+                // STILL CAUGHT, AS A BACKSTOP AND NOT AS THE PLAN. Ordering
+                // should make the missing-dependency panic unreachable, but
+                // this runs in a background worker on a phone driving an
+                // insulin pump: an unreadable day is a bad afternoon, an app
+                // that will not start is a loop that has stopped.
                 Err(_) => {
                     panicked += 1;
-                    continue;
+                    None
                 }
             };
-            let t = std::time::Instant::now();
-            if let Some(y) = groups_y {
-                let _ = self.persist_group(&y).await;
-            }
-            if let Some(y) = space_y {
-                let _ = self.persist_space(y).await;
-            }
-            persisting += t.elapsed();
-            for e in events {
-                if let Event::Application { space_id, data } = e {
-                    streams.entry(space_id.to_hex()).or_default().extend_from_slice(&data);
+            if let Some((groups_y, space_y, events)) = outcome {
+                let t = std::time::Instant::now();
+                if let Some(y) = groups_y {
+                    let _ = self.persist_group(&y).await;
+                }
+                if let Some(y) = space_y {
+                    let _ = self.persist_space(y).await;
+                }
+                persisting += t.elapsed();
+                for e in events {
+                    if let Event::Application { space_id, data } = e {
+                        streams.entry(space_id.to_hex()).or_default().extend_from_slice(&data);
+                    }
                 }
             }
+
+            // WHATEVER HAPPENED, IT HAS HAPPENED. Releasing dependents even
+            // after a refusal is deliberate: holding a whole window back
+            // because one operation in it was not for us would turn access
+            // control into data loss.
+            self.release(&id).await?;
         }
+
+        // What is left over is not lost. It is stored, it is recorded as
+        // pending, and the arrival of its dependency releases it on a later
+        // pass — which is the whole reason the orderer is persistent.
+        let held = ops.len().saturating_sub(seen + refused);
+
         Ok(Ingested {
             records: decode_records(&streams),
             refused,
             panicked,
+            held,
             processing,
             persisting,
         })
+    }
+
+    /// Queue one operation for processing, now or when its dependencies land.
+    ///
+    /// **THE ORDERER IS UPSTREAM'S**, `p2panda-store`'s `OrdererStore`, backed
+    /// by the same SQLite store everything else here uses. It keeps a ready
+    /// queue, a pending set keyed by unmet dependencies, and an index from an
+    /// operation to whatever was waiting on it — which is exactly the
+    /// bookkeeping a hand-written retry loop would have to grow, and would
+    /// grow worse: a loop re-processes the whole bundle on every pass, this
+    /// wakes only what the arrival actually unblocked.
+    async fn enqueue(&self, id: Hash, deps: Vec<Hash>) -> Result<(), Error> {
+        use p2panda_store::orderer::OrdererStore;
+        let store = &self.sqlite;
+        // IN A TRANSACTION, like every other write on `SqliteStore`. Methods
+        // that do not end in `_tx` still run against a permit taken with
+        // `begin`; without one they fail with "tried to interact with
+        // inexistant transaction", which reads like a corrupt store rather
+        // than a missing `tx!`. `spike/p2panda-logsync` wrote this trap down
+        // and it caught this code anyway.
+        let out: Result<(), p2panda_store::SqliteError> = async {
+            tx!(store, {
+                if OrdererStore::<Hash>::ready(store, &deps).await? {
+                    OrdererStore::<Hash>::mark_ready(store, id).await?;
+                } else {
+                    OrdererStore::<Hash>::mark_pending(store, id, deps).await?;
+                }
+            });
+            Ok(())
+        }
+        .await;
+        out.map_err(|e| Error::Store(e.to_string()))
+    }
+
+    /// The next operation whose dependencies are all satisfied, if any.
+    async fn take_ready(&self) -> Result<Option<Hash>, Error> {
+        use p2panda_store::orderer::OrdererStore;
+        let store = &self.sqlite;
+        let out: Result<Option<Hash>, p2panda_store::SqliteError> = async {
+            Ok(tx!(store, { OrdererStore::<Hash>::take_next_ready(store).await? }))
+        }
+        .await;
+        out.map_err(|e| Error::Store(e.to_string()))
+    }
+
+    /// Mark an operation done and promote anything that was waiting on it.
+    async fn release(&self, id: &Hash) -> Result<(), Error> {
+        use p2panda_store::orderer::OrdererStore;
+        let store = &self.sqlite;
+        let out: Result<(), p2panda_store::SqliteError> = async {
+            tx!(store, {
+                if let Some(waiting) = OrdererStore::<Hash>::get_next_pending(store, *id).await? {
+                    for (pending, deps) in waiting {
+                        if OrdererStore::<Hash>::ready(store, &deps).await? {
+                            OrdererStore::<Hash>::mark_ready(store, pending).await?;
+                        }
+                    }
+                }
+                OrdererStore::<Hash>::remove_pending(store, *id).await?;
+            });
+            Ok(())
+        }
+        .await;
+        out.map_err(|e| Error::Store(e.to_string()))
+    }
+
+    /// An operation by id: from this batch if it is here, from the store if it
+    /// was held back on an earlier pass.
+    async fn load(&self, id: &Hash, batch: &[Operation]) -> Option<Operation> {
+        use p2panda_store::operations::OperationStore;
+        if let Some(op) = batch.iter().find(|o| &o.hash() == id) {
+            return Some(op.clone());
+        }
+        let store = &self.sqlite;
+        let got: Result<Option<Inner>, p2panda_store::SqliteError> =
+            async { Ok(tx!(store, { store.get_operation(id).await? })) }.await;
+        got.ok().flatten().map(Operation::wrap)
     }
 
     async fn store_operation(&self, op: &Operation) -> Result<(), Error> {
@@ -662,6 +777,17 @@ pub struct Ingested {
     pub persisting: std::time::Duration,
     /// Operations the library declined, with an error.
     pub refused: usize,
+    /// Operations held back because a dependency has not arrived yet.
+    ///
+    /// **NOT A LOSS, AND THAT IS THE POINT OF THE DISTINCTION.** A held
+    /// operation is stored and recorded as pending; the arrival of what it
+    /// waits on releases it on a later pass. Before the orderer there was no
+    /// such state — an operation that arrived early was processed anyway,
+    /// panicked `p2panda-auth`, and its records were gone with only a count to
+    /// show for it. A caller seeing `held > 0` is being told the history it
+    /// just received is incomplete *so far*, which is a different sentence
+    /// from `panicked > 0`.
+    pub held: usize,
     /// Operations that panicked p2panda-auth. See [`Vault::ingest`].
     pub panicked: usize,
 }

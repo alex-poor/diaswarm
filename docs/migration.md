@@ -158,6 +158,16 @@ output distinguishes those. Worth fixing before the decision, not after.
    emitter's memory lasts one pass. Fixed by deduplicating on read.
 3. **Not done.** Shadow mode runs for several days, across a reboot, a Doze
    period and a sensor change, still agreeing.
+
+   ~~Out-of-order arrival loses records silently.~~ **Closed 2026-09-12.**
+   `ingest` used to process in arrival order and catch the resulting
+   `p2panda-auth` panic, so an operation that arrived before its dependency was
+   not delayed — it was dropped, and its records with it, leaving a count as the
+   only trace. It now queues through `p2panda-store`'s `OrdererStore` and
+   reports `held`, which is a different sentence from `panicked`: stored,
+   pending, released when the dependency lands. `a_shuffled_bundle_still_reads_completely`
+   and `a_dependency_arriving_late_releases_what_waited_for_it` cover it, and
+   both fail if the ordering is removed.
 4. **Not done, and now unmeasured rather than partial.** Two phones replicate a
    subject over log sync, and a granted reader on one opens what the other
    sealed. The 1-of-6 result above was taken before relays existed;
