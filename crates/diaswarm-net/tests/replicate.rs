@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use diaswarm_core::{EPOCH_MS, Record};
 use diaswarm_net::pool;
-use diaswarm_net::replicate::Replicator;
+use diaswarm_net::replicate::SpacesReplicator as Replicator;
 use diaswarm_net::swarm::{network_id, Swarm};
 use diaswarm_spaces::{Reach, Vault};
 use p2panda_core::{Hash, Operation, SigningKey, VerifyingKey};
@@ -90,13 +90,13 @@ async fn a_peer_carries_a_subject_it_was_never_introduced_to() {
         .await
         .unwrap();
     let (pub_endpoint, pub_gossip) = publisher.parts();
-    let publishing = Replicator::start(vault.store(), pub_endpoint, pub_gossip).await.unwrap();
+    let publishing = Replicator::spaces(vault.store(), pub_endpoint, pub_gossip).await.unwrap();
 
     // --- the carrier: a stranger, granted nothing, holding a bucket -------
     let carrier_vault = Vault::open(tmp("carrier"), OFFSET).await.unwrap();
     let carrier = Swarm::join_network(tmp("car-pool"), SigningKey::generate(), net).await.unwrap();
     let (car_endpoint, car_gossip) = carrier.parts();
-    let carrying = Replicator::start(carrier_vault.store(), car_endpoint, car_gossip)
+    let carrying = Replicator::spaces(carrier_vault.store(), car_endpoint, car_gossip)
         .await
         .unwrap();
 
@@ -144,12 +144,12 @@ async fn what_it_carries_it_cannot_read() {
 
     let publisher = Swarm::join_network(tmp("o-pub"), SigningKey::generate(), net).await.unwrap();
     let (e, g) = publisher.parts();
-    let publishing = Replicator::start(vault.store(), e, g).await.unwrap();
+    let publishing = Replicator::spaces(vault.store(), e, g).await.unwrap();
 
     let carrier_vault = Vault::open(tmp("o-carrier"), OFFSET).await.unwrap();
     let carrier = Swarm::join_network(tmp("o-car"), SigningKey::generate(), net).await.unwrap();
     let (e, g) = carrier.parts();
-    let carrying = Replicator::start(carrier_vault.store(), e, g).await.unwrap();
+    let carrying = Replicator::spaces(carrier_vault.store(), e, g).await.unwrap();
 
     let depth = pool::depth_for(2);
     let topic = pool::bucket_topic(depth, pool::bucket_of(&subject, depth));
@@ -209,13 +209,13 @@ async fn a_granted_reader_gets_a_subject_from_a_peer_that_is_not_the_subject() {
 
     let publisher = Swarm::join_network(tmp("r-pub"), SigningKey::generate(), net).await.unwrap();
     let (e, g) = publisher.parts();
-    let publishing = Replicator::start(vault.store(), e, g).await.unwrap();
+    let publishing = Replicator::spaces(vault.store(), e, g).await.unwrap();
 
     // --- a stranger carries it. It is granted nothing and told nothing. ----
     let carrier_vault = Vault::open(tmp("r-carrier"), OFFSET).await.unwrap();
     let carrier = Swarm::join_network(tmp("r-car"), SigningKey::generate(), net).await.unwrap();
     let (e, g) = carrier.parts();
-    let carrying = Replicator::start(carrier_vault.store(), e, g).await.unwrap();
+    let carrying = Replicator::spaces(carrier_vault.store(), e, g).await.unwrap();
 
     let depth = pool::depth_for(2);
     let topic = pool::bucket_topic(depth, pool::bucket_of(&subject, depth));

@@ -13,7 +13,7 @@
 
 use diaswarm_core::{EPOCH_MS, Record};
 use diaswarm_keys::group::{GrantTag, Message};
-use diaswarm_keys::wire::{self, ControlArgs, ControlOperation, CONTROL_V1};
+use diaswarm_keys::wire::{self, ControlArgs, KeysArgs, KeysOperation, CONTROL_V1};
 use diaswarm_keys::{Error, Vault};
 use p2panda_core::{Body, Header, SigningKey};
 use p2panda_encryption::Rng;
@@ -112,8 +112,8 @@ async fn a_control_message_must_prove_who_sent_it() {
     let header = Header::builder()
         .seq_num(0)
         .body(&payload)
-        .build(&impostor_key, ControlArgs { v: CONTROL_V1 });
-    let forged = ControlOperation::from_parts(header, Some(Body::from_bytes(payload)));
+        .build(&impostor_key, KeysArgs::Control(ControlArgs { v: CONTROL_V1 }));
+    let forged = KeysOperation::from_parts(header, Some(Body::from_bytes(payload)));
     let err = wire::open_control(forged, &subject_key.verifying_key()).unwrap_err();
     assert!(matches!(err, Error::Forged(_)), "an impostor's signature was accepted: {err}");
 
@@ -123,7 +123,7 @@ async fn a_control_message_must_prove_who_sent_it() {
     // payload has been replaced, which is what `validate_operation` exists to
     // notice — and what nothing in this crate was doing before.
     let real = wire::publish_control(&store, &subject_key, &welcome).await.expect("publish");
-    let tampered = ControlOperation::from_parts(
+    let tampered = KeysOperation::from_parts(
         real.header.clone(),
         Some(Body::from_bytes(b"a different message entirely".to_vec())),
     );

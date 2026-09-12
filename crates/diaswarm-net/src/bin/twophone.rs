@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use diaswarm_core::{EPOCH_MS, Record};
 use diaswarm_net::pool;
-use diaswarm_net::replicate::Replicator;
+use diaswarm_net::replicate::SpacesReplicator as Replicator;
 use diaswarm_net::swarm::{Swarm, network_id};
 use diaswarm_spaces::Vault;
 use p2panda_core::{Hash, Operation, SigningKey, VerifyingKey};
@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
         .context("joining the pool")?;
     let (endpoint, gossip) = swarm.parts();
     let vault = Vault::open(root.join("vault"), OFFSET).await.context("opening the vault")?;
-    let replicator = Replicator::start(vault.store(), endpoint, gossip).await?;
+    let replicator = Replicator::spaces(vault.store(), endpoint, gossip).await?;
 
     println!("  node    {}", &swarm.node_id().await?[..16]);
     println!("  subject {}", &vault.subject().to_hex()[..16]);

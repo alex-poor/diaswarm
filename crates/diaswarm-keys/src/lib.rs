@@ -101,6 +101,9 @@ pub enum Error {
     /// The secret was held and the ciphertext still would not open. A failure.
     #[error("held the secret and the segment still would not open")]
     Undecryptable,
+    /// The control message was genuine and was not this vault's welcome.
+    #[error("that control message does not welcome this vault into the group")]
+    NotWelcomed,
     #[error(transparent)]
     Store(#[from] p2panda_store::SqliteError),
     #[error(transparent)]
@@ -558,6 +561,8 @@ impl Vault {
         purpose: &str,
         welcome: &Authentic,
     ) -> Result<(), Error> {
+        let was_me = self.me;
+        let was_subject = self.subject_key;
         self.me = Self::tag_for(&manager, subject_bundle, purpose)?;
         // Everything afterwards must come from whoever signed the welcome.
         self.subject_key = Some(welcome.author);
@@ -574,12 +579,48 @@ impl Vault {
             secrets: p2panda_encryption::data_scheme::SecretBundle::init(),
             is_welcomed: false,
         };
-        let (mut state, _out) = Group::receive(state, &welcome.message)
-            .map_err(|e| Error::Group(e.to_string()))?;
+        let received = Group::receive(state, &welcome.message);
+        let (mut state, _out) = match received {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.me = was_me;
+                self.subject_key = was_subject;
+                return Err(Error::Group(e.to_string()));
+            }
+        };
+
+        // **A CONTROL MESSAGE THAT IS NOT OUR WELCOME MUST NOT LOOK LIKE ONE.**
+        //
+        // A subject's control log holds every message it ever published: the
+        // group's creation, and a welcome per grant, each encrypted towards a
+        // different tag. A reader has to find its own, and nothing in a message
+        // says in clear who it is for — a grant that announced its recipient
+        // would undo D13. So a reader tries them, which only works if trying
+        // the wrong one *fails*.
+        //
+        // It did not. `Group::receive` returns `Ok` for a `Create` this vault
+        // is not in: there is nothing malformed about it, it simply welcomes
+        // nobody. The vault was left with a subject, a member id and no
+        // secrets, and the first read said `NotGranted` — which reads like a
+        // revoked reader rather than a join that never happened.
+        if !state.is_welcomed {
+            self.me = was_me;
+            self.subject_key = was_subject;
+            return Err(Error::NotWelcomed);
+        }
+
         state.orderer.saw(welcome.message.id());
         self.state = Some(state);
         self.save()?;
         Ok(())
+    }
+
+    /// Whether this vault has been welcomed into its group.
+    ///
+    /// False for a vault that has never joined, and for one whose `join`
+    /// failed. A subject is welcomed by creating.
+    pub fn is_welcomed(&self) -> bool {
+        self.state.as_ref().map(|s| s.is_welcomed).unwrap_or(false)
     }
 
     /// How many group secrets this vault holds — the welcome's size, in effect.

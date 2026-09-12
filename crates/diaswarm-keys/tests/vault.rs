@@ -311,3 +311,82 @@ async fn deliver(
         .pop()
         .expect("a control message came back")
 }
+
+/// REVOKING ONE READER MUST NOT CUT OFF THE OTHERS.
+///
+/// **THE QUESTION THE DGM BUG RAISED.** A removal rotates the group secret and
+/// hands the new one to whoever is still a member — which is read from the
+/// subject's own `DgmState`. If that set were not accumulating readers, a
+/// rotation would encrypt the new secret towards nobody and every reader would
+/// silently stop at the same moment, while the revocation test still passed:
+/// "the revoked reader cannot read what came after" is just as true when
+/// nobody can.
+///
+/// So it is asked with two readers, and the second one is the assertion.
+#[tokio::test(flavor = "multi_thread")]
+async fn revoking_one_reader_leaves_the_other_reading() {
+    let rng = Rng::default();
+    let subject_key = SigningKey::from_bytes(&rand32());
+    let root = tmp("two-readers");
+    let store = SqliteStoreBuilder::memory().build().await.expect("store");
+
+    let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("subject");
+    let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).expect("bundle");
+    subject.create(subject_mgr).expect("create");
+
+    let mut readers = Vec::new();
+    for n in 0..2 {
+        let key = SigningKey::from_bytes(&rand32());
+        let (mgr, bundle) = Vault::key_bundle(&rng).expect("bundle");
+        let (welcome, tag) = subject.grant(bundle, "follow").expect("grant");
+        let welcome = deliver(&store, &subject_key, &welcome).await;
+        let mut vault = Vault::open(tmp(&format!("reader-{n}")), OFFSET, &key).expect("reader");
+        let registry =
+            Vault::registry(&[(subject.subject(), subject_bundle.clone())]).expect("registry");
+        vault.join(mgr, registry, &subject_bundle, "follow", &welcome).expect("join");
+        assert!(vault.is_welcomed(), "reader {n} joined without being welcomed");
+        readers.push((vault, tag));
+    }
+
+    // A day both can see, to prove they both started from somewhere.
+    let before = subject.seal(23_000, &day(23_000)).expect("seal");
+    for (reader, _) in &readers {
+        assert!(reader.open_segment(&before).is_ok(), "a granted reader could not open a day");
+    }
+
+    // ---- revoke the first ------------------------------------------------
+    //
+    // **A REVOCATION IS NOT ONLY A SUBTRACTION, AND THE REMAINING READERS HAVE
+    // TO HEAR IT.** `Group::remove` generates a fresh group secret and encrypts
+    // it towards everyone still in the member set, as direct messages inside
+    // the control message it returns. A reader that never processes that
+    // message never gets the new secret, so it stops opening days at the moment
+    // somebody *else* was revoked — and nothing tells it why.
+    //
+    // The first version of this test asserted the second reader kept reading
+    // without delivering the revocation, and it failed. That is the correct
+    // failure: publishing the message is not optional bookkeeping, it is how
+    // the other readers stay readers.
+    let revoked_tag = readers[0].1;
+    let revocation = subject.revoke(revoked_tag).expect("revoke");
+    let revocation = deliver(&store, &subject_key, &revocation).await;
+    readers[1].0.receive(&revocation).expect("the remaining reader takes the revocation");
+
+    let after = subject.seal(23_001, &day(23_001)).expect("seal after revoke");
+
+    assert!(
+        readers[0].0.open_segment(&after).is_err(),
+        "a revoked reader opened a day sealed after its revocation"
+    );
+    assert!(
+        readers[1].0.open_segment(&after).is_ok(),
+        "a reader that processed the revocation still lost access"
+    );
+
+    // And the revoked reader is not rescued by being handed the same message.
+    let err = readers[0].0.receive(&revocation);
+    assert!(
+        err.is_err() || readers[0].0.open_segment(&after).is_err(),
+        "a revoked reader got the new secret out of its own revocation"
+    );
+}

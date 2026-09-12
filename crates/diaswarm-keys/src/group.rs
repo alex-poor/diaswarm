@@ -107,7 +107,27 @@ impl GroupMembership<MemberId, OperationId> for Dgm {
         Ok(DgmState { members: initial.iter().cloned().collect() })
     }
 
-    fn from_welcome(_me: MemberId, y: Self::State) -> Result<Self::State, Self::Error> {
+    /// **THE JOINER PUTS ITSELF IN, AND COPYING UPSTREAM HERE WAS WRONG.**
+    ///
+    /// `p2panda-spaces` implements this as `Ok(y)` — it ignores `my_id` — and
+    /// that is correct *for spaces*, whose membership is decided by
+    /// `p2panda-auth` and written into the DGM from outside. This crate has no
+    /// auth layer underneath, so the DGM is the only record there is.
+    ///
+    /// The welcome's `history` is the adder's member set taken **before** the
+    /// add: `Dcgka::add` clones `y.dgm` to build the direct message and only
+    /// then processes the add locally. So a joiner handed that history is
+    /// looking at a group it is not in, and `Group::process_ready` decides
+    /// whether to set `is_welcomed` by asking exactly that — `members()
+    /// .contains(my_id)`.
+    ///
+    /// Returning `y` unchanged therefore left a reader welcomed by nobody: its
+    /// secrets arrived and its segments opened, so every test passed, while
+    /// `is_welcomed` stayed false. It surfaced only once `Vault::join` started
+    /// refusing a message that does not welcome us — which it has to, because a
+    /// reader has to find its own welcome by trying them.
+    fn from_welcome(me: MemberId, mut y: Self::State) -> Result<Self::State, Self::Error> {
+        y.members.insert(me);
         Ok(y)
     }
 

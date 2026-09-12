@@ -22,9 +22,18 @@
 //! self-healing arithmetic the pool always had, with the transport handed to
 //! the library.
 //!
-//! **A SUBJECT IS AN AUTHOR AND A LOG.** `diaswarm-spaces` publishes everything
-//! a subject ever seals into log 0 of the subject's own key, so associating
-//! `(topic, subject_key, 0)` is the whole of "carry this person's data".
+//! **A SUBJECT IS AN AUTHOR AND SOME LOGS.** `diaswarm-spaces` publishes
+//! everything a subject ever seals into log 0 of the subject's own key, so
+//! associating `(topic, subject_key, 0)` was the whole of "carry this person's
+//! data". `diaswarm-keys` splits that in two — segments in log 0, grants in log
+//! 1 — so this is parameterised over the logs a subject has and over the
+//! extension type they carry, rather than hard-wired to one of each.
+//!
+//! **AND THAT IS WHY BOTH OF ITS LOGS CARRY ONE EXTENSION TYPE.**
+//! `LogSync<S, L, E>` takes a single `E`, and two instances cannot share an
+//! endpoint, so a vault with two differently-shaped logs has to make them one
+//! shape: `diaswarm_keys::wire::KeysArgs` is that enum, and `log_of` below is
+//! how an arriving operation says which of the two it belongs in.
 //!
 //! **RECEIVING IS NOT HOLDING.** Log sync hands an application the operations
 //! it fetched and stops there — storing them is the application's decision,
@@ -53,17 +62,37 @@ use p2panda_store::{SqliteStore, tx};
 use p2panda_sync::FromSync;
 use p2panda_sync::protocols::TopicLogSyncEvent;
 
-use diaswarm_spaces::{Conditions, LOG_ID};
+use p2panda_core::Extensions;
 
-/// The extensions p2panda operations carry here — `diaswarm-spaces`' own.
-type Args = diaswarm_spaces::SpacesArgs<Conditions>;
+use diaswarm_spaces::Conditions;
 
-type Sync = LogSync<SqliteStore, u32, Args>;
+/// The extensions `diaswarm-spaces` operations carry.
+pub type SpacesArgs = diaswarm_spaces::SpacesArgs<Conditions>;
+
+/// The extensions `diaswarm-keys` operations carry, across both its logs.
+pub type KeysArgs = diaswarm_keys::wire::KeysArgs;
+
+/// Replication for a `diaswarm-spaces` peer.
+pub type SpacesReplicator = Replicator<SpacesArgs>;
+
+/// Replication for a `diaswarm-keys` peer: segments and grants, one session.
+pub type KeysReplicator = Replicator<KeysArgs>;
 
 /// Replication for one peer: its store, and the topics it is carrying.
-pub struct Replicator {
+pub struct Replicator<A: Extensions + Send + 'static> {
     store: SqliteStore,
-    sync: Sync,
+    sync: LogSync<SqliteStore, u32, A>,
+    /// Every log a subject publishes to. Associated together, because a
+    /// follower that gets segments and not grants cannot open them, and one
+    /// that gets grants and not segments has nothing to open.
+    logs: Vec<u32>,
+    /// Which log an arriving operation belongs in.
+    ///
+    /// A function rather than a constant because `diaswarm-keys` has two, and
+    /// storing an operation in the wrong one is not recoverable: the header is
+    /// already signed and the sequence numbers of the other log are already
+    /// claimed.
+    log_of: fn(&A) -> u32,
     /// Topics already streamed, so a repeated pass does not subscribe twice.
     streaming: Arc<Mutex<HashSet<[u8; 32]>>>,
     /// `(topic, subject)` pairs already associated.
@@ -79,18 +108,50 @@ pub struct Replicator {
     events: Arc<Mutex<Vec<String>>>,
 }
 
-impl Replicator {
+impl SpacesReplicator {
+    /// Start replication for a `diaswarm-spaces` peer: one log, one shape.
+    pub async fn spaces(store: SqliteStore, endpoint: Endpoint, gossip: Gossip) -> Result<Self> {
+        Self::start(store, endpoint, gossip, &[diaswarm_spaces::LOG_ID], |_| {
+            diaswarm_spaces::LOG_ID
+        })
+        .await
+    }
+}
+
+impl KeysReplicator {
+    /// Start replication for a `diaswarm-keys` peer: segments and grants.
+    pub async fn keys(store: SqliteStore, endpoint: Endpoint, gossip: Gossip) -> Result<Self> {
+        Self::start(
+            store,
+            endpoint,
+            gossip,
+            &diaswarm_keys::wire::LOG_IDS,
+            diaswarm_keys::wire::KeysArgs::log_id,
+        )
+        .await
+    }
+}
+
+impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
     /// Start replication on a peer's existing endpoint and gossip.
     ///
     /// Takes them rather than making them: see [`crate::swarm::Swarm::parts`].
-    pub async fn start(store: SqliteStore, endpoint: Endpoint, gossip: Gossip) -> Result<Self> {
-        let sync = Sync::builder(store.clone(), endpoint, gossip)
+    pub async fn start(
+        store: SqliteStore,
+        endpoint: Endpoint,
+        gossip: Gossip,
+        logs: &[u32],
+        log_of: fn(&A) -> u32,
+    ) -> Result<Self> {
+        let sync = LogSync::<SqliteStore, u32, A>::builder(store.clone(), endpoint, gossip)
             .spawn()
             .await
             .context("spawning log sync")?;
         Ok(Replicator {
             store,
             sync,
+            logs: logs.to_vec(),
+            log_of,
             streaming: Arc::new(Mutex::new(HashSet::new())),
             associated: Arc::new(Mutex::new(HashSet::new())),
             received: Arc::new(Mutex::new(0)),
@@ -115,8 +176,13 @@ impl Replicator {
         // from `begin`, including the methods that do not end in `_tx` and look
         // self-contained. Without it this fails with "tried to interact with
         // inexistant transaction", which reads like a corrupt store.
+        let logs = self.logs.clone();
         let out: Result<(), p2panda_store::SqliteError> = async {
-            tx!(store, { store.associate(&topic, &key, &LOG_ID).await? });
+            tx!(store, {
+                for log_id in &logs {
+                    store.associate(&topic, &key, log_id).await?;
+                }
+            });
             Ok(())
         }
         .await;
@@ -141,6 +207,7 @@ impl Replicator {
         let received = Arc::clone(&self.received);
         let log = Arc::clone(&self.events);
         let store = self.store.clone();
+        let log_of = self.log_of;
 
         // The handle has to outlive this function: dropping it unsubscribes.
         tokio::spawn(async move {
@@ -150,13 +217,19 @@ impl Replicator {
                     Ok(FromSync { event, remote, .. }) => match event {
                         TopicLogSyncEvent::OperationReceived { operation, .. } => {
                             // STORED, OR THIS PEER CARRIES NOTHING.
+                            //
+                            // And stored in the log its own header says it
+                            // belongs in — not a constant. A segment filed
+                            // among grants would take a sequence number that
+                            // the real grant at that height already holds.
+                            let log_id = log_of(&operation.header.extensions);
                             let out: Result<(), p2panda_store::SqliteError> = async {
                                 tx!(store, {
                                     store
                                         .insert_operation(
                                             &operation.hash,
                                             &*operation,
-                                            &LOG_ID,
+                                            &log_id,
                                         )
                                         .await?
                                 });

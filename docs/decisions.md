@@ -516,9 +516,24 @@ same leak unless its handles are tags too. Whatever carries grants has to name a
 per-relationship tag — which is what D13's log already does — so the existing
 signed, hash-chained grant log is not obviously the thing to replace here.
 
-⚠️ **What is still not built.** Replication itself, the auth layer, and the
-reader in the tests shares the subject's directory rather than having replicated
-it. Those are the port's remaining work, not unknowns about the design.
+⚠️ **What is still not built.** The auth layer. Replication and the
+directory-sharing reader are done — see below.
+
+✅ **Replication, 2026-09-12.** `diaswarm-net`'s `Replicator` is now generic
+over the extension type and over *which logs a subject has*, so both vaults use
+it: `Replicator::spaces` keeps one log, `Replicator::keys` associates two.
+`tests/keys_replicate.rs` is the swarm property asked of D26's vault — a
+subject that knows nobody, a carrier granted nothing that ends up holding both
+logs, and a follower that reads the grant out of the **carrier's** store, joins
+from it, and opens the segments it finds there. 5 operations, 3,432 bytes, no
+peer dialled.
+
+**BOTH LOGS RIDE ONE SESSION**, which is what `wire::KeysArgs` exists for.
+`LogSync<S, L, E>` takes a single extension type and two instances cannot share
+an endpoint, so segments and grants carry one enum and the variant says which
+log an arriving operation belongs in. A follower with segments and no grants
+could not open them; one with grants and no segments would have nothing to
+open.
 
 ✅ **Grants now travel, and they are authenticated — 2026-09-12.** The crate
 shipped with a red note in its module doc: `group::Message` is a plain struct
@@ -565,6 +580,35 @@ The fix is `op.body`, and the missing test is
 `a_segment_out_of_a_log_still_decrypts_to_the_records_that_went_in` —
 which needed `Vault::open_segment`, the API a follower will need anyway, since
 its segments arrive as operation bodies and never touch a directory.
+
+🐛 **And the network test found two more, both in the 242 hand-written lines.**
+
+`Dgm::from_welcome` was copied from `p2panda-spaces` as `Ok(y)` — it ignores the
+`my_id` it is handed. That is right for spaces, whose membership comes from
+`p2panda-auth` and is written into the DGM from outside. Here the DGM is the
+only record there is, and the welcome's `history` is the adder's member set
+taken *before* the add (`Dcgka::add` clones `y.dgm` to build the direct message
+and only then processes the add). So a joiner was handed a group it was not in,
+and `is_welcomed` never became true.
+
+Nothing noticed, because reading needs secrets and not membership: the reader's
+secrets arrived, its segments opened, every test passed. It surfaced only once
+`Vault::join` started **refusing a message that is not our welcome** — which it
+has to, because a subject's control log holds every message it ever published
+and nothing says in clear which welcome is for whom (a grant that announced its
+recipient would undo D13). A reader finds its own by trying them, and trying
+only works if the wrong ones fail. Before that, `join` returned `Ok` for the
+group's `Create`, leaving a vault with a subject, a member id, no secrets, and a
+first read reporting `NotGranted` — which reads like a revoked reader rather
+than a join that never happened.
+
+**And a revocation is not only a subtraction.** `Group::remove` generates a
+fresh group secret and encrypts it towards everyone still in the member set, as
+direct messages inside the control message it returns. A remaining reader that
+never processes that message stops opening days at the moment somebody *else*
+was revoked, with nothing to say why. `revoking_one_reader_leaves_the_other_reading`
+asserts it with two readers, because the one-reader test cannot tell "the
+revoked reader lost access" from "everybody did".
 
 ✅ **Read, 2026-09-12, and they are bookkeeping.** The reopens-if above asked
 whether those 242 lines need judgement about concurrent membership. They do not.

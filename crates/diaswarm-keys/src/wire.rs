@@ -62,14 +62,62 @@ pub struct SegmentArgs {
     pub nonce: XAeadNonce,
 }
 
-pub type SegmentOperation = p2panda_core::Operation<SegmentArgs>;
+/// The only version there has been.
+pub const CONTROL_V1: u8 = 1;
+
+/// What rides in a control operation's header.
+///
+/// A version byte and nothing else. The message itself goes in the **body**,
+/// for the same reason a segment's ciphertext does: `p2panda-core` decodes
+/// headers with a 512-byte limit, and a welcome carrying a whole secret bundle
+/// is not small.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ControlArgs {
+    pub v: u8,
+}
+
+/// **ONE EXTENSION TYPE FOR BOTH LOGS, BECAUSE ONE `LogSync` CARRIES ONE.**
+///
+/// `p2panda_net::LogSync<S, L, E>` is generic over a single extension type, and
+/// two instances cannot share an endpoint. A header is stored encoded, so a log
+/// written as `SegmentArgs` cannot be read back as anything else — which means
+/// the choice is made at publish time and is not revisitable.
+///
+/// So both logs carry this enum and the variant says which log the operation
+/// belongs in. That is a runtime check where a type could have been, and the
+/// trade is deliberate: it buys one sync session covering a subject's segments
+/// *and* its grants, which is what a follower needs and what two sessions on
+/// one endpoint cannot give.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum KeysArgs {
+    Segment(SegmentArgs),
+    Control(ControlArgs),
+}
+
+impl KeysArgs {
+    /// Which log an arriving operation belongs in.
+    ///
+    /// A carrier is handed operations by log sync and has to store them
+    /// somewhere; with one log that was a constant, and with two it is this.
+    pub fn log_id(&self) -> u32 {
+        match self {
+            KeysArgs::Segment(_) => LOG_ID,
+            KeysArgs::Control(_) => CONTROL_LOG_ID,
+        }
+    }
+}
+
+/// Every log a subject publishes to, for a carrier to associate with a topic.
+pub const LOG_IDS: [u32; 2] = [LOG_ID, CONTROL_LOG_ID];
+
+pub type KeysOperation = p2panda_core::Operation<KeysArgs>;
 
 /// Append a segment to a log as an operation, body and all.
 pub async fn publish(
     store: &SqliteStore,
     signing_key: &SigningKey,
     segment: &Segment,
-) -> Result<SegmentOperation, Error> {
+) -> Result<KeysOperation, Error> {
     let args = SegmentArgs {
         epoch: segment.epoch,
         secret_id: segment.secret_id,
@@ -82,7 +130,7 @@ pub async fn publish(
     // a forked log, which is not a recoverable state.
     let operation = tx!(store, {
         let (seq_num, backlink) = <SqliteStore as LogStore<
-            SegmentOperation,
+            KeysOperation,
             VerifyingKey,
             LogId,
             SeqNum,
@@ -96,8 +144,8 @@ pub async fn publish(
             .seq_num(seq_num)
             .backlink(backlink)
             .body(&payload)
-            .build(signing_key, args);
-        let operation = SegmentOperation::from_parts(header, Some(Body::from_bytes(payload)));
+            .build(signing_key, KeysArgs::Segment(args));
+        let operation = KeysOperation::from_parts(header, Some(Body::from_bytes(payload)));
         store.insert_operation(&operation.hash, &operation, &LOG_ID).await?;
         operation
     });
@@ -123,7 +171,7 @@ pub async fn segments_tail(
     count: u64,
 ) -> Result<Vec<Segment>, Error> {
     let heights = <SqliteStore as LogStore<
-        SegmentOperation,
+        KeysOperation,
         VerifyingKey,
         LogId,
         SeqNum,
@@ -135,7 +183,7 @@ pub async fn segments_tail(
     let after = if after == 0 { None } else { Some((after - 1) as SeqNum) };
 
     let entries = <SqliteStore as LogStore<
-        SegmentOperation,
+        KeysOperation,
         VerifyingKey,
         LogId,
         SeqNum,
@@ -160,7 +208,7 @@ pub async fn segments_from(
     // the symptom is `PoolTimedOut`, which reads like a hung database rather
     // than a macro used where it does not belong.
     let entries = <SqliteStore as LogStore<
-        SegmentOperation,
+        KeysOperation,
         VerifyingKey,
         LogId,
         SeqNum,
@@ -183,7 +231,7 @@ pub async fn segments_from(
 /// it immediately, because verifying a signature against the payload is a
 /// comparison and counting is not — which is the argument for doing the
 /// verification at all, quite apart from forgery.
-fn collect(entries: Option<Vec<(SegmentOperation, Vec<u8>)>>) -> Result<Vec<Segment>, Error> {
+fn collect(entries: Option<Vec<(KeysOperation, Vec<u8>)>>) -> Result<Vec<Segment>, Error> {
     let mut out = Vec::new();
     for (op, _encoded_header) in entries.into_iter().flatten() {
         let body = op.body.ok_or_else(|| {
@@ -192,10 +240,20 @@ fn collect(entries: Option<Vec<(SegmentOperation, Vec<u8>)>>) -> Result<Vec<Segm
                 op.header.seq_num
             ))
         })?;
+        // A control message in the segment log is not a segment with odd
+        // fields, it is a log that has been written to by something that should
+        // not have. Saying so beats decrypting a welcome and reporting it as
+        // `undecryptable`.
+        let KeysArgs::Segment(args) = &op.header.extensions else {
+            return Err(Error::Forged(format!(
+                "a control operation is sitting in the segment log at seq {}",
+                op.header.seq_num
+            )));
+        };
         out.push(Segment {
-            epoch: op.header.extensions.epoch,
-            secret_id: op.header.extensions.secret_id,
-            nonce: op.header.extensions.nonce,
+            epoch: args.epoch,
+            secret_id: args.secret_id,
+            nonce: args.nonce,
             ciphertext: body.to_bytes(),
         });
     }
@@ -205,22 +263,6 @@ fn collect(entries: Option<Vec<(SegmentOperation, Vec<u8>)>>) -> Result<Vec<Segm
 // ---------------------------------------------------------------------------
 // Control messages
 // ---------------------------------------------------------------------------
-
-/// What rides in a control operation's header.
-///
-/// A version byte and nothing else. The message itself goes in the **body**,
-/// for the same reason a segment's ciphertext does: `p2panda-core` decodes
-/// headers with a 512-byte limit, and a welcome carrying a whole secret bundle
-/// is not small.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ControlArgs {
-    pub v: u8,
-}
-
-/// The only version there has been.
-pub const CONTROL_V1: u8 = 1;
-
-pub type ControlOperation = p2panda_core::Operation<ControlArgs>;
 
 /// Append a control message to the subject's control log, signed.
 ///
@@ -232,7 +274,7 @@ pub async fn publish_control(
     store: &SqliteStore,
     signing_key: &SigningKey,
     message: &Message,
-) -> Result<ControlOperation, Error> {
+) -> Result<KeysOperation, Error> {
     // The sender the message claims must be the one this key can prove. A
     // subject publishing somebody else's message would produce an operation
     // that `open_control` rejects, and catching it here says so plainly rather
@@ -250,7 +292,7 @@ pub async fn publish_control(
     // ONE TRANSACTION, for the reason `publish` gives: read-then-append.
     let operation = tx!(store, {
         let (seq_num, backlink) = <SqliteStore as LogStore<
-            ControlOperation,
+            KeysOperation,
             VerifyingKey,
             LogId,
             SeqNum,
@@ -264,8 +306,8 @@ pub async fn publish_control(
             .seq_num(seq_num)
             .backlink(backlink)
             .body(&payload)
-            .build(signing_key, ControlArgs { v: CONTROL_V1 });
-        let operation = ControlOperation::from_parts(header, Some(Body::from_bytes(payload)));
+            .build(signing_key, KeysArgs::Control(ControlArgs { v: CONTROL_V1 }));
+        let operation = KeysOperation::from_parts(header, Some(Body::from_bytes(payload)));
         store.insert_operation(&operation.hash, &operation, &CONTROL_LOG_ID).await?;
         operation
     });
@@ -290,7 +332,7 @@ pub async fn publish_control(
 ///    a subject could sign a message claiming to be from one of its own
 ///    readers, and the group state would apply it as that reader's.
 pub fn open_control(
-    operation: ControlOperation,
+    operation: KeysOperation,
     expected: &VerifyingKey,
 ) -> Result<Authentic, Error> {
     let author = operation.header.verifying_key;
@@ -307,6 +349,11 @@ pub fn open_control(
     // the payload it is given, and a `None` payload is not a mismatch — it is
     // nothing to compare. An operation whose body was pruned would sail through
     // and then decode as whatever the caller happened to pass.
+    if !matches!(operation.header.extensions, KeysArgs::Control(_)) {
+        return Err(Error::Forged(
+            "a segment operation was offered as a control message".to_string(),
+        ));
+    }
     let body = operation
         .body
         .as_ref()
@@ -341,7 +388,7 @@ pub async fn control_from(
     // NO `tx!`: a plain read, and wrapping one exhausts the pool — see the note
     // in `segments_from`.
     let entries = <SqliteStore as LogStore<
-        ControlOperation,
+        KeysOperation,
         VerifyingKey,
         LogId,
         SeqNum,
