@@ -1291,3 +1291,61 @@ is reversible with the same tap, which is what the description on it says:
 runs with a safety net underneath it has not been tested; if the keys vault
 falls behind while nobody is watching, the graph will show it by morning, which
 is the whole point of the mode.
+
+### 🐛 The night it went dark, and why no test could have caught it
+
+The keys-only mode was left on overnight to find out whether the new vault could
+stand alone. By morning the follower showed **"Nothing readable yet"** — and the
+first useful fact was that turning the old vault back on changed nothing. Both
+vaults were empty together, which says transport, not storage.
+
+The publisher was flawless throughout: 682 operations published overnight,
+`shadow agrees — missing 0`, still sealing. The follower held 288 segments and
+nothing newer than 20:30 the previous evening, and `refresh_follows` reached
+**nobody** — with a fresh process, on the same wifi, 192.168.88.224 and .213.
+
+**p2panda's mDNS was running and hearing nothing, on both phones, since the
+beginning.** `MdnsDiscovery` is spawned in `Active` mode, and the code carries a
+comment warning that without a mode "two peers on the same wifi never see each
+other". Android has a second switch underneath that one: the wifi chip does not
+deliver multicast to userspace unless an app holds a `MulticastLock`, which
+needs `CHANGE_WIFI_MULTICAST_STATE`. Neither app declared it. Nothing took a
+lock. AAPS's `:5353` socket showed `Recv-Q 0` — the packets never arrived.
+
+**No desktop test can show this.** A laptop has no such switch. That is why ~125
+green tests and a full day of two-phone work never came near it, and why it took
+a night of one phone sleeping and coming back on a different address.
+
+It was masked because *nothing had to be discovered*. A follower can reach a
+subject on the address it learned when the invite was scanned, and that works
+for as long as nothing moves. The relay leg would normally cover the rest — but
+the loop phone holds **no TCP connection at all**, and iroh keeps its relay as a
+long-lived TCP/443. With both legs down there was no route left.
+
+Fixed by giving the library what it needs: the permission in both manifests, and
+a `MulticastLock` held for the process — not per pass, because a peer that moves
+has to be findable at any hour by an app in the background, and a per-pass lock
+would be absent exactly when the phone is idle.
+
+The recovery is unambiguous. AAPS took its lock at 08:00:07; the follower had
+been answering `refreshed 0` for twelve hours:
+
+```
+08:00:07  (aaps)  WifiService: acquireMulticastLock lockTag=diaswarm-mdns
+08:00:31  (ayni)  refreshed 1 subject(s)
+08:01:46  (ayni)  merged 411 core + 155 keys = 411
+08:02:16  (ayni)  merged 411 core + 410 keys = 411
+08:02:30  (ayni)  pool 3  4  1  2  0
+```
+
+Caught up to parity in two and a half minutes, and the pool found its peers for
+the first time — 3 members where it had been 1 all morning. On screen: **5.9
+mmol/L, 5 minutes old**, the full overnight curve, `sched 0.50`, a 4 U bolus and
+35 g of carbs from half an hour earlier.
+
+⚠️ **The relay leg is still down, and that is a separate and larger problem.**
+Ping reaches the relay from both phones and the URL parses, but neither app
+holds a connection to it. Everything above restores discovery *on one wifi*.
+Following somebody from another network — the actual point of a relay, and
+recorded as working on 2026-09-11 — is not currently working and has its own
+investigation.
