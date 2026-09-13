@@ -1465,7 +1465,11 @@ changes address, which happens every night.
 | a node id with **no address at all** | what an invite actually carries — id + relay, never an IP |
 | the subject **changes address** | the 2026-09-14 outage: same key, new socket, must be found again |
 | a swarm with **no usable relay** | must say `none`, never read as connected |
-| a node id **nobody serves** | the guard on the other three — `reached()` must be able to be false |
+| a **stale** recorded address | the real shape of it: a wrong address, not a missing one |
+| the **follower** restarts | app killed overnight, must re-find from disk with no scan |
+| one unreachable subject **among several** | a parent with more than one child |
+| coming back from a **long outage** | must collect every missed day, not just the newest |
+| a node id **nobody serves** | the guard on the positives — `reached()` must be able to be false |
 
 They use `join_network` — isolated network id, no relay — so they run offline
 and in CI, and what they exercise is local discovery. The relay leg keeps its

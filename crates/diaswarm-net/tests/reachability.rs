@@ -320,3 +320,67 @@ async fn one_unreachable_subject_does_not_stop_the_others() {
     );
     assert_eq!(results.len(), 2, "both follows should be reported, reachable or not");
 }
+
+/// COMING BACK FROM A LONG OUTAGE MUST CATCH UP, NOT SAMPLE.
+///
+/// **THE MORNING AFTER, WHICH IS THE ORDINARY CASE.** A follower's phone is off
+/// or out of range all night while the subject keeps sealing. When it comes
+/// back it has to collect everything it missed — and "everything" is the part
+/// worth asserting, because a reader that fetches only the newest day draws a
+/// graph with a hole in it and no error anywhere.
+///
+/// The outage is simulated the honest way round: the subject seals days while
+/// the follower has no endpoint at all.
+#[tokio::test]
+async fn a_follower_that_was_away_collects_everything_it_missed() {
+    let net = network_id("reach-catchup");
+    let subject_store = tmp("catchup-subject");
+    let reader_store = tmp("catchup-reader");
+    let reader = Identity::generate();
+
+    // A subject with two days, and a follower that reads them.
+    let subject = Identity::generate();
+    let store = Store::open(&subject_store).unwrap();
+    let dir = store.path_for(&subject.enc_public());
+    std::fs::create_dir_all(&dir).unwrap();
+    let vault = Vault::create(&dir, &subject, OFFSET).unwrap();
+    vault.record_grant(&subject, &reader.enc_public(), "follow", "grant", 0).unwrap();
+    for i in 0..2 {
+        vault.seal(23_000 + i, &day(23_000 + i, 100.0 + i as f64)).unwrap();
+    }
+    let subject_hex = hex(&subject.enc_public());
+
+    let publisher = Swarm::join_network(subject_store.clone(), SigningKey::generate(), net)
+        .await
+        .expect("publisher");
+    let id = publisher.node_id().await.unwrap();
+
+    let follower = Swarm::join_network(reader_store.clone(), SigningKey::generate(), net)
+        .await
+        .expect("follower");
+    add_follow(&reader_store, &subject_hex, &id, Some("follow")).unwrap();
+    assert!(reaches_within(&follower, 20).await, "never read the subject before the outage");
+
+    // The follower goes away. The subject keeps looping — five more days.
+    drop(follower);
+    for i in 2..7 {
+        vault.seal(23_000 + i, &day(23_000 + i, 100.0 + i as f64)).unwrap();
+    }
+
+    // And comes back.
+    let back = Swarm::join_network(reader_store.clone(), SigningKey::generate(), net)
+        .await
+        .expect("returned");
+    assert!(reaches_within(&back, 25).await, "did not find the subject after coming back");
+
+    // Everything, not just the newest. Seven days were sealed; seven must be
+    // held, or the graph has a hole in it that nothing reports.
+    let held = Store::open(&reader_store)
+        .unwrap()
+        .path_for(&subject.enc_public())
+        .join("segments");
+    let n = std::fs::read_dir(&held)
+        .map(|d| d.filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "seal")).count())
+        .unwrap_or(0);
+    assert_eq!(n, 7, "came back from an outage holding {n} of 7 days — the rest is a silent gap");
+}
