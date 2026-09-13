@@ -739,6 +739,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         // **CARRY THE KEYS LOGS TOO.** Without this the replicator exists,
         // subscribes to nothing, and every keys read finds an empty store —
         // which looks exactly like "not granted yet".
+        // **NOT CALLED AT ALL WHEN THE FEATURE IS OFF.** It returned -3 every
+        // pass and logged it, which is harmless and is still this feature
+        // running on a phone whose owner switched it off. The gate belongs at
+        // the caller, not in the error path.
+        if (preferences.get(SwarmBooleanKey.ShadowSpacesVault)) {
         val carried = SwarmNative.keysCarryAll(
             handle,
             SwarmPaths.store(context).absolutePath,
@@ -753,6 +758,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             carried < 0 -> aapsLogger.info(LTag.CORE, "swarm: keys carry unavailable ($carried)")
             carried == 0L -> aapsLogger.info(LTag.CORE, "swarm: keys carrying nothing")
             else -> aapsLogger.info(LTag.CORE, "swarm: keys carrying $carried log(s)")
+        }
         }
 
         val f = report.split('\t')
