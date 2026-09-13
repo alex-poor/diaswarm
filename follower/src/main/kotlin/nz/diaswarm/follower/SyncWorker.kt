@@ -55,6 +55,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                     SwarmPaths.identity(applicationContext).absolutePath
                 )
                 Log.i(TAG, if (carried < 0) "keys carry unavailable ($carried)" else "keys carrying $carried log(s)")
+                if (carried > 0) verifyControlLogs(applicationContext)
 
                 // **OFFER OUR KEYS IDENTITY TO PEOPLE WHO ALREADY GRANTED US.**
                 // They granted this phone on the old vault, possibly months
@@ -97,6 +98,53 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
             // too long.
             Log.w(TAG, "sync pass failed", e)
             Result.success()
+        }
+    }
+
+    /**
+     * Check each followed subject's control log still holds together.
+     *
+     * **THE POINT OF A TAMPER-EVIDENT LOG IS SOMEBODY CHECKING IT.** D13's
+     * grant log replicates precisely so that truncating or altering it is
+     * detectable, and §11 offers that *in place of* a read log — but the code
+     * that detects it had never run outside a test on either phone. A property
+     * nobody evaluates is a claim, not a property.
+     *
+     * Here rather than on the subject's phone because the subject cannot catch
+     * themselves: this runs on the copy this follower was actually served.
+     *
+     * Once per subject per pass, on a log that holds one entry per grant and
+     * revocation — a handful of hashes, not a thing to be clever about. Logged
+     * quietly when intact and loudly when not, and it changes nothing else:
+     * a broken chain is something a person has to look at, not something an
+     * app should act on by itself.
+     */
+    private fun verifyControlLogs(context: Context) {
+        val handle = SwarmKeys.open(context)
+        if (handle == 0L) return
+        try {
+            for (subject in Follower.following(context)) {
+                if (subject.keys.isEmpty()) continue
+                val verdict = try {
+                    SwarmNative.keysVerifyControl(handle, subject.keys)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "chain check threw for ${subject.short}: $e")
+                    continue
+                }
+                when {
+                    verdict.startsWith("ok ") ->
+                        Log.i(TAG, "grant log intact for ${subject.short}: $verdict")
+                    verdict.startsWith("broken") ->
+                        Log.e(TAG, "GRANT LOG BROKEN for ${subject.short}: $verdict")
+                    // NO SILENT BRANCH. This used to swallow an empty answer
+                    // as "nothing replicated yet", and an empty answer was
+                    // exactly what a wrong argument produced — so the check ran
+                    // every pass, checked nothing, and said nothing.
+                    else -> Log.w(TAG, "chain check for ${subject.short} said: '$verdict'")
+                }
+            }
+        } finally {
+            SwarmNative.keysClose(handle)
         }
     }
 

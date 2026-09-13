@@ -587,6 +587,21 @@ object SwarmNative {
      * another with zero duration. Whether it is still running is the caller's
      * arithmetic — only the caller knows what time it is.
      */
+    /**
+     * Check a subject's control log holds together. `ok <n> <head>`,
+     * `broken <seq>`, or empty.
+     *
+     * **D13's TAMPER-EVIDENCE WAS WRITTEN, TESTED AND NEVER RUN.** The grant
+     * log replicates so that truncating or altering it is *detectable* — that
+     * is the whole of what §11 offers in place of a read log — and nothing on
+     * either phone had ever called the code that detects it. A property that
+     * holds only while somebody runs a test is not a property of the system.
+     *
+     * Run by the follower, on the copy it was actually served: a subject cannot
+     * meaningfully catch themselves.
+     */
+    external fun keysVerifyControl(handle: Long, subjectKeys: String): String
+
     external fun netTempTarget(
         storePath: String,
         subject: String,

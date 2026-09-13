@@ -2137,6 +2137,67 @@ fn newest_profile(body: &str) -> Option<String> {
     newest_of_kind(body, "profile")
 }
 
+/// Check a subject's control log holds together, and say what it found.
+///
+/// **D13's TAMPER-EVIDENCE WAS WRITTEN, TESTED, AND NEVER RUN.** The grant log
+/// replicates so that truncating or altering it is *detectable* — that is the
+/// whole of what feasibility.md §11 offers in place of a read log. The code to
+/// detect it has existed since the auth layer landed and nothing on either
+/// phone has ever called it. A property that only holds when somebody runs a
+/// test is not a property of the system.
+///
+/// Runs on the replicated copy this phone holds, which is the copy that
+/// matters: the subject cannot meaningfully catch themselves, and a follower
+/// checking the log it was actually served is the only party whose check means
+/// anything.
+///
+/// Returns `ok <entries> <head>`, `broken <seq>`, or `error <why>`. Never
+/// empty and never throws: a check that answers nothing is indistinguishable
+/// from a check that passed, which is how the first version of this ran on a
+/// phone for ten minutes doing nothing at all.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysVerifyControl<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    subject_hex: JString<'a>,
+) -> JString<'a> {
+    let Ok(subject) = env.get_string(&subject_hex) else {
+        return to_jstring(env, "error bad-argument".to_string());
+    };
+    let subject = String::from(subject);
+    // **THE IDENTITY, NOT A BARE KEY — because that is what a follow records.**
+    // The first version of this took 64 hex characters and every caller had a
+    // `KeysIdentity`, so it answered empty on every pass and the app's own
+    // "nothing replicated yet" branch swallowed it. Both forms are accepted for
+    // the same reason `keysGrant` accepts both: whichever a caller has should
+    // work.
+    let author = match diaswarm_keys::decode_identity(&subject) {
+        Ok(id) => id.signer,
+        Err(_) => match verifying_key(&subject.to_ascii_lowercase()) {
+            Some(k) => k,
+            None => return to_jstring(env, "error not-an-identity".to_string()),
+        },
+    };
+    let Some(v) = keys_vault(handle) else { return to_jstring(env, "error no-vault".to_string()) };
+
+    let chain = v.handle.block_on(diaswarm_keys::auth::verify_control_chain(&v.store, &author));
+    match chain {
+        Ok(c) => {
+            let out = match c.broken_at {
+                Some(seq) => format!("broken {seq}"),
+                None => format!(
+                    "ok {} {}",
+                    c.len(),
+                    c.head().map(|h| h.to_string()).unwrap_or_else(|| "-".into())
+                ),
+            };
+            to_jstring(env, out)
+        }
+        Err(e) => to_jstring(env, format!("error {e}")),
+    }
+}
+
 /// A followed subject's newest temporary target out of the keys vault.
 ///
 /// The keys-vault half of `netTempTarget`; see that for why it exists. Reads
