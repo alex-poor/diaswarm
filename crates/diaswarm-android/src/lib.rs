@@ -2137,6 +2137,44 @@ fn newest_profile(body: &str) -> Option<String> {
     newest_of_kind(body, "profile")
 }
 
+/// Check a followed subject's CORE grant log holds together.
+///
+/// **THE OTHER VAULT'S HALF OF THE SAME PROPERTY.** `keysVerifyControl` covers
+/// the keys group's control log; this covers `grants.ndjson`, which is the
+/// signed record §11 offers in place of a read log and the one that is live
+/// today. `verify_own_chain` was written with the signing key that made it
+/// checkable by anyone, has tests, and — like its keys twin — was reachable
+/// from neither app.
+///
+/// Runs against the replica this follower holds, which is the copy worth
+/// checking: a subject verifying their own log catches nobody.
+///
+/// `ok` when every entry follows its predecessor, `broken <seq>` at the first
+/// that does not, `error <why>` otherwise. Never empty: a check that answers
+/// nothing reads exactly like a check that passed.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultVerifyChain<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    store_path: JString<'a>,
+    subject: JString<'a>,
+) -> JString<'a> {
+    let (Ok(store), Ok(subj)) = (env.get_string(&store_path), env.get_string(&subject)) else {
+        return to_jstring(env, "error bad-argument".to_string());
+    };
+    let dir = PathBuf::from(String::from(store)).join(String::from(subj));
+    let Ok(vault) = Vault::open(&dir) else { return to_jstring(env, "error no-vault".to_string()) };
+    match vault.verify_own_chain() {
+        Ok(None) => to_jstring(env, "ok".to_string()),
+        Ok(Some(seq)) => to_jstring(env, format!("broken {seq}")),
+        // A vault written before the signing key was published cannot be
+        // checked by anyone. That is a real answer, and it is NOT "ok" — the
+        // whole point of publishing the key was that "cannot check" stopped
+        // being a quiet pass.
+        Err(e) => to_jstring(env, format!("error {e:?}")),
+    }
+}
+
 /// Check a subject's control log holds together, and say what it found.
 ///
 /// **D13's TAMPER-EVIDENCE WAS WRITTEN, TESTED, AND NEVER RUN.** The grant log

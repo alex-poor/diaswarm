@@ -600,6 +600,16 @@ object SwarmNative {
      * Run by the follower, on the copy it was actually served: a subject cannot
      * meaningfully catch themselves.
      */
+    /**
+     * Check a followed subject's core grant log holds together. `ok`,
+     * `broken <seq>`, or `error <why>`.
+     *
+     * The core vault's half of what [keysVerifyControl] does for the keys
+     * group. Both were written, both had tests, and neither was reachable from
+     * an app until now.
+     */
+    external fun vaultVerifyChain(storePath: String, subject: String): String
+
     external fun keysVerifyControl(handle: Long, subjectKeys: String): String
 
     external fun netTempTarget(

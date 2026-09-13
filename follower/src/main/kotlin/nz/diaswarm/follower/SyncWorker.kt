@@ -55,7 +55,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                     SwarmPaths.identity(applicationContext).absolutePath
                 )
                 Log.i(TAG, if (carried < 0) "keys carry unavailable ($carried)" else "keys carrying $carried log(s)")
-                if (carried > 0) verifyControlLogs(applicationContext)
+                verifyChains(applicationContext, keysToo = carried > 0)
 
                 // **OFFER OUR KEYS IDENTITY TO PEOPLE WHO ALREADY GRANTED US.**
                 // They granted this phone on the old vault, possibly months
@@ -119,32 +119,43 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
      * a broken chain is something a person has to look at, not something an
      * app should act on by itself.
      */
-    private fun verifyControlLogs(context: Context) {
-        val handle = SwarmKeys.open(context)
-        if (handle == 0L) return
+    private fun verifyChains(context: Context, keysToo: Boolean) {
+        val handle = if (keysToo) SwarmKeys.open(context) else 0L
         try {
             for (subject in Follower.following(context)) {
-                if (subject.keys.isEmpty()) continue
-                val verdict = try {
-                    SwarmNative.keysVerifyControl(handle, subject.keys)
-                } catch (e: Throwable) {
-                    Log.w(TAG, "chain check threw for ${subject.short}: $e")
-                    continue
-                }
-                when {
-                    verdict.startsWith("ok ") ->
-                        Log.i(TAG, "grant log intact for ${subject.short}: $verdict")
-                    verdict.startsWith("broken") ->
-                        Log.e(TAG, "GRANT LOG BROKEN for ${subject.short}: $verdict")
-                    // NO SILENT BRANCH. This used to swallow an empty answer
-                    // as "nothing replicated yet", and an empty answer was
-                    // exactly what a wrong argument produced — so the check ran
-                    // every pass, checked nothing, and said nothing.
-                    else -> Log.w(TAG, "chain check for ${subject.short} said: '$verdict'")
+                // The core log first, because it is the one that is live today
+                // and stays live after a cutover — both vaults are read.
+                say(subject.short, "core", runCatching {
+                    SwarmNative.vaultVerifyChain(
+                        SwarmPaths.store(context).absolutePath,
+                        subject.key
+                    )
+                })
+                if (handle != 0L && subject.keys.isNotEmpty()) {
+                    say(subject.short, "keys", runCatching {
+                        SwarmNative.keysVerifyControl(handle, subject.keys)
+                    })
                 }
             }
         } finally {
-            SwarmNative.keysClose(handle)
+            if (handle != 0L) SwarmNative.keysClose(handle)
+        }
+    }
+
+    /** One verdict, at the level it deserves. A break is not an info line. */
+    // `kotlin.Result`, spelled out: inside a Worker, a bare `Result` is
+    // `ListenableWorker.Result` and the file compiles in a different language
+    // than the one it looks like.
+    private fun say(who: String, which: String, verdict: kotlin.Result<String>) {
+        val v = verdict.getOrElse { "error threw $it" }
+        when {
+            v.startsWith("ok") -> Log.i(TAG, "$which grant log intact for $who: $v")
+            v.startsWith("broken") -> Log.e(TAG, "$which GRANT LOG BROKEN for $who: $v")
+            // NO SILENT BRANCH. This once swallowed an empty answer as "nothing
+            // replicated yet", and an empty answer was exactly what a wrong
+            // argument produced — so the check ran every pass, checked nothing,
+            // and said nothing.
+            else -> Log.w(TAG, "$which chain check for $who said: '$v'")
         }
     }
 
