@@ -109,61 +109,73 @@ object Follower {
         SwarmNative.check()
         val since = System.currentTimeMillis() - hours * 3_600_000L
 
-        // **THE KEYS VAULT FIRST, AND ONLY IF IT ANSWERS.** Falling back rather
-        // than switching means a follower whose subject has not enabled the new
-        // vault — or who has not been granted on it yet — keeps seeing the
-        // readings it saw yesterday, instead of an empty graph and no way to
-        // tell why. The two vaults hold the same records; whichever can open
-        // them is the right one to ask.
-        if (Prefs.keysVault(context) && subject.keys.isNotEmpty()) {
-            val handle = SwarmKeys.open(context)
-            if (handle != 0L) {
-                val fromKeys = try {
-                    SwarmNative.keysGlucose(
-                        handle,
-                        SwarmKeys.joinedDir(context, subject.key).absolutePath,
-                        subject.keys,
-                        subject.purpose,
-                        since,
-                        MAX_READINGS.toLong()
-                    )
-                } catch (e: Throwable) {
-                    ""
-                } finally {
-                    SwarmNative.keysClose(handle)
-                }
-                // `error …` is a reason, not rows — see keysGlucose.
-                val failed = fromKeys.startsWith("error")
-                val parsed =
-                    if (failed || fromKeys.isBlank()) emptyList() else parseReadings(fromKeys)
-                if (failed) android.util.Log.i(SyncWorker.TAG, "keys read: $fromKeys")
-                fromKeys.lineSequence().firstOrNull { it.startsWith("#") }
-                    ?.let { android.util.Log.i(SyncWorker.TAG, "keys $it") }
-                // **SAY WHICH VAULT ANSWERED.** The fallback is deliberate and
-                // silent — a follower not yet granted on the new vault keeps
-                // seeing yesterday's readings rather than an empty graph — but
-                // silent means a working keys read and a failed one produce the
-                // same screen. Without this line there is no way to tell from
-                // outside the app which one happened, which is the whole reason
-                // shadow mode had to be rewritten this week.
-                android.util.Log.i(
-                    SyncWorker.TAG,
-                    if (parsed.isEmpty()) "keys read empty for ${subject.short} — falling back"
-                    else "keys read ${parsed.size} reading(s) for ${subject.short}"
-                )
-                if (parsed.isNotEmpty()) return parsed
-            }
-        }
+        // **BOTH VAULTS, MERGED — NOT ONE OR THE OTHER.**
+        //
+        // This used to prefer the keys vault and fall back only when it
+        // returned *nothing*. That is the wrong test, and somebody watching
+        // their graph found out before the tests did: the keys read returned
+        // 221 readings with a two-hour hole in the middle and a stale tip,
+        // which is not nothing, so the fallback never fired and the screen
+        // showed a broken history that looked deliberate.
+        //
+        // There is no need to choose. The two vaults are copies of the same
+        // records, so the union is never worse than either and a gap in one is
+        // filled by the other — which is exactly the condition a migration
+        // spends its whole life in. Deduped on timestamp, because the same
+        // reading arriving twice is the normal case here, not an anomaly.
+        val fromKeys = keysReadings(context, subject, since)
+        val fromCore = parseReadings(
+            SwarmNative.netGlucose(
+                SwarmPaths.store(context).absolutePath,
+                subject.key,
+                SwarmPaths.identity(context).absolutePath,
+                subject.purpose,
+                since,
+                MAX_READINGS
+            )
+        )
+        if (fromKeys.isEmpty()) return fromCore
 
-        return SwarmNative.netGlucose(
-            SwarmPaths.store(context).absolutePath,
-            subject.key,
-            SwarmPaths.identity(context).absolutePath,
-            subject.purpose,
-            since,
-            MAX_READINGS
-        ).let(::parseReadings)
+        val byTime = sortedMapOf<Long, Reading>()
+        for (r in fromCore) byTime[r.at] = r
+        for (r in fromKeys) byTime.putIfAbsent(r.at, r)
+        android.util.Log.i(
+            SyncWorker.TAG,
+            "merged ${fromCore.size} core + ${fromKeys.size} keys = ${byTime.size} for ${subject.short}"
+        )
+        return byTime.values.toList()
     }
+
+    /** What the keys vault can open, or empty. Never throws at the caller. */
+    private fun keysReadings(context: Context, subject: Subject, since: Long): List<Reading> {
+        if (!Prefs.keysVault(context) || subject.keys.isEmpty()) return emptyList()
+        val handle = SwarmKeys.open(context)
+        if (handle == 0L) return emptyList()
+        val raw = try {
+            SwarmNative.keysGlucose(
+                handle,
+                SwarmKeys.joinedDir(context, subject.key).absolutePath,
+                subject.keys,
+                subject.purpose,
+                since,
+                MAX_READINGS.toLong()
+            )
+        } catch (e: Throwable) {
+            android.util.Log.i(SyncWorker.TAG, "keys read threw: $e")
+            ""
+        } finally {
+            SwarmNative.keysClose(handle)
+        }
+        if (raw.startsWith("error")) {
+            android.util.Log.i(SyncWorker.TAG, "keys read: $raw")
+            return emptyList()
+        }
+        raw.lineSequence().firstOrNull { it.startsWith("#") }
+            ?.let { android.util.Log.i(SyncWorker.TAG, "keys $it") }
+        return parseReadings(raw)
+    }
+
+
 
     /** One row shape, parsed in one place, whichever vault produced it. */
     private fun parseReadings(rows: String): List<Reading> =
