@@ -286,6 +286,14 @@ class SwarmPlugin @Inject constructor(
             addPreference(
                 AdaptiveSwitchPreference(
                     ctx = context,
+                    booleanKey = SwarmBooleanKey.StayReachableAsleep,
+                    title = R.string.swarm_stay_reachable,
+                    summary = R.string.swarm_stay_reachable_summary
+                )
+            )
+            addPreference(
+                AdaptiveSwitchPreference(
+                    ctx = context,
                     booleanKey = SwarmBooleanKey.ShadowSpacesVault,
                     title = R.string.swarm_shadow_spaces,
                     summary = R.string.swarm_shadow_spaces_summary
@@ -419,12 +427,15 @@ class SwarmPlugin @Inject constructor(
         // the network changed — silently, on a phone driving a pump.
         SwarmNative.initAndroid(context.applicationContext)
         nz.diaswarm.jni.Multicast.hold(context)
-        // UNCONDITIONAL HERE, unlike the follower. This phone is the one being
-        // read: if it is unreachable nobody sees anything, and it is already
-        // holding a foreground service and a wake lock to drive a pump. The
-        // follower makes it a choice because the cost lands on a different
-        // person's battery than the benefit.
-        nz.diaswarm.jni.Multicast.stayReachable(context, true)
+        // A PREFERENCE, NOT A DECISION MADE FOR SOMEBODY. This phone is the one
+        // being read, so being reachable is its job — but it is also, usually,
+        // its owner's only phone, and a permanent wifi lock is a real battery
+        // cost to impose without asking. Default on; off is the behaviour that
+        // existed before the lock, which is late rather than broken.
+        nz.diaswarm.jni.Multicast.stayReachable(
+            context,
+            preferences.get(SwarmBooleanKey.StayReachableAsleep)
+        )
 
         // SERVE EVEN WITH NOTHING OF OUR OWN TO SERVE.
         //
@@ -516,6 +527,13 @@ class SwarmPlugin @Inject constructor(
      */
     private fun rejoinIfKeysPreferenceChanged() {
         if (serving == 0L) return
+        // Cheap, idempotent, and applied here so the switch works without a
+        // restart — the same reason the keys preference is reconciled on the
+        // pass rather than trusted to be read once at startup.
+        nz.diaswarm.jni.Multicast.stayReachable(
+            context,
+            preferences.get(SwarmBooleanKey.StayReachableAsleep)
+        )
         val wanted = preferences.get(SwarmBooleanKey.ShadowSpacesVault)
         if (wanted == servingWithKeys) return
         aapsLogger.info(

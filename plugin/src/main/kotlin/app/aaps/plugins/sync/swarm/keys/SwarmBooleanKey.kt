@@ -52,4 +52,26 @@ enum class SwarmBooleanKey(
      * `shadow agrees` or `shadow DISAGREES` with the counts behind it.
      */
     ShadowSpacesVault("swarm_shadow_spaces_vault", false),
+
+    /**
+     * Hold the wifi radio up so this phone can still be reached asleep.
+     *
+     * **THIS PHONE IS THE ONE BEING READ.** Deep doze closes the relay
+     * connection within about half a minute — measured — and a relay cannot
+     * push to a node that is not connected to it. So without this, everybody
+     * following this person goes quiet whenever the phone has been face down
+     * and still for a few minutes, and catches up in a rush afterwards.
+     *
+     * **On by default, and a preference because this is somebody's phone.** It
+     * was unconditional for about an hour, which was wrong: the phone running
+     * this is often its owner's only phone, and a permanent wifi lock is a real
+     * battery cost to impose without asking. Off, the behaviour is what it was
+     * before the lock existed — followers see older data rather than no data,
+     * and a phone on a charger never dozes anyway so the setting does nothing
+     * while it is plugged in.
+     *
+     * Independent of [ShadowSpacesVault]: reachability is about the endpoint,
+     * not about which vault is being written.
+     */
+    StayReachableAsleep("swarm_stay_reachable_asleep", true),
 }
