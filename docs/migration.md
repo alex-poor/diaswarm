@@ -1173,3 +1173,38 @@ The gap closes itself: `accept_handover` records the identity at the moment it
 proves it, and a follower hands over every half hour. But "I have no record" and
 "there is nothing there" are different statements and only one of them is
 reassuring, so the phone says the one that is true.
+
+### ✅ CLOSED — the withdrawal chain, on two phones, 2026-09-13 19:44
+
+The prediction was arithmetic, and it held. Ayni's last handover was 19:11:54,
+its passes are exactly two minutes apart, and the throttle is thirty minutes:
+
+```
+19:43:03  (ayni)  handed over to 552f688a
+19:43:24  (aaps)  handed over a reader as 265a21af855bdaf6… (follow)
+19:44             readers.json now carries a keys identity
+```
+
+And the recorded identity is **byte-identical to the one Ayni publishes** — 522
+characters, compared field-for-field against the invite on its own screen:
+
+```
+book entries: 7   with a keys identity: 1
+Ayni's reader key found in the book: True
+  identity len : recorded 522, invite 522
+  IDENTICAL    : True
+```
+
+That closes the chain without pulling a single byte of key material off either
+phone. `vaultReaderKeys` will hand `keysRevokeReader` exactly the identity that
+`keysGrant` was given, and `tag_of` derives from it exactly what `grant`
+derived — which is the property the unit test pins.
+
+⚠️ **One reader of seven, and that is correct rather than a shortfall.** Only a
+follower whose app actually hands over can be recorded; the other six are older
+pairings that may never have had a keys vault at all. They keep warning
+honestly when withdrawn rather than claiming a success they cannot deliver.
+
+*(Earlier in this file I wrote "nine readers" from a log line counting grant
+events. The book holds seven; `9 grants` counts statements in `grants.ndjson`,
+which includes more than one per reader.)*
