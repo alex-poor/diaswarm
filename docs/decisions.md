@@ -855,11 +855,33 @@ deliberately. Distinguishing them would answer, for any tag somebody cared to
 try, whether this subject has granted it — the membership question D13 exists to
 keep private.
 
-⚠️ **Still not wired to a transport.** The values exist and are proven between
-two vaults; nothing carries them between two phones yet. `Request::Offer`
-already carries an invite and the invite already carries a keys identity, so the
-remaining question is only where the proof rides — and whether that costs an
-ALPN bump, which the bundle work turned out not to.
+✅ **And it travels — `Request::Handover`.** The reader sends `{tag, keys,
+proof}`; the handler **records it without believing it**, because verifying
+needs the subject's encryption secret and granting needs the keys vault, and
+neither belongs in a handler that answers strangers. The queue is capped at 50
+and taken rather than read, so a forged claim gets one attempt instead of one
+per pass for ever. `a_granted_reader_hands_over_a_keys_identity_and_an_impostor_cannot`
+runs both over a real connection: both claims queue, and exactly one survives
+the check.
+
+🔴 **AND IT DOES NOT MOVE THE ALPN, WHICH IS THE OPPOSITE OF [D25](#).** That
+one had to move: an old peer replied empty, a scan looked like an ordinary
+refusal, and a flow people depended on broke silently. This one fails silently
+into the *status quo* — an old subject ignores the request and the reader keeps
+reading the vault it already reads. Nothing anybody relies on stops.
+
+The price has also changed since D25. That bump was "free now: every released
+follower postdates the variant", with the note that it "stops being free once
+somebody is running a published build". Ayni is published. A bump today refuses
+the connection outright to every installed follower, and per D8 a follower has
+no expiry mechanism to force it forward — so the cost is now real, and a new
+optional request is not worth paying it.
+
+*Reopens if:* a change arrives that genuinely breaks fetching, at which point
+the bump has to happen and this variant rides along with it.
+
+⚠️ **Still not wired into either app.** The mechanism is proven end to end at
+the protocol level; no plugin drains the queue and no follower sends a claim.
 
 ### D25 · Sharing writes to the peer it dials, and that moved the wire to `diaswarm/6`
 

@@ -258,3 +258,91 @@ fn a_later_invite_without_a_bundle_does_not_erase_the_one_we_have() {
     assert!(changed, "a rotated bundle was not recorded as a change");
     assert_eq!(held(&store).as_deref(), Some(rotated));
 }
+
+/// AN EXISTING FOLLOWER MOVES TO THE KEYS VAULT OVER THE WIRE.
+///
+/// **THE DELIVERY HALF OF [D27](../../../docs/decisions.md).** The proof itself
+/// is tested in `diaswarm-core`; what this asks is whether it survives the trip
+/// and whether the subject is any safer for having received it.
+///
+/// The shape is deliberately the awkward one: the impostor has everything
+/// public. They have read the grant log, so they know the tag. They know the
+/// purpose, because there are only a few. They can see the identity the real
+/// reader is offering, because it is in an invite. The only thing they do not
+/// have is one of the two private keys, and that has to be enough.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_granted_reader_hands_over_a_keys_identity_and_an_impostor_cannot() {
+    use diaswarm_core::seal::handover_proof_for;
+    use diaswarm_core::vault::hex;
+    use diaswarm_net::peer::{take_handovers, Handover};
+    use diaswarm_net::wire::hand_over;
+
+    let store = tmp("handover-wire");
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let impostor = Identity::generate();
+    let vault = Vault::create(&store.join("subject"), &subject, OFFSET).unwrap();
+
+    let subject_pub = subject.enc_public();
+    let reader_pub = reader.enc_public();
+
+    // The pairing that already happened, on the old vault.
+    let tag = hex(&diaswarm_core::seal::grant_tag(&subject.encryption, &reader_pub, "follow"));
+    vault.record_grant(&subject, &reader_pub, "follow", "grant", 0).unwrap();
+    vault.remember_reader(&tag, &reader_pub, "follow").unwrap();
+
+    let identity = "a36c6964656e746974795f6b657958200badc0ffee";
+
+    // ---- over a real connection ----
+    let secret = SecretKey::generate();
+    let router = serve_with(store.clone(), secret, true).await.unwrap();
+    let addr = router.endpoint().addr();
+    // A throwaway endpoint, as `fetch_with` uses: local-only, since the
+    // server above is bound the same way.
+    let caller = iroh::Endpoint::bind(iroh::endpoint::presets::Minimal).await.unwrap();
+
+    let real = hex(&handover_proof_for(&reader.encryption, &subject_pub, "follow", identity));
+    // THE MIXED ALPN, as `serve_offering` accepts and `fetch_on` dials — not
+    // the plain constant. See swarm::default_wire_alpn.
+    let alpn = diaswarm_net::swarm::default_wire_alpn();
+    let took = hand_over(&caller, &alpn[..], addr.clone(), &tag, identity, &real).await.unwrap();
+    assert!(took, "the subject did not take a claim from a reader it had granted");
+
+    // The impostor quotes the same tag, the same purpose, the same identity.
+    let forged = hex(&handover_proof_for(&impostor.encryption, &subject_pub, "follow", identity));
+    hand_over(&caller, &alpn[..], addr, &tag, identity, &forged).await.unwrap();
+
+    // **BOTH ARE QUEUED, AND THAT IS THE DESIGN.** The handler answers
+    // strangers and holds no secret, so it cannot tell them apart; what it can
+    // do is refuse to act. The sorting happens here, where the secret is.
+    let claims = take_handovers(&store).unwrap();
+    assert_eq!(claims.len(), 2, "expected both claims to be queued: {claims:?}");
+
+    let mut accepted = Vec::new();
+    for claim in &claims {
+        let bytes = diaswarm_core::vault::unhex(&claim.proof).unwrap();
+        if let Some(who) = vault.accept_handover(&subject, &claim.tag, &claim.keys, &bytes).unwrap()
+        {
+            accepted.push(who);
+        }
+    }
+    assert_eq!(
+        accepted,
+        vec![hex(&reader_pub)],
+        "exactly the reader who already held a grant should have been accepted"
+    );
+
+    // And the queue is empty afterwards, so a forged claim gets one attempt
+    // rather than one per pass for ever.
+    assert!(take_handovers(&store).unwrap().is_empty());
+
+    // A retry of the same claim does not pile up.
+    let again = Handover {
+        tag: tag.clone(),
+        keys: identity.to_string(),
+        proof: real.clone(),
+    };
+    diaswarm_net::peer::record_handover(&store, again.clone()).unwrap();
+    diaswarm_net::peer::record_handover(&store, again).unwrap();
+    assert_eq!(take_handovers(&store).unwrap().len(), 1, "a retry was queued twice");
+}

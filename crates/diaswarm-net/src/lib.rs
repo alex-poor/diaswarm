@@ -120,6 +120,44 @@ pub enum Request {
     /// person's ciphertext and try to open it", and whether anything opens is
     /// decided by the grant the subject just made, not by this message.
     Offer { invite: String },
+
+    /// A reader this subject already granted, offering a `diaswarm-keys`
+    /// identity so the grant can follow them to the new vault.
+    ///
+    /// **THIS IS THE MIGRATION, AND IT EXISTS SO NOBODY HAS TO RE-PAIR.**
+    /// Following is meant to be permanent until revoked. A cutover that made
+    /// every existing follower scan a new code would break that for all of them
+    /// at once — see [D27](../../docs/decisions.md).
+    ///
+    /// **THE TAG IS NOT THE AUTHENTICATION.** Tags are in the grant log in
+    /// clear and the log replicates, so anyone holding a replica can quote
+    /// somebody else's. `proof` is what cannot be quoted: HKDF over the ECDH
+    /// secret the tag is itself derived from, bound to the purpose and to the
+    /// identity being claimed. Only the two parties can produce it.
+    ///
+    /// **RECORDED, NOT ACTED ON.** The handler writes the claim to a queue and
+    /// nothing else. Verifying needs the subject's encryption secret and
+    /// granting needs the keys vault, and neither belongs in a network handler
+    /// that answers strangers — so the claim is checked where grants already
+    /// happen, and an unverifiable one is dropped there.
+    ///
+    /// **AND IT DOES NOT MOVE THE ALPN, WHICH IS THE OPPOSITE OF [`Request::Offer`].**
+    /// That one had to move because failing silently broke a flow people
+    /// depended on: an old peer replied empty and a scan looked like a refusal.
+    /// This fails silently into the status quo — an old subject ignores the
+    /// request, the reader keeps reading the vault it already reads, and
+    /// nothing a person was relying on stops working. A bump would refuse the
+    /// connection outright to every published follower, and per D8 a follower
+    /// has no expiry mechanism to force it forward, so that price is now real
+    /// and this one is not worth paying it.
+    Handover {
+        /// The relationship tag, as the reader computes it for this subject.
+        tag: String,
+        /// The reader's keys identity, hex, exactly as an invite carries it.
+        keys: String,
+        /// `seal::handover_proof`, hex.
+        proof: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -220,7 +258,11 @@ pub fn answer(store: &Path, req: &Request) -> Result<Vec<u8>> {
     match req {
         // Handled by the server, which owns the acceptance window this needs;
         // `answer` is the read-only half and stays that way.
-        Request::Offer { .. } => Ok(Vec::new()),
+        // Both of the write-shaped requests are answered elsewhere: `Offer`
+        // in the handler, where the acceptance window lives, and `Handover` in
+        // the queue, because verifying it needs a secret this function is not
+        // given and must not be.
+        Request::Offer { .. } | Request::Handover { .. } => Ok(Vec::new()),
         Request::Have => {
             let mut subjects: Vec<String> = Vec::new();
             if store.exists() {

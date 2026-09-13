@@ -128,6 +128,85 @@ impl Follow {
     }
 }
 
+/// A keys identity somebody has claimed, waiting to be checked.
+///
+/// **WRITTEN BY A NETWORK HANDLER, BELIEVED BY NOBODY.** Anyone who can reach
+/// this peer can add one of these; that is why nothing here is trusted and why
+/// the file is capped. Verification needs the subject's encryption secret, and
+/// granting needs the keys vault, so both happen where those already are —
+/// `Vault::accept_handover` and then a grant.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Handover {
+    /// The relationship tag the claimant says is theirs.
+    pub tag: String,
+    /// Their keys identity, hex.
+    pub keys: String,
+    /// `seal::handover_proof`, hex.
+    pub proof: String,
+}
+
+/// Where claims wait. Beside `follows.json`, for the reason given there.
+pub fn handovers_path(store: &Path) -> PathBuf {
+    store.join("handovers.json")
+}
+
+/// **A CAP, BECAUSE THE WRITER IS A STRANGER.** Without one, anybody who can
+/// reach this peer can grow a file on it for ever. Fifty is far more than a
+/// person has followers and small enough that a flood costs nothing; the
+/// oldest are dropped, because a real claim is retried and a flood is not
+/// worth remembering.
+const MAX_HANDOVERS: usize = 50;
+
+pub fn load_handovers(store: &Path) -> Result<Vec<Handover>> {
+    let path = handovers_path(store);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = std::fs::read(&path).with_context(|| format!("{}", path.display()))?;
+    Ok(serde_json::from_slice(&raw).unwrap_or_default())
+}
+
+pub fn save_handovers(store: &Path, claims: &[Handover]) -> Result<()> {
+    std::fs::create_dir_all(store)?;
+    std::fs::write(handovers_path(store), serde_json::to_vec_pretty(claims)?)?;
+    Ok(())
+}
+
+/// Record a claim. Returns whether anything changed.
+///
+/// Idempotent on the whole claim: a reader that retries because the subject was
+/// asleep must not fill the queue with copies of itself.
+pub fn record_handover(store: &Path, claim: Handover) -> Result<bool> {
+    if claim.tag.is_empty() || claim.keys.is_empty() || claim.proof.is_empty() {
+        return Ok(false);
+    }
+    let mut claims = load_handovers(store)?;
+    if claims.contains(&claim) {
+        return Ok(false);
+    }
+    claims.push(claim);
+    if claims.len() > MAX_HANDOVERS {
+        let drop = claims.len() - MAX_HANDOVERS;
+        claims.drain(..drop);
+    }
+    save_handovers(store, &claims)?;
+    Ok(true)
+}
+
+/// Take the queue, leaving it empty.
+///
+/// **TAKEN RATHER THAN READ**, so a claim that cannot be verified is dropped
+/// instead of being retried on every pass for ever. A genuine reader whose
+/// claim arrived while the subject was mid-rotation will send it again; a
+/// forged one will not get another free attempt.
+pub fn take_handovers(store: &Path) -> Result<Vec<Handover>> {
+    let claims = load_handovers(store)?;
+    if !claims.is_empty() {
+        save_handovers(store, &[])?;
+    }
+    Ok(claims)
+}
+
 /// The peer's list of what to keep, stored beside the vaults it keeps.
 ///
 /// In the store root rather than anywhere else, because a store is the unit

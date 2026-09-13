@@ -72,6 +72,22 @@ impl ProtocolHandler for VaultServer {
                     let open = self.accepting_until.load(Ordering::Relaxed) > now_ms();
                     if open { take_offer(&self.store, &invite) } else { Vec::new() }
                 }
+                // **RECORDED WITHOUT BEING BELIEVED.** Verifying needs the
+                // subject's encryption secret, which this handler is not given
+                // and should not be: it answers strangers. The claim goes in a
+                // capped queue and is checked where grants already happen.
+                //
+                // Unlike `Offer` there is no acceptance window, because there
+                // is nothing to protect: a claim costs a line in a file and
+                // buys nothing until it verifies against a reader this subject
+                // has already granted.
+                Ok(Request::Handover { tag, keys, proof }) => {
+                    let claim = crate::peer::Handover { tag, keys, proof };
+                    match crate::peer::record_handover(&self.store, claim) {
+                        Ok(true) => b"1".to_vec(),
+                        _ => Vec::new(),
+                    }
+                }
                 Ok(req) => answer(&self.store, &req).unwrap_or_default(),
                 Err(_) => Vec::new(),
             };
@@ -95,6 +111,34 @@ pub async fn offer_on(
 ) -> Result<bool> {
     let conn = endpoint.connect(addr, alpn).await?;
     let reply = ask(&conn, &Request::Offer { invite: invite.to_string() }).await?;
+    conn.close(0u32.into(), b"done");
+    Ok(!reply.is_empty())
+}
+
+/// Offer a keys identity to a subject that already granted us.
+///
+/// **THE READER'S HALF OF D27.** Returns whether it was taken, and a subject
+/// too old to understand the request replies empty — which reads as "not
+/// taken", which is exactly right: nothing that was working stops, the reader
+/// goes on reading the vault it already reads.
+pub async fn hand_over(
+    endpoint: &iroh::Endpoint,
+    alpn: &[u8],
+    addr: iroh::EndpointAddr,
+    tag: &str,
+    keys: &str,
+    proof: &str,
+) -> Result<bool> {
+    let conn = endpoint.connect(addr, alpn).await?;
+    let reply = ask(
+        &conn,
+        &Request::Handover {
+            tag: tag.to_string(),
+            keys: keys.to_string(),
+            proof: proof.to_string(),
+        },
+    )
+    .await?;
     conn.close(0u32.into(), b"done");
     Ok(!reply.is_empty())
 }
