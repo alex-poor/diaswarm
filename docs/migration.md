@@ -1157,3 +1157,19 @@ from outside and only one of them is fine.
 did the whole job, and each consumer was built far enough to look like it
 worked. Glucose without treatments. Treatments without the profile. Granting
 without withdrawing.
+
+⚠️ **And it heals rather than being right immediately.** A reader granted before
+the book had this field has no keys identity on record, and looks identical to a
+reader who never had one — except the first is still reading. So the empty case
+warns rather than reassuring:
+
+```
+swarm: no keys identity on record for 265a21af… — the core withdrawal stands,
+       but if they are a keys member this did NOT remove them.
+       Retry once they have handed over (within 30 minutes).
+```
+
+The gap closes itself: `accept_handover` records the identity at the moment it
+proves it, and a follower hands over every half hour. But "I have no record" and
+"there is nothing there" are different statements and only one of them is
+reassuring, so the phone says the one that is true.

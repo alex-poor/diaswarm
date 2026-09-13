@@ -962,7 +962,20 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             return
         }
         if (theirKeys.isEmpty()) {
-            aapsLogger.info(LTag.CORE, "swarm: no keys member for ${who.take(16)}… — nothing to withdraw there")
+            // **"I HAVE NO RECORD", NOT "THERE IS NOTHING".** Those are
+            // different statements and only one of them is reassuring. A reader
+            // granted before this book had the field, who IS a member of the
+            // keys group, looks exactly like a reader who never was — and the
+            // first one is still reading. It fills itself in: a handover
+            // records the identity the moment it proves it, and a follower
+            // sends one every half hour. But until it has, this phone cannot
+            // say they are out, so it does not.
+            aapsLogger.warn(
+                LTag.CORE,
+                "swarm: no keys identity on record for ${who.take(16)}… — the core " +
+                    "withdrawal stands, but if they are a keys member this did NOT remove them. " +
+                    "Retry once they have handed over (within 30 minutes)."
+            )
             return
         }
         val handle = openShadow()
