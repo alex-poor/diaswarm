@@ -533,10 +533,45 @@ impl Swarm {
 
         let endpoint = self.iroh_endpoint().await?;
         let alpn = wire_alpn(self.endpoint.network_id());
+        // **ONE SUBJECT AT A TIME WAS ONE SUBJECT BLOCKING THE REST.** This was
+        // a sequential loop, and a follow whose phone is flat does not fail
+        // fast: the dial waits out QUIC's own timeouts, and every subject
+        // *after* it in the file waits with it. The flagship is a parent with
+        // more than one child, so that is a second child's readings stopping
+        // for a reason that has nothing to do with them — and the screen says
+        // only that the data is old.
+        //
+        // Concurrent, and each one bounded. They are independent: every follow
+        // writes into its own subject directory, and the two limits are
+        // different questions — `PER_FOLLOW` is how long one unreachable phone
+        // may cost, and the concurrency is how many dials a phone runs at once.
+        //
+        // Found by `one_unreachable_subject_does_not_stop_the_others`, which is
+        // the kind of test that only exists because two of these were found by
+        // hand on real phones first.
+        const PER_FOLLOW: std::time::Duration = std::time::Duration::from_secs(20);
+        let attempts = follows.into_iter().map(|follow| {
+            let endpoint = endpoint.clone();
+            let alpn = alpn.clone();
+            async move {
+                match tokio::time::timeout(
+                    PER_FOLLOW,
+                    crate::peer::refresh_one_on_alpn(&endpoint, &alpn, &self.store, &follow),
+                )
+                .await
+                {
+                    Ok(r) => (follow, r),
+                    // A timeout is "not reached", which is what an unreachable
+                    // peer already looks like — the ordinary condition of a
+                    // swarm, not an error.
+                    Err(_) => (follow.clone(), crate::peer::Refreshed::unreachable(&follow)),
+                }
+            }
+        });
+        let refreshed: Vec<_> = futures_util::future::join_all(attempts).await;
+
         let mut out = Vec::new();
-        for follow in follows {
-            let mut r =
-                crate::peer::refresh_one_on_alpn(&endpoint, &alpn, &self.store, &follow).await;
+        for (follow, mut r) in refreshed {
             if !r.reached() {
                 // The scanned address is quiet. Somebody in the pool announced
                 // holding this, and any holder serves identical bytes (D15).

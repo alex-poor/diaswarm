@@ -204,3 +204,119 @@ async fn a_node_id_that_nobody_serves_is_not_reported_as_reached() {
         "reported reaching a node that does not exist — every reachability test here is then meaningless"
     );
 }
+
+/// A **STALE** ADDRESS IS WORSE THAN NO ADDRESS, AND IT IS THE REAL CASE.
+///
+/// The test above follows by bare node id. A real follow record does not look
+/// like that: it holds `<id>@<ip>:<port>` from the moment the invite was
+/// scanned, and after the subject's phone reconnects that address belongs to
+/// nobody — or, worse, to some other device on the same wifi. So the question
+/// is not "can we work with no address" but "can we work through a wrong one",
+/// and a dial that tries the recorded address first must not stop there.
+///
+/// This is the overnight outage in its exact shape.
+#[tokio::test]
+async fn a_recorded_address_that_has_gone_stale_does_not_block_discovery() {
+    let net = network_id("reach-stale");
+    let subject_store = tmp("stale-subject");
+    let reader_store = tmp("stale-reader");
+    let reader = Identity::generate();
+    let (_subject, subject_hex) = subject_in(&subject_store, &reader);
+
+    let key = SigningKey::generate();
+    let publisher = Swarm::join_network(subject_store.clone(), key.clone(), net).await.expect("pub");
+    let id = publisher.node_id().await.unwrap();
+
+    // A plausible address that is not the publisher's: what a follow record
+    // holds after the other phone has moved.
+    let stale = format!("{id}@192.0.2.1:1");
+    let follower = Swarm::join_network(reader_store.clone(), SigningKey::generate(), net)
+        .await
+        .expect("follower");
+    add_follow(&reader_store, &subject_hex, &stale, Some("follow")).unwrap();
+
+    assert!(
+        reaches_within(&follower, 25).await,
+        "a stale recorded address stopped the follower finding a subject that is right there"
+    );
+}
+
+/// THE FOLLOWER RESTARTS AND PICKS UP WHERE IT WAS.
+///
+/// The other half of a restart. A follower is closed, reopened — a phone
+/// rebooting, an app killed by the system overnight — and has to find the
+/// subject again from what it persisted, with no scan and no help.
+#[tokio::test]
+async fn a_follower_that_restarts_finds_the_subject_again() {
+    let net = network_id("reach-followerstart");
+    let subject_store = tmp("fr-subject");
+    let reader_store = tmp("fr-reader");
+    let reader = Identity::generate();
+    let (_subject, subject_hex) = subject_in(&subject_store, &reader);
+
+    let publisher = Swarm::join_network(subject_store, SigningKey::generate(), net).await.expect("pub");
+    let id = publisher.node_id().await.unwrap();
+
+    let follower_key = SigningKey::generate();
+    let first = Swarm::join_network(reader_store.clone(), follower_key.clone(), net)
+        .await
+        .expect("follower");
+    add_follow(&reader_store, &subject_hex, &id, Some("follow")).unwrap();
+    assert!(reaches_within(&first, 20).await, "never reached before the restart");
+
+    drop(first);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let second = Swarm::join_network(reader_store, follower_key, net).await.expect("restarted");
+    assert!(
+        reaches_within(&second, 25).await,
+        "a restarted follower could not find a subject it had already been reading"
+    );
+}
+
+/// ONE UNREACHABLE SUBJECT MUST NOT TAKE THE OTHERS DOWN WITH IT.
+///
+/// **THE FLAGSHIP IS A PARENT WITH MORE THAN ONE CHILD.** If a refresh gives up
+/// — or worse, hangs — because one of them has a flat phone, then a second
+/// child's readings stop for a reason that has nothing to do with them, and the
+/// screen says only that the data is old.
+#[tokio::test]
+async fn one_unreachable_subject_does_not_stop_the_others() {
+    let net = network_id("reach-two");
+    let store = tmp("two-reader");
+    let live_store = tmp("two-live");
+    let reader = Identity::generate();
+
+    let (_live, live_hex) = subject_in(&live_store, &reader);
+    let (_gone, gone_hex) = subject_in(&store, &reader);
+
+    let publisher = Swarm::join_network(live_store, SigningKey::generate(), net).await.expect("pub");
+    let live_id = publisher.node_id().await.unwrap();
+    let ghost = p2panda_core::SigningKey::generate().verifying_key().to_string();
+
+    let follower = Swarm::join_network(store.clone(), SigningKey::generate(), net).await.expect("f");
+    add_follow(&store, &gone_hex, &ghost, Some("follow")).unwrap();
+    add_follow(&store, &live_hex, &live_id, Some("follow")).unwrap();
+
+    // **WHAT THIS ACTUALLY GUARDS IS THE BOUND, NOT THE CONCURRENCY.** Checked
+    // by mutation, because the first version of this comment claimed more than
+    // the test could show: reverting the refresh to a sequential loop leaves it
+    // passing, while removing the per-follow timeout fails it with
+    // "refresh_follows never returned". So the load-bearing fix is that one
+    // unreachable phone costs a bounded amount of time — the parallelism is
+    // real and worth having, and this is not the test that proves it.
+    //
+    // The claim is "not prevented", not "not delayed": a pass runs every two
+    // minutes, so a bounded wait is fine and an unbounded one was not.
+    let results = tokio::time::timeout(Duration::from_secs(45), follower.refresh_follows())
+        .await
+        .expect("refresh_follows never returned — one dead follow is blocking the pass")
+        .expect("refresh failed");
+
+    assert!(
+        results.iter().any(|r| r.reached()),
+        "a subject with a dead phone stopped a second, healthy subject being read: {:?}",
+        results.iter().map(|r| (&r.subject, r.reached())).collect::<Vec<_>>()
+    );
+    assert_eq!(results.len(), 2, "both follows should be reported, reachable or not");
+}

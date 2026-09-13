@@ -1491,3 +1491,31 @@ the relay dropping are all real scenarios that only a phone can run. What exists
 for those is instrumentation — `relay=` on every pool pass — and
 `dumpsys deviceidle force-idle`, which answers in four minutes what looked like
 a week of waiting.
+
+### 🐛 And the tests immediately found one by themselves
+
+`one_unreachable_subject_does_not_stop_the_others` failed the first time it ran.
+`refresh_follows` was a sequential loop with no per-follow bound, so a subject
+whose phone is flat did not fail fast — the dial waited out QUIC's own
+timeouts, and every subject *after it in the file* waited with it. The flagship
+is a parent with more than one child: that is a second child's readings stopping
+for a reason that has nothing to do with them, with the screen saying only that
+the data is old.
+
+Fixed two ways — bounded per follow, and run concurrently.
+
+**Then mutation testing corrected the claim.** The first version of that comment
+said the test proved the concurrency. It does not:
+
+| mutation | result |
+|---|---|
+| revert to a sequential loop, keep the bound | **passes** |
+| keep concurrency, remove the bound | **fails** — "refresh_follows never returned" |
+
+So the load-bearing fix is the *bound*. The parallelism is real and worth
+having, and that test is not what proves it. Both the code and the comment say
+so now.
+
+That is three mutation checks on this suite — the permission guard, the bare
+node id, and this — and one of them changed what the code claims about itself.
+A test whose failure mode has never been observed is a decoration.

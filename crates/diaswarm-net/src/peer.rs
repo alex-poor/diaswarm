@@ -385,6 +385,25 @@ pub struct Refreshed {
 }
 
 impl Refreshed {
+    /// A follow that ran out of time. Not reached, and says why.
+    ///
+    /// A timeout and an unreachable peer are the same answer to the caller —
+    /// nothing arrived — but they are different things to somebody reading a
+    /// log, so the reason is recorded rather than left as silence.
+    pub fn unreachable(follow: &Follow) -> Self {
+        Refreshed {
+            subject: follow.subject.clone(),
+            via: None,
+            segments: 0,
+            wraps: 0,
+            failures: follow
+                .from
+                .iter()
+                .map(|f| (f.clone(), "timed out".to_string()))
+                .collect(),
+        }
+    }
+
     pub fn reached(&self) -> bool {
         self.via.is_some()
     }
