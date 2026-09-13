@@ -515,6 +515,23 @@ object SwarmNative {
      * Reads every epoch, not a tail: a profile is published when it changes, so
      * a stable loop's newest profile can be weeks old.
      */
+    /**
+     * Grant from a D27 handover — the same grant, minus the authority to
+     * reverse a revoke.
+     *
+     * **USE THIS FOR ANYTHING THAT ARRIVES OVER THE NETWORK.** [keysGrant] is
+     * the deliberate door and will let a revoked reader back in, because a
+     * person scanning an invite again means it. A handover proves only that the
+     * sender already reads this subject on the *old* vault — which is exactly
+     * what somebody revoked on the new one still has — so without this they
+     * would hand themselves back in on their next pass, with no scan, no prompt
+     * and nothing on screen.
+     *
+     * Returns the same 64 hex characters, or `error revoked`, which is the
+     * refusal working.
+     */
+    external fun keysGrantUnattended(handle: Long, readerBundle: String, purpose: String): String
+
     external fun keysProfile(
         handle: Long,
         joinedDir: String,

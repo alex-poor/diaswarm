@@ -892,10 +892,33 @@ trees precisely so that is not theirs to choose. And **the reader only offers to
 subjects that have published a keys identity**, because one that has not has no
 keys vault to be granted on and the request would be noise.
 
-⚠️ **Untested on hardware.** The mechanism is proven between two vaults and over
-a real connection in `tests/peer.rs`; the app plumbing around it has been
-compiled and not run. Everything that went wrong on 2026-09-13 went wrong in
-exactly that gap.
+✅ **Proven on hardware, 2026-09-13.** Two phones, no scan: the follower offered
+its identity and the subject granted it on the keys vault. What the app plumbing
+then got wrong was not the proof — it was everything either side of it, which is
+where every failure this day lived.
+
+⚠️ **AND A HANDOVER IS A DOOR, SO IT NEEDS A LOCK.** A handover proves the
+sender already reads this subject *on the old vault*. That is exactly what
+somebody revoked on the **new** vault still has — so, unlocked, they hand
+themselves back in on their next pass: no scan, no prompt, nothing on screen,
+and revocation silently undone for precisely the person it was aimed at. It is
+not hypothetical; the follower retries every pass by design.
+
+So the group keeps a tombstone of everyone it has removed, and there are two
+grant doors that differ on one thing only — whether they may ignore it:
+
+| | may re-add a revoked reader | reached from |
+|---|---|---|
+| `Vault::grant` | yes | a person scanning an invite, or asking |
+| `Vault::grant_unattended` | no — `Error::Revoked` | a message off the network |
+
+Not a boolean with a default, because a distinction that can be got wrong by
+omission will be. Two names put it at the call site, where it is read.
+
+The tombstone is written in the DGM's `remove` hook rather than in
+`Vault::revoke`, so no other path to removing a member can skip it, and it is
+`#[serde(default)]` so a vault written before it existed still opens. It
+survives a restart, which is the only version of this that means anything.
 
 ### D25 · Sharing writes to the peer it dials, and that moved the wire to `diaswarm/6`
 

@@ -2214,7 +2214,60 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGrant<'a>(
             Err(e) => return to_jstring(env, format!("error bundle {e}")),
         },
     };
-    let tag = match v.vault.grant(bundle, &purpose) {
+    grant_and_publish(env, v, bundle, &purpose, false)
+}
+
+/// Grant from a D27 handover: the same grant, minus the authority to reverse a
+/// revoke.
+///
+/// **A SEPARATE ENTRY POINT, NOT A FLAG WITH A DEFAULT.** The two callers are a
+/// person scanning an invite and a message arriving over the network, and only
+/// the first may let a revoked reader back in. A boolean argument would put
+/// that distinction somewhere it can be got wrong by omission; two names put it
+/// at the call site where it is read.
+///
+/// Returns the same 64 hex characters, or `error revoked` — which is a refusal
+/// working, not a failure.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGrantUnattended<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    reader_bundle: JString<'a>,
+    purpose: JString<'a>,
+) -> JString<'a> {
+    let (Ok(bundle), Ok(purpose)) = (env.get_string(&reader_bundle), env.get_string(&purpose))
+    else {
+        return to_jstring(env, "error bad-argument".to_string());
+    };
+    let (bundle, purpose) = (String::from(bundle), String::from(purpose));
+    let Some(v) = keys_vault(handle) else {
+        return to_jstring(env, "error no-vault".to_string());
+    };
+    let bundle = match diaswarm_keys::decode_identity(&bundle) {
+        Ok(id) => id.bundle,
+        Err(_) => match diaswarm_keys::decode_bundle(&bundle) {
+            Ok(b) => b,
+            Err(e) => return to_jstring(env, format!("error bundle {e}")),
+        },
+    };
+    grant_and_publish(env, v, bundle, &purpose, true)
+}
+
+/// Add the reader, publish the welcome if there is one, and answer with the tag.
+fn grant_and_publish<'a>(
+    env: JNIEnv<'a>,
+    v: &mut KeysVault,
+    bundle: diaswarm_keys::LongTermKeyBundle,
+    purpose: &str,
+    unattended: bool,
+) -> JString<'a> {
+    let granted = if unattended {
+        v.vault.grant_unattended(bundle, purpose)
+    } else {
+        v.vault.grant(bundle, purpose)
+    };
+    let tag = match granted {
         Ok((welcome, tag)) => {
             if let Err(e) = v.handle.block_on(diaswarm_keys::wire::publish_control(
                 &v.store,
@@ -2232,6 +2285,12 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGrant<'a>(
         // is unchanged and a retry is indistinguishable from a first attempt —
         // which is what makes the follower's retries free.
         Err(diaswarm_keys::Error::AlreadyGranted(tag)) => tag,
+        // **A REFUSAL WORKING, SAID OUT LOUD.** Only the unattended door can
+        // reach this. It is not an error the caller should retry away: it means
+        // somebody who was revoked tried to come back through a handover.
+        Err(diaswarm_keys::Error::Revoked(_)) => {
+            return to_jstring(env, "error revoked".to_string());
+        }
         Err(e) => return to_jstring(env, format!("error grant {e}")),
     };
     let mut hex = String::with_capacity(64);

@@ -1052,3 +1052,34 @@ already holds a grant *on the core vault*. Once revocation moves to the keys
 vault, revoking there and not on the core vault would leave a handover as a way
 back in. Nothing to fix today — revocation is still a core-vault operation — but
 it must be fixed with whatever UI takes revocation over.
+
+### 🐛 And the door the re-grant loop was holding open
+
+Fixing the retry loop meant looking at what a retry *does*, which is where the
+worse problem was. A D27 handover proves the sender already reads this subject
+**on the old vault**. That is exactly what somebody revoked on the **new** vault
+still has.
+
+So: revoke a follower on the keys vault, and their next pass hands over again
+and puts them back. No scan, no prompt, nothing on screen. Revocation silently
+undone for precisely the person it was aimed at — by a retry loop that is there
+by design.
+
+The group keeps a tombstone of everyone removed now, written in the DGM's
+`remove` hook so no other path to removing a member can skip it, and there are
+two grant doors differing on one thing only:
+
+| | may re-add a revoked reader | reached from |
+|---|---|---|
+| `Vault::grant` / `keysGrant` | yes | a person scanning an invite |
+| `Vault::grant_unattended` / `keysGrantUnattended` | no | a message off the network |
+
+Not a boolean with a default: a distinction that can be got wrong by omission
+will be. The refusal is logged once per reader — "refused a handover from a
+revoked reader" — because it is the mechanism working, not a fault, and a line
+printed every pass would become noise nobody reads.
+
+This was written up an hour earlier as "nothing to fix today — revocation is
+still a core-vault operation". That was true and it was the wrong call: the
+cutover is tomorrow, the whole point of it is that revocation moves to the keys
+vault, and a lock installed after the door is used is not a lock.

@@ -97,6 +97,23 @@ pub struct Dgm;
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct DgmState {
     pub members: HashSet<MemberId>,
+    /// Everybody who has been removed from this group, kept after they go.
+    ///
+    /// **A REVOKE HAS TO OUTLIVE THE MEMBERSHIP IT ENDED.** Membership alone
+    /// cannot tell "never granted" from "granted and taken away", and the two
+    /// have opposite answers for anything that grants automatically. A D27
+    /// handover proves the sender already reads this subject on the *old*
+    /// vault; with no tombstone, somebody revoked on the keys vault hands over
+    /// again on their next pass and is let straight back in, with no scan, no
+    /// prompt and nothing on screen.
+    ///
+    /// It does not block the subject re-granting somebody deliberately — see
+    /// [`crate::Vault::grant`] against [`crate::Vault::grant_unattended`].
+    ///
+    /// `default`, so a vault written before this existed still opens; it starts
+    /// empty, which is what it was before.
+    #[serde(default)]
+    pub revoked: HashSet<MemberId>,
 }
 
 impl GroupMembership<MemberId, OperationId> for Dgm {
@@ -104,7 +121,7 @@ impl GroupMembership<MemberId, OperationId> for Dgm {
     type Error = Infallible;
 
     fn create(_me: MemberId, initial: &[MemberId]) -> Result<Self::State, Self::Error> {
-        Ok(DgmState { members: initial.iter().cloned().collect() })
+        Ok(DgmState { members: initial.iter().cloned().collect(), revoked: HashSet::new() })
     }
 
     /// **THE JOINER PUTS ITSELF IN, AND COPYING UPSTREAM HERE WAS WRONG.**
@@ -148,6 +165,10 @@ impl GroupMembership<MemberId, OperationId> for Dgm {
         _op: OperationId,
     ) -> Result<Self::State, Self::Error> {
         y.members.remove(removed);
+        // THE TOMBSTONE, and it is written here rather than in `Vault::revoke`
+        // so that it cannot be skipped by a path that removes a member some
+        // other way. See [`DgmState::revoked`].
+        y.revoked.insert(*removed);
         Ok(y)
     }
 

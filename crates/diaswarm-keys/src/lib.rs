@@ -77,12 +77,19 @@ pub use p2panda_encryption::Rng;
 /// every caller, and a mismatch there is the kind that shows up as a trait not
 /// being implemented for a type that visibly implements it.
 pub use p2panda_store::{SqliteStore, SqliteStoreBuilder};
+
+/// The reader's half of a pairing, as it travels in an invite.
+///
+/// Re-exported because callers that decode one have to name it: the two grant
+/// doors both take it, and a caller cannot choose between them without being
+/// able to hold the thing they are choosing about.
+pub use p2panda_encryption::key_bundle::LongTermKeyBundle;
 use p2panda_encryption::crypto::x25519::SecretKey;
 use p2panda_encryption::crypto::xchacha20::XAeadNonce;
 use p2panda_encryption::data_scheme::{
     EncryptionGroup, GroupState, GroupSecretId, decrypt_data, encrypt_data,
 };
-use p2panda_encryption::key_bundle::{Lifetime, LongTermKeyBundle};
+use p2panda_encryption::key_bundle::Lifetime;
 use p2panda_encryption::key_manager::{KeyManager, KeyManagerState};
 use p2panda_encryption::key_registry::KeyRegistry;
 use p2panda_encryption::traits::PreKeyManager;
@@ -121,6 +128,14 @@ pub enum Error {
     /// The control message was genuine and was not this vault's welcome.
     #[error("that control message does not welcome this vault into the group")]
     NotWelcomed,
+    /// This reader was revoked, and the caller is not allowed to undo that.
+    ///
+    /// **ONLY [`Vault::grant_unattended`] CAN RAISE THIS.** A person choosing
+    /// to let somebody back in is entitled to; a handover arriving over the
+    /// network is not. The distinction is the whole reason there are two entry
+    /// points — see [`crate::group::DgmState::revoked`].
+    #[error("that reader was revoked — re-granting one is a deliberate act")]
+    Revoked(GrantTag),
     /// This reader is already in the group under this purpose.
     ///
     /// **NOT A FAILURE — A RE-GRANT THAT MUST NOT BE PUBLISHED.** Adding
@@ -779,6 +794,11 @@ impl Vault {
     /// sealed rather than the day they were watching. Accepted because nothing
     /// turns on it yet and the alternatives cost more today; see D26.
     ///
+    /// **THIS IS THE DELIBERATE DOOR.** It will let a revoked reader back in,
+    /// because a person who scans somebody's invite again means it. Anything
+    /// acting on a message from the network wants [`Vault::grant_unattended`],
+    /// which refuses one.
+    ///
     /// Revocation is unaffected and still bites forward: see [`Vault::revoke`]
     /// and `seal`'s note on re-sealing under the latest secret.
     pub fn grant(
@@ -786,8 +806,42 @@ impl Vault {
         bundle: LongTermKeyBundle,
         purpose: &str,
     ) -> Result<(Message, GrantTag), Error> {
+        self.grant_inner(bundle, purpose, false)
+    }
+
+    /// Grant without anybody watching — for a handover, and nothing else.
+    ///
+    /// **THE SAME GRANT, MINUS THE AUTHORITY TO REVERSE A REVOKE.** D27 lets a
+    /// follower who already reads this subject on the old vault be granted on
+    /// the new one without re-pairing, which means a message from the network
+    /// adds a member with no one present. That is fine for somebody this phone
+    /// still shares with. It is not fine for somebody it stopped sharing with:
+    /// their next pass would hand over again and put them back, silently, and
+    /// revocation would mean nothing for exactly the person it was aimed at.
+    ///
+    /// So this refuses a tombstoned reader with [`Error::Revoked`]. Letting
+    /// them back in is [`Vault::grant`], which is reached only from somebody
+    /// scanning or asking.
+    pub fn grant_unattended(
+        &mut self,
+        bundle: LongTermKeyBundle,
+        purpose: &str,
+    ) -> Result<(Message, GrantTag), Error> {
+        self.grant_inner(bundle, purpose, true)
+    }
+
+    fn grant_inner(
+        &mut self,
+        bundle: LongTermKeyBundle,
+        purpose: &str,
+        unattended: bool,
+    ) -> Result<(Message, GrantTag), Error> {
         let mut state = self.state.take().ok_or(Error::NoSecret)?;
         let tag = Self::tag_for(&state.dcgka.my_keys, &bundle, purpose)?;
+        if unattended && state.dcgka.dgm.revoked.contains(&tag) {
+            self.state = Some(state);
+            return Err(Error::Revoked(tag));
+        }
         // ALREADY IN IS NOT A REASON TO ADD AGAIN. See [`Error::AlreadyGranted`]
         // — the tag is derived from the pair and the purpose, so it is stable
         // across retries, which is exactly what makes this check possible.

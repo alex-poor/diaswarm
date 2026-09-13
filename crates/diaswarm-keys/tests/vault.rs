@@ -293,6 +293,53 @@ fn granting_a_reader_who_is_already_in_publishes_nothing() {
     assert_eq!(again, tag, "the tag is derived from the pair, so it survives a revoke");
 }
 
+/// A REVOKED READER MUST NOT BE ABLE TO LET THEMSELVES BACK IN.
+///
+/// **THIS IS THE DOOR D27 OPENS IF NOBODY SHUTS IT.** A handover proves the
+/// sender already reads this subject on the *old* vault, and that is exactly
+/// what somebody revoked on the *new* one still has. Their next pass would hand
+/// over again and put them back: no scan, no prompt, nothing on screen, and
+/// revocation silently undone for precisely the person it was aimed at.
+///
+/// So the group keeps a tombstone, and the two grant paths differ on one thing
+/// only — whether they are allowed to ignore it. A person scanning an invite
+/// again is entitled to; a message arriving over the network is not.
+#[test]
+fn a_revoked_reader_cannot_hand_themselves_back_in() {
+    let rng = Rng::default();
+    let subject_key = SigningKey::from_bytes(&rand32());
+    let root = tmp("tombstone");
+    let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("vault");
+    let (subject_mgr, _b) = Vault::key_bundle(&rng).expect("bundle");
+    subject.create(subject_mgr).expect("create");
+    let (_reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("bundle");
+
+    // Granted the ordinary way, then taken away.
+    let (_welcome, tag) = subject.grant(reader_bundle.clone(), "follow").expect("grant");
+    subject.revoke(tag).expect("revoke");
+
+    match subject.grant_unattended(reader_bundle.clone(), "follow") {
+        Err(Error::Revoked(t)) => assert_eq!(t, tag),
+        Ok(_) => panic!("a handover put a revoked reader back in the group"),
+        Err(e) => panic!("refused for the wrong reason: {e}"),
+    }
+
+    // Across a restart, because a tombstone that lives in memory is no
+    // tombstone at all — the phone that matters has been restarted twice today.
+    drop(subject);
+    let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("reopen");
+    assert!(
+        matches!(subject.grant_unattended(reader_bundle.clone(), "follow"), Err(Error::Revoked(_))),
+        "the tombstone did not survive reopening the vault"
+    );
+
+    // And the subject can still let them back in on purpose.
+    let (_welcome, again) = subject
+        .grant(reader_bundle, "follow")
+        .expect("a person re-granting somebody must still work");
+    assert_eq!(again, tag);
+}
+
 /// A SHORT ANSWER MUST NEVER BE A SILENT ONE.
 ///
 /// Three things can stop a segment being read and only one of them is the

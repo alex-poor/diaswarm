@@ -968,8 +968,19 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 val keys = f.getOrNull(0).orEmpty()
                 val purpose = f.getOrNull(1).orEmpty().ifEmpty { PURPOSE }
                 if (keys.isEmpty()) continue
-                val tag = SwarmNative.keysGrant(handle, keys, purpose)
-                if (tag.startsWith("error")) {
+                // UNATTENDED, because nobody is watching. This is a message
+                // off the network, and it must not be able to undo a revoke —
+                // see [SwarmNative.keysGrantUnattended].
+                val tag = SwarmNative.keysGrantUnattended(handle, keys, purpose)
+                if (tag == "error revoked") {
+                    // NOT AN ERROR. Somebody this phone stopped sharing with
+                    // asked to come back; the answer is no, and it will be no
+                    // every pass until they are granted deliberately. Logged
+                    // once so it is visible without becoming noise.
+                    if (grantedHandovers.add("revoked|$keys|$purpose")) {
+                        aapsLogger.info(LTag.CORE, "swarm: refused a handover from a revoked reader")
+                    }
+                } else if (tag.startsWith("error")) {
                     aapsLogger.error(LTag.CORE, "swarm: handover grant failed: $tag")
                 } else if (grantedHandovers.add("$keys|$purpose")) {
                     aapsLogger.info(
