@@ -931,3 +931,42 @@ the file stopped being written when the keys build landed and nothing reads it.
 It is the single largest thing this project has put on that phone. Deleting it
 is a one-line cleanup, and it is the user's data on the user's loop phone, so it
 waits for them to say so.
+
+### 🐛 The third reader, and the day that could not explain itself
+
+Two readers were built — glucose and treatments — and both agree. The third was
+found by asking what else the screen shows: the target band, and the scheduled
+basal. Both come from a `profile` record, both read the core vault only, and
+`scheduledBasal` answers **0.0** when there is none.
+
+That is the reader whose absence misleads rather than shows. A missing line is
+visible. A percentage temp basal resolved against a basal of zero draws a
+confident flat trace that is wrong by whatever the basal was.
+
+`keysProfile` fixes the reader — every epoch, not a tail, because a profile is
+published when it *changes* and a stable loop's newest one can be weeks old.
+Then the phone answered:
+
+```
+profile: core 1788396070077, keys none
+```
+
+**The data was missing too, and for a reason that is about the design rather
+than the migration.** A profile record is emitted on a profile switch. The old
+vault hid that: a reader opens the whole grant, so a profile from March is still
+there in September. The keys vault is read a day or two at a time — that is the
+entire point of it, and what makes a 24-hour grant possible — and those days
+contained no profile at all. §2 says it plainly:
+
+> without basal rates, ISF, IC and targets by time of day, a consumer cannot say
+> what the loop was trying to do, and the insulin records become uninterpretable
+
+That has to be true of each **day**, not of the archive. So every epoch now
+carries the profile that was in force at midday of that day — the real record
+with its real timestamp, through the same converter as everything else, a
+re-publication rather than a synthesis. Once per epoch per process: the vault
+drops what a segment already holds, but the delta would publish it again, and
+once a minute is a hundred times a day of nothing.
+
+Three readers, three gaps, one shape: **the emitter always drained everything,
+and each reader was built far enough to look like it worked.**
