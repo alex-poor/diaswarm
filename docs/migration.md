@@ -970,3 +970,37 @@ once a minute is a hundred times a day of nothing.
 
 Three readers, three gaps, one shape: **the emitter always drained everything,
 and each reader was built far enough to look like it worked.**
+
+### ✅ CLOSED — the whole reader surface, on two phones, 2026-09-13 16:50
+
+The loop phone, one pass after the install:
+
+```
+swarm: drained 1 — cgm=1
+swarm: carried the profile into epoch 20709
+swarm: sealed epoch 20709, 2 records
+swarm: shadow agrees — given 2, holds 1204, missing 0, lost 0, failures 0
+```
+
+Ayni, three minutes later, having had to replicate the segment first:
+
+```
+profile: core 1788396070077, keys 1788396070077
+```
+
+The same record, with the same timestamp, out of both vaults — so the target
+band and the scheduled basal survive a cutover, and a percentage temp basal
+still means what the pump meant by it. The loop applied a TBR forty seconds
+after the install and kept looping.
+
+All three readers now agree on real data on real hardware:
+
+| | core | keys | |
+|---|---|---|---|
+| readings | 401 | 223 | merged, keys still filling in from this morning |
+| treatments | 171 | 130 | every keys row identical to a core row |
+| profile | `…070077` | `…070077` | the same record |
+
+The keys columns are smaller because publishing started at 10:26 today and
+nothing backfilled. That resolves itself with time, and the merge means nobody
+sees the difference while it does.

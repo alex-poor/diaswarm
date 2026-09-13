@@ -512,6 +512,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             // database what it is going to do.
             val middayUtc = epoch * 86_400_000L - offsetMs + 43_200_000L
             val at = if (middayUtc > now) now else middayUtc
+            // NO isValid FILTER HERE ON PURPOSE. Every other source in this
+            // file carries one, because the drain walks rows. This query does
+            // not: the DAO behind it is already
+            // `referenceId IS NULL AND isValid = 1`, and a second filter on top
+            // would read as though it were load-bearing.
             val record = runCatching {
                 persistenceLayer.getProfileSwitchActiveAt(at)?.let { SwarmRecords.from(it) }
             }.getOrNull()
