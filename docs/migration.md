@@ -1390,3 +1390,54 @@ yet known — whether it drops on doze, on a wifi change, or after a fixed idle
 period changes what the fix should be. That needs to be watched over days on a
 phone that sleeps, and now it can be. Guessing at a reconnection policy from one
 night's evidence is how the last two defects got written.
+
+### 🔬 Don't wait a night — force the condition (2026-09-14, four minutes)
+
+The relay question looked like it needed days of watching. It needed
+`dumpsys deviceidle force-idle`:
+
+```
+08:22:23  idle=IDLE     relay_sockets=2
+08:22:57  idle=IDLE     relay_sockets=0     ← 35 seconds into deep doze
+08:23:10  idle=ACTIVE   relay_sockets=1     ← 13 seconds after waking
+```
+
+**Deep doze closes the relay connection, and waking restores it.** Not a leak and
+not a permanent failure: while a phone is in deep doze it is unreachable through
+the relay, because a relay cannot push to a node that is not connected to it.
+
+Two things that came out of it:
+
+⚠️ **The battery whitelist does not protect the socket.** AAPS is whitelisted on
+that phone — `user,info.nightscout.androidaps,10249` — and its relay socket died
+with the rest. Ayni is not whitelisted at all. Whatever the eventual fix is,
+"ask for the exemption" is not it.
+
+✅ **And with mDNS working, losing the relay no longer means losing the subject.**
+Ayni's own log, during the test:
+
+```
+relay=disconnected
+refreshed 1 subject
+```
+
+Reached on the LAN with no relay at all — which is exactly what the multicast
+lock was for, and what was impossible yesterday.
+
+### ⚠️ A confound in yesterday's conclusion, which I should own
+
+I reported that the multicast lock fixed the outage. The recovery was real —
+`refreshed 0` for twelve hours, then `refreshed 1` twenty-four seconds after the
+loop phone's install — but that install did **two** things at once: it gave AAPS
+the multicast lock *and* restarted AAPS, which re-established its relay
+connection.
+
+Three restarts of the follower alone had changed nothing, so the fix was
+certainly on the publisher's side. Which of the two it was, that log cannot say.
+
+What is independently established is that the lock was missing and necessary:
+`MdnsDiscovery` runs in `Active` mode, the wifi chip does not deliver multicast
+without a `MulticastLock`, p2panda cannot take one because it is an Android API,
+and AAPS's `:5353` socket read `Recv-Q 0`. And the line above — `relay=disconnected`
+followed by `refreshed 1 subject` — is mDNS working on its own, which is the
+lock doing its job with the relay out of the picture.
