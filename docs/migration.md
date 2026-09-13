@@ -1083,3 +1083,36 @@ This was written up an hour earlier as "nothing to fix today — revocation is
 still a core-vault operation". That was true and it was the wrong call: the
 cutover is tomorrow, the whole point of it is that revocation moves to the keys
 vault, and a lock installed after the door is used is not a lock.
+
+### ✅ Both overnight questions answered by 18:50, not by morning
+
+**The WAL checkpointed, so storage is bounded.** The hypothesis was that SQLite
+had simply not reached its 1000-page auto-checkpoint threshold. It did:
+
+| | 17:10 | 18:50 |
+|---|---|---|
+| `keys.sqlite` | 4 KB | 819 KB |
+| `keys.sqlite-wal` | 2,905 KB | **66 KB** |
+
+885 KB of store against 266 KB of log content — SQLite page overhead, not a
+leak. Reading the WAL as growth was wrong, and measuring it for an hour and a
+half was the only way to know that.
+
+**And `group.cbor` sat at 18,374 bytes the whole time** — 17:10 to 18:50, across
+two reinstalls and a phone that went away and came back. Before the re-grant
+fix it climbed about 2.2 KB an hour. That is the fix confirmed over a real
+interval rather than over one pass.
+
+**The keys vault reached parity, which is the cutover condition:**
+
+```
+18:52  merged 394 core + 394 keys = 394 for 552f688a
+18:52  merged 177 core + 166 keys = 177 treatments for 552f688a
+18:52  profile: core 1788396070077, keys 1788396070077
+```
+
+394 of 394 readings. At 14:43 it was 223 of 401 — the difference is eight hours
+of publishing catching up with a six-hour window, exactly as predicted, with the
+merge covering the gap while it did. Treatments are 166 of 177 and closing.
+
+The one number that must stay boring is `group.cbor`, and it is.
