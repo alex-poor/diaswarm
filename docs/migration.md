@@ -1615,3 +1615,66 @@ follower/src/main/kotlin calls swarmJoin but never swarmTick.
 
 Four mutation checks on this suite now, and **two** of them changed the design
 rather than confirming it.
+
+### ❌ The `WifiLock` does not work, and cannot — the record corrected
+
+Two hours unplugged and still, sampled every two minutes. The result is
+unambiguous and it falsifies the previous section:
+
+```
+09:38 → 10:05   ACTIVE        relay_estab=1   refreshing every 2 min
+10:06:21                                       last fetch
+10:07           IDLE_PENDING  relay_estab=0   relay=disconnected
+10:09 → 10:49   IDLE          relay_estab=0   last_refresh frozen at 10:06:21
+```
+
+Forty minutes of deep doze, no relay, no fetches. The follower was completely
+dark, with the lock held throughout.
+
+**Why the forced test lied.** `dumpsys deviceidle force-idle` jumps straight to
+IDLE without the sensing and standby transitions, and I watched it for two and a
+half minutes. Natural doze took twenty-eight minutes to get there and killed the
+socket at `IDLE_PENDING`. A four-minute forced test is a *screening* tool; it
+told me the fix worked when it does not.
+
+**And the diagnosis is exact, because the phone says so.** The lock is still
+held — and it is the wrong lock, at the wrong layer:
+
+```
+Locks acquired: 0 full high perf, 2 full low latency
+WifiLock{diaswarm-reachable type=4 ... nz.diaswarm.ayni}
+
+UID=10253 blocked_state={blocked=DOZE|RESTRICTED_MODE|APP_BACKGROUND,
+                         effective=DOZE|APP_BACKGROUND}
+```
+
+Two independent reasons it can never work:
+
+1. **`WIFI_MODE_FULL_HIGH_PERF` is deprecated and was silently mapped to
+   `FULL_LOW_LATENCY`** — `type=4`, and the counter reads zero high-perf locks.
+   Android honours low-latency mode only while the screen is on and the app is
+   in the foreground, which is precisely when it is not needed.
+2. **The radio was never the problem.** Wifi stayed up throughout — adb-over-wifi
+   is how these measurements were taken. It is the *app* that is denied:
+   `effective=DOZE|APP_BACKGROUND`. No lock on the radio can lift a block on the
+   app.
+
+**What the block actually names is the fix.** Those two flags are cleared by two
+specific things, and neither is a lock:
+
+| flag | cleared by |
+|---|---|
+| `DOZE` | the battery-optimisation whitelist — user-granted, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` |
+| `APP_BACKGROUND` | running a **foreground service** |
+
+Ayni has neither: no service at all, and not whitelisted. AAPS has both —
+`user,info.nightscout.androidaps,10310` on the doze whitelist, and a foreground
+service with its ongoing notification — which is why the publisher is the half
+that has generally stayed reachable, and why the follower is the half that went
+dark.
+
+So a follower that must be current while asleep needs an ongoing notification
+and a permission prompt. That is a product decision, not a bug fix, and it is
+the same bargain every always-on Android app makes. The alternative is to accept
+the gap and make staleness loud — the pool already covers it whenever any other
+holder is awake.
