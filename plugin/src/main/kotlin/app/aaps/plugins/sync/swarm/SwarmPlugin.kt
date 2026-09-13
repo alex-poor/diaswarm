@@ -418,6 +418,7 @@ class SwarmPlugin @Inject constructor(
         // a tokio task, the task vanishes, and this phone stops noticing that
         // the network changed — silently, on a phone driving a pump.
         SwarmNative.initAndroid(context.applicationContext)
+        nz.diaswarm.jni.Multicast.hold(context)
 
         // SERVE EVEN WITH NOTHING OF OUR OWN TO SERVE.
         //

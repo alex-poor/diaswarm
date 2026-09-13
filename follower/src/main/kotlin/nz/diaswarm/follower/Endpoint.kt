@@ -36,6 +36,9 @@ object Endpoint {
         // BEFORE THE ENDPOINT, because the network stack reaches for it as soon
         // as it starts watching for connectivity changes.
         SwarmNative.initAndroid(context.applicationContext)
+        // BEFORE THE ENDPOINT, like initAndroid: mDNS starts with it, and a
+        // lock taken afterwards misses whatever it announced meanwhile.
+        nz.diaswarm.jni.Multicast.hold(context)
         val h = SwarmNative.swarmJoin(
             SwarmPaths.store(context).absolutePath,
             SwarmPaths.nodeKey(context).absolutePath,

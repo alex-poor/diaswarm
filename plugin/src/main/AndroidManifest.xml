@@ -13,6 +13,26 @@
       `required="false"`: a phone with no camera must still install and loop.
       The scan button is the only thing that stops working.
     -->
+    <!--
+      CHANGE_WIFI_MULTICAST_STATE — so that mDNS can actually receive.
+      **THE LEG OF DISCOVERY THAT ANDROID SWITCHES OFF BY DEFAULT.** p2panda
+      spawns `MdnsDiscovery` in `Active` mode, and its own comment warns that
+      without a mode "two peers on the same wifi never see each other". On
+      Android there is a second switch: the wifi chip drops multicast to userspace
+      unless an app holds a `MulticastLock`, and holding one needs this
+      permission. So mDNS was running and hearing nothing.
+
+      It cost a night to find. Two phones on one wifi, the subject's phone slept
+      and came back on a new address, and the follower could no longer resolve
+      its node id to anywhere — the relay leg was not connected either, so there
+      was no route left at all. Both vaults went dark together, which is what
+      said it was transport rather than storage.
+
+      It is not an internet permission. It changes nothing about what leaves the
+      phone; it lets this app receive the multicast the wifi chip is already
+      seeing.
+    -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature
         android:name="android.hardware.camera"

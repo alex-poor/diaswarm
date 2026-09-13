@@ -679,3 +679,56 @@ object SwarmNative {
         }
     }
 }
+
+/**
+ * Hold a wifi multicast lock, so mDNS discovery can actually receive.
+ *
+ * **THE LEG OF DISCOVERY ANDROID SWITCHES OFF.** p2panda spawns
+ * `MdnsDiscovery` in `Active` mode — its own comment warns that without a mode
+ * "two peers on the same wifi never see each other" — but on Android there is a
+ * second switch below that one: the wifi chip does not deliver multicast to
+ * userspace unless some app holds a `MulticastLock`. So mDNS ran, and heard
+ * nothing, and no test could show it because a desktop has no such switch.
+ *
+ * It took a night on two phones to find. The subject's phone slept and came
+ * back on a different address; the follower could no longer resolve its node id
+ * to anywhere, because the relay leg was not connected either. Both vaults went
+ * dark together, which is what said it was transport and not storage.
+ *
+ * **NOT REFERENCE COUNTED, AND HELD FOR THE PROCESS.** Discovery is not a thing
+ * that happens once at startup — a peer that moves has to be found again, at
+ * any hour, by an app that may be in the background. Acquiring per pass would
+ * mean the lock is absent exactly when a phone is idle, which is when the other
+ * one is most likely to have moved.
+ *
+ * It costs battery: the wifi chip stops filtering multicast for this app. That
+ * is the price of being findable, and it is smaller than a follower that
+ * silently shows yesterday's data.
+ *
+ * Safe to call repeatedly; the second call does nothing.
+ */
+object Multicast {
+
+    @Volatile
+    private var lock: android.net.wifi.WifiManager.MulticastLock? = null
+
+    @Synchronized
+    fun hold(context: android.content.Context) {
+        if (lock != null) return
+        try {
+            val wifi = context.applicationContext
+                .getSystemService(android.content.Context.WIFI_SERVICE)
+                as android.net.wifi.WifiManager
+            val held = wifi.createMulticastLock("diaswarm-mdns")
+            held.setReferenceCounted(false)
+            held.acquire()
+            lock = held
+            android.util.Log.i("diaswarm", "multicast lock held — mDNS can receive")
+        } catch (e: Throwable) {
+            // A phone without wifi, or an OEM that refuses. Discovery falls back
+            // to whatever else can find a peer, which is the state this was in
+            // before — so it is a warning, not a failure.
+            android.util.Log.w("diaswarm", "no multicast lock: $e")
+        }
+    }
+}
