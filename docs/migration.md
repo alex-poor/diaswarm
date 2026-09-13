@@ -846,3 +846,88 @@ components; none is visible to a test that exercises one.
 only device with records to seal. `twokeys` proved the protocol between both
 phones; the *app* path — a v3 invite out of AAPS, scanned, granted, replicated,
 read — needs a publisher with data, and now has one.
+
+### ✅ CLOSED — treatments, 2026-09-13
+
+The glucose reader shipped first and by itself it looks like success: the line
+draws, the number is fresh, nothing errors. `keysGlucose` was the whole reader,
+so a subject moving to the keys vault would have kept their graph and silently
+lost **every bolus, carb, TBR and extended bolus** from it. The emitter had
+always drained all four kinds; only the reader was half-built.
+
+`keysTreatments` is the other half, and both readers now build their rows from
+one `treatment_line`, so the chart cannot change underneath somebody because
+their records arrived by a different route. Measured on phone B:
+
+```
+merged 401 core + 224 keys = 401 for 552f688a
+merged 169 core +  63 keys = 169 treatments for 552f688a
+```
+
+The totals do not move, which is the point: every row the keys vault produced
+was byte-identical to a row the core vault already had. A single disagreement in
+rounding, field order or the TBR `abs` flag would have shown up as 170.
+
+`abs` is the field that earns its own test. It is not a value, it decides what
+`rate` **means** — 150 is either 150% of basal or 150 U/h — and a reader that
+dropped it would draw a plausible chart that was wrong by a factor of a hundred.
+
+### 🐛 The switch did nothing, in the direction nobody looked
+
+`swarmJoin` decides **once**, at join, whether the pool gets a keys replicator,
+from the directory it is handed. Nothing later can add one. Turning the
+preference **on** therefore changed nothing at all until the process restarted —
+and the logs blamed the wrong thing while it did:
+
+```
+keys carry unavailable (-3)          (Ayni)
+swarm: shadow vault would not open   (AAPS)
+```
+
+Both read as a broken vault. Neither is: they are a pool that was never asked
+for one. This is the same defect as the latency regression written up above —
+which was a replicator that kept running after the switch went off — just
+failing in the other direction, where nothing gets slower and nobody notices.
+
+Ayni restarts its endpoint when the switch moves. AAPS compares the running pool
+against the preference on every pass, which is also right when the preference is
+changed somewhere the plugin never hears about, and costs one boolean a minute.
+On phone B: off at 14:43:25, on at 14:43:37, `keys carrying 2 log(s)` on the
+pass four seconds later, no relaunch — and the screen still **1 min ago** with
+the replicator running, so the latency fix holds with the feature on.
+
+### 📊 What it actually costs, measured on the loop phone
+
+After four hours of shadow sealing and publishing at a one-minute cadence:
+
+| | |
+|---|---|
+| local merged day file | ~520 KB/day (`keys/segments/20709.json`) |
+| published log | 36 ops, 137 KB bodies + 11 KB headers in ~4 h → **~870 KB/day** |
+| the 77 backfilled epochs on disk | 12.1 MB |
+| `spaces.sqlite`, written to last at 10:19 | 28.1 MB |
+
+So the keys path costs about **1.4 MB/day** all in, roughly 1.7× the plaintext
+day — which is the delta fix holding in practice, against the 144× a merged-day
+publish was costing before it.
+
+Two things the numbers say that the code does not:
+
+⚠️ **The 931 KB WAL is not 931 KB of content.** `keys.sqlite` is 4 KB with a
+931 KB `-wal`; the log inside it is 148 KB. A WAL holds every rewrite of a page
+until it checkpoints, so reading the file size as a growth rate overstates it by
+about six times.
+
+⚠️ **The backfill was never published, so no follower can read it.** 77 epochs
+are sealed on disk; the log holds 36 operations, all from after shadow
+publishing started this morning. A follower that joins today sees from 10:26,
+not from 77 days ago. That happens to match the standing decision — a parent
+needs 24 hours, not a history — but it is an accident of what publishes, not a
+rule anything enforces, and `seal_checked` publishing only the current epoch's
+delta is the reason.
+
+🧹 **28 MB of `spaces.sqlite` is dead.** D26 dropped the spaces message layer;
+the file stopped being written when the keys build landed and nothing reads it.
+It is the single largest thing this project has put on that phone. Deleting it
+is a one-line cleanup, and it is the user's data on the user's loop phone, so it
+waits for them to say so.
