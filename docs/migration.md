@@ -1707,9 +1707,36 @@ of claiming to be finished. Three states, three sentences, all before the tap:
 > **on, exempt** — "Fetching while the screen is off. There is a permanent
 > notification while this is on; swipe it away by turning this off."
 >
-> **on, not exempt** — in amber — "On, but Android will still pause ayni when
-> the phone has been still for a while. Tap here to allow it to keep running —
-> that is the other half, and only you can grant it."
+> **on, not exempt** — "Fetching while the screen is off, with a permanent
+> notification. If it still falls behind overnight, tap here and set ayni to
+> Unrestricted — that is Android's last word on it, and only you can grant it."
+
+⚠️ **That third string started out as a warning and had to be corrected within
+the hour.** It asserted "Android will still pause ayni", and measurement
+disagreed: with the service running, the phone reports
+
+```
+deep doze:  blocked=DOZE|RESTRICTED_MODE|APP_BACKGROUND
+            allowed=FOREGROUND|...
+            effective=NONE
+```
+
+`DOZE` is in the blocked set and `allowed=FOREGROUND` overrides it. The fetches
+kept landing on their two-minute cadence throughout — `last_refresh` advanced
+from `11:09:10` to `11:11:11` while the device was in deep IDLE. **The
+foreground service alone appears to be sufficient, and the battery exemption
+unnecessary.**
+
+So the exemption is now offered as a remedy if it is ever needed, rather than
+demanded on a theory. Asking for a battery exemption nobody needs is how apps
+train people to grant them without reading.
+
+Two settings that are easy to confuse, and the first one is not the one:
+
+| Android setting | means | clears `DOZE`? |
+|---|---|---|
+| **Allow background usage** | the app is not *Restricted* — it is in the default *Optimised* bucket | no |
+| **Unrestricted** | the battery-optimisation exemption | yes |
 
 Tapping in that third state opens Android's battery-optimisation list rather
 than firing `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. The direct prompt is one tap

@@ -18,9 +18,6 @@ import androidx.compose.ui.unit.sp
 private val Text1 = Color(0xFFE8EAED)
 private val Text2 = Color(0xFF9AA3B0)
 
-/** For a setting that is on and not finished — amber, not red: nothing is broken. */
-private val Warn = Color(0xFFE0A33A)
-
 /**
  * The code somebody else scans to start following you — or, in the one-scan
  * flow, the code they scan so THEY can share with YOU and hand their invite
@@ -143,10 +140,20 @@ fun PeopleSheet(
                             "Fetching while the screen is off. There is a permanent " +
                                 "notification while this is on; swipe it away by turning this off."
                         else
-                            "On, but Android will still pause ayni when the phone has been " +
-                                "still for a while. Tap here to allow it to keep running — " +
-                                "that is the other half, and only you can grant it.",
-                        color = if (stayReachable && !dozeExempt) Warn else Text2,
+                            "Fetching while the screen is off, with a permanent notification. " +
+                                "If it still falls behind overnight, tap here and set ayni to " +
+                                "Unrestricted — that is Android's last word on it, and only " +
+                                "you can grant it.",
+                        // NOT A WARNING ANY MORE. This said "Android will still
+                        // pause ayni", and then measurement disagreed: with the
+                        // service running, `dumpsys netpolicy` reports
+                        // `effective=NONE` in deep doze and the fetches keep
+                        // landing on their two-minute cadence. The exemption is
+                        // offered as a remedy if it is ever needed, rather than
+                        // demanded on a theory — asking for a battery
+                        // exemption nobody needs is how apps train people to
+                        // grant them without reading.
+                        color = Text2,
                         fontSize = 12.sp
                     )
                 }
