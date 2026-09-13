@@ -40,6 +40,40 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                 Log.i(TAG, "following nobody — nothing to fetch")
                 return Result.success()
             }
+            // **BEFORE ANYTHING DIALS, TAKE A TURN IN THE POOL.**
+            //
+            // This app joined the pool and then never participated: `swarmTick`
+            // was declared in `SwarmNative` and called from nowhere. Joining
+            // gets you a node id; the tick is what announces what you hold,
+            // hears who holds what, and — the part that matters here — keeps a
+            // live view of where the people you follow actually are.
+            //
+            // Without it a follower can only reach a subject while the address
+            // it learned when the invite was scanned still works. It does, for
+            // as long as nothing moves. Found after one night: the subject's
+            // phone slept and reconnected, and this app went blind and STAYED
+            // blind — a fresh process did not fix it, because a fresh process
+            // joined the pool and did not tick either. Both vaults went empty
+            // together, which is what said it was not a vault problem.
+            //
+            // The AAPS plugin has always ticked once per pass, which is why the
+            // same phone could reach the same subject from the other app at the
+            // same moment.
+            //
+            // ADOPT NOTHING — `0`, where the plugin passes 2. The defect is
+            // discovery; whether a follower's phone should start holding
+            // strangers' ciphertext is a separate decision and does not get to
+            // ride in on a bug fix.
+            if (Endpoint.handle != 0L) {
+                val pool = try {
+                    SwarmNative.swarmTick(Endpoint.handle, 0)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "pool pass threw: $e")
+                    ""
+                }
+                Log.i(TAG, if (pool.isEmpty()) "pool pass failed" else "pool $pool")
+            }
+
             val reached = SwarmNative.netRefresh(Endpoint.handle, store)
             Log.i(TAG, "refreshed $reached subject(s)")
 
