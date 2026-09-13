@@ -71,12 +71,18 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     val followed = remember(tick) { Follower.following(context) }
     val low = remember(tick) { Prefs.lowLine(context) }
     val high = remember(tick) { Prefs.highLine(context) }
+    // NULLABLE ON PURPOSE — see [Follower.scheduledBasalOrNull]. Null is "this
+    // phone has no profile for them", which is not the same statement as a
+    // basal rate of zero, and the chart must not turn one into the other.
     val scheduled = remember(tick, subject) {
-        subject?.let { Follower.scheduledBasal(context, it, System.currentTimeMillis()) } ?: 0.0
+        subject?.let { Follower.scheduledBasalOrNull(context, it, System.currentTimeMillis()) }
     }
     val basal = remember(tick, subject, treatments) {
         if (readings.isEmpty()) emptyList()
         else Follower.basalSteps(treatments, scheduled, readings.first().at, readings.last().at)
+    }
+    val basalUnknown = remember(tick, subject, treatments) {
+        scheduled == null && treatments.any { it.kind == "tbr" && !it.absolute }
     }
 
     MaterialTheme(colorScheme = darkColorScheme(background = Bg, surface = Card)) {
@@ -115,7 +121,13 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
                                 // assume otherwise would be attributing a
                                 // threshold to them that they never published.
                                 caption = "in range ${Prefs.show(context, low)}–${Prefs.show(context, high)}" +
-                                    " · this phone",
+                                    " · this phone" +
+                                    // SAYS SO WHEN IT CANNOT DRAW THE BASAL.
+                                    // An absent trace with no explanation reads
+                                    // as "they had no basal", which is a
+                                    // clinical claim this phone has no business
+                                    // making on their behalf.
+                                    (if (basalUnknown) " · no profile yet — basal not shown" else ""),
                                 onPick = { Prefs.setRangeHours(context, it); tick++ }
                             )
                             GlucoseChart(

@@ -62,7 +62,8 @@ fun GlucoseChart(
     readings: List<Follower.Reading>,
     treatments: List<Follower.Treatment>,
     basal: List<Follower.BasalStep>,
-    scheduledBasal: Double,
+    /** Null when this phone has no profile for them — draw no line, not a zero. */
+    scheduledBasal: Double?,
     target: Pair<Double, Double>?,
     lowLine: Double,
     highLine: Double,
@@ -92,7 +93,8 @@ private fun DrawScope.drawChart(
     readings: List<Follower.Reading>,
     treatments: List<Follower.Treatment>,
     basal: List<Follower.BasalStep>,
-    scheduledBasal: Double,
+    /** Null when this phone has no profile for them — draw no line, not a zero. */
+    scheduledBasal: Double?,
     target: Pair<Double, Double>?,
     lowLineMgdl: Double,
     highLineMgdl: Double,
@@ -243,7 +245,7 @@ private fun DrawScope.drawChart(
     }
 
     // ---- delivered insulin ----
-    val iMax = max(basal.maxOfOrNull { it.rate } ?: 0.0, scheduledBasal).coerceAtLeast(0.1) * 1.15
+    val iMax = max(basal.maxOfOrNull { it.rate } ?: 0.0, scheduledBasal ?: 0.0).coerceAtLeast(0.1) * 1.15
     fun iy(r: Double): Float = iTop + iH - (r.coerceIn(0.0, iMax) / iMax).toFloat() * iH
 
     if (basal.size > 1) {
@@ -283,7 +285,7 @@ private fun DrawScope.drawChart(
         drawText(laid, topLeft = Offset(leftPad + 3.dp.toPx(), iTop + 3.dp.toPx()))
     }
 
-    if (scheduledBasal > 0) {
+    if (scheduledBasal != null && scheduledBasal > 0) {
         drawLine(
             Axis.copy(alpha = 0.8f),
             Offset(leftPad, iy(scheduledBasal)), Offset(size.width - rightPad, iy(scheduledBasal)),

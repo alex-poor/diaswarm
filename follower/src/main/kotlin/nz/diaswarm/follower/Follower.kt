@@ -362,14 +362,26 @@ object Follower {
      * insulin. Blocks are in order with their own durations in milliseconds,
      * covering the day from local midnight.
      */
-    fun scheduledBasal(context: Context, subject: Subject, atMs: Long): Double {
+    /**
+     * The scheduled rate, or **null when this phone does not know it**.
+     *
+     * **THE DIFFERENCE IS THE WHOLE POINT.** 0.0 is a rate — a pump delivering
+     * nothing — and it is what this answered when there was no profile to read.
+     * Every percentage temp basal then resolved against zero and the chart drew
+     * a confident flat trace: a failure whose only symptom was being wrong.
+     *
+     * There is deliberately no variant that flattens null to 0.0. One existed
+     * for about ten minutes and every caller of it would have been a caller
+     * making the same mistake again.
+     */
+    fun scheduledBasalOrNull(context: Context, subject: Subject, atMs: Long): Double? {
         // Whichever vault has the later profile — see [profileJson]. This is
         // the call that makes a missing profile dangerous rather than visible:
         // 0.0 here turns every percentage TBR into a flat zero on the chart.
         val json = profileJson(context, subject)
-        if (json.isBlank()) return 0.0
+        if (json.isBlank()) return null
         return runCatching {
-            val blocks = org.json.JSONObject(json).optJSONArray("basal") ?: return 0.0
+            val blocks = org.json.JSONObject(json).optJSONArray("basal") ?: return null
             val zone = java.util.TimeZone.getDefault()
             val cal = java.util.Calendar.getInstance(zone).apply { timeInMillis = atMs }
             val msIntoDay = ((cal.get(java.util.Calendar.HOUR_OF_DAY) * 3_600_000L) +
@@ -382,8 +394,8 @@ object Follower {
                 if (msIntoDay < cursor + dur || i == blocks.length() - 1) return b.optDouble("amount", 0.0)
                 cursor += dur
             }
-            0.0
-        }.getOrDefault(0.0)
+            null
+        }.getOrNull()
     }
 
     /** One step of effective basal delivery: [rate] U/h from [at] until the next. */
@@ -406,13 +418,19 @@ object Follower {
      */
     fun basalSteps(
         treatments: List<Treatment>,
-        scheduled: Double,
+        scheduled: Double?,
         from: Long,
         to: Long,
         sampleMs: Long = 300_000L
     ): List<BasalStep> {
         val tbrs = treatments.filter { it.kind == "tbr" }.sortedBy { it.at }
         if (to <= from) return emptyList()
+        // NOTHING RATHER THAN ZEROS. Without the schedule, the gaps between
+        // temp basals have no rate and a percentage temp basal has no meaning —
+        // and a step chart of zeros is not a chart with a hole in it, it is a
+        // chart saying the pump delivered nothing. An empty trace is visibly
+        // missing, which is the only honest thing this can draw.
+        if (scheduled == null) return emptyList()
         val out = ArrayList<BasalStep>()
         var t = from
         var last = Double.NaN
