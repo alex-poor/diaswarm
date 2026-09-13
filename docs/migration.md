@@ -774,6 +774,33 @@ every time. The generation bump had meanwhile consumed the backfill into the
 core vault and marked itself done, so the re-drain had to be triggered by hand
 afterwards.
 
+### ✅ D27 on two phones — an existing follower moved without re-pairing
+
+```
+(ayni)     handed over to 552f688a
+(subject)  handed over a reader as 265a21af855bdaf6… (follow)
+```
+
+`265a21af855bdaf6…` is **the same tag the manual pairing produced earlier that
+day**, so the handover path derives the identical relationship identifier as a
+scanned one. Nobody scanned anything: the reader offered its keys identity with
+a proof only the two of them can make, and the subject granted it.
+
+⚠️ **The keys read path lags the core one** — 1–3 minutes against 45s–2min,
+because replication adds a hop the local vault does not have. Not a bug and not
+yet closed.
+
+🐛 **And the follower's fallback was wrong, found by somebody watching their own
+graph.** It fired only on an *empty* keys read. A read that returned 221
+readings with a two-hour hole and a stale tip is not empty, so it never fired
+and the screen showed a broken history that looked deliberate. The hole was real
+— shadow mode had been off on the subject for two hours — and a migration spends
+its whole life in that condition, one vault complete and the other filling in.
+
+Fixed by not choosing: both vaults are read and merged on timestamp. "Is the
+keys read good enough to prefer?" is the wrong question, and every threshold
+answering it — non-empty, fresh enough, long enough — is wrong for somebody.
+
 ### ✅ CLOSED — a follower read real glucose out of the new vault, 2026-09-13
 
 Two phones, nothing shared between them but two invites:
