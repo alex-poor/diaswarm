@@ -1441,3 +1441,53 @@ without a `MulticastLock`, p2panda cannot take one because it is an Android API,
 and AAPS's `:5353` socket read `Recv-Q 0`. And the line above — `relay=disconnected`
 followed by `refreshed 1 subject` — is mDNS working on its own, which is the
 lock doing its job with the relay out of the picture.
+
+### ✅ Transport gets tests, because chasing it on phones is not a method
+
+Two transport defects in one morning, both found by hand on two phones, both
+invisible to ~125 green tests. The reason they were invisible is structural, and
+visible in one line of every existing test:
+
+```rust
+add_follow(&store, &subject_hex, &upstream(&addr), Some("follow"))
+```
+
+**Every test hands the follower an address**, captured from the subject's live
+endpoint moments earlier. That proves fetching. It cannot prove *discovery*,
+because nothing ever has to be discovered — and a follower that can only reach a
+subject at the address it was handed works perfectly until the subject's phone
+changes address, which happens every night.
+
+`tests/reachability.rs` covers what was missing:
+
+| scenario | what it guards |
+|---|---|
+| a node id with **no address at all** | what an invite actually carries — id + relay, never an IP |
+| the subject **changes address** | the 2026-09-14 outage: same key, new socket, must be found again |
+| a swarm with **no usable relay** | must say `none`, never read as connected |
+| a node id **nobody serves** | the guard on the other three — `reached()` must be able to be false |
+
+They use `join_network` — isolated network id, no relay — so they run offline
+and in CI, and what they exercise is local discovery. The relay leg keeps its
+own guard in `bin/relaycheck`, which needs the internet and must not turn CI red
+when a relay operator reboots.
+
+**And they were checked against a mutant.** Pointing the first test at a node id
+nobody is serving makes it FAIL — which is the whole difference between a test
+and a decoration, and this project has shipped a verdict that compared a number
+with itself before.
+
+⚠️ **One class stays untestable here: Android itself.** No desktop has a wifi
+chip that drops multicast, and none has doze. So the multicast lock is guarded
+by reading the source instead — `both_apps_still_ask_for_multicast_and_take_the_lock`
+asserts the permission is in both manifests, that something still calls
+`createMulticastLock`, and that both endpoint entry points call it. Crude, and
+the alternative is finding out on a phone again: a permission dropped in a
+manifest merge looks exactly like the network being quiet. Verified it fails
+when the permission is removed.
+
+**Still not covered, and worth being honest about:** doze, wifi handover, and
+the relay dropping are all real scenarios that only a phone can run. What exists
+for those is instrumentation — `relay=` on every pool pass — and
+`dumpsys deviceidle force-idle`, which answers in four minutes what looked like
+a week of waiting.

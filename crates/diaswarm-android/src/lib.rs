@@ -3523,6 +3523,57 @@ mod shadow_tests {
         assert_eq!(held, 72, "the day did not accumulate across flushes");
     }
 
+    /// BOTH APPS MUST STILL ASK ANDROID FOR MULTICAST, AND STILL TAKE THE LOCK.
+    ///
+    /// **THE ONE DEFECT NO RUNTIME TEST IN THIS REPO CAN CATCH.** p2panda spawns
+    /// `MdnsDiscovery` in `Active` mode, but on Android the wifi chip does not
+    /// deliver multicast to userspace unless an app holds a `MulticastLock`,
+    /// and taking one needs `CHANGE_WIFI_MULTICAST_STATE`. p2panda cannot do it
+    /// — it is an Android API, so only the app can. A laptop has no such
+    /// switch, so every test here passes with mDNS stone deaf.
+    ///
+    /// It cost a full overnight outage on 2026-09-14: two phones on one wifi,
+    /// the subject moved, and neither could find the other. `:5353` with
+    /// `Recv-Q 0` is the signature.
+    ///
+    /// So this reads the source. Crude, and the alternative is finding out on a
+    /// phone again — a permission silently dropped in a manifest merge looks
+    /// exactly like the network being quiet.
+    #[test]
+    fn both_apps_still_ask_for_multicast_and_take_the_lock() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for manifest in ["follower/src/main/AndroidManifest.xml", "plugin/src/main/AndroidManifest.xml"] {
+            let text = std::fs::read_to_string(root.join(manifest))
+                .unwrap_or_else(|e| panic!("{manifest}: {e}"));
+            assert!(
+                text.contains("android.permission.CHANGE_WIFI_MULTICAST_STATE"),
+                "{manifest} no longer asks for CHANGE_WIFI_MULTICAST_STATE — mDNS goes deaf and \
+                 nothing on a desktop will tell you"
+            );
+        }
+
+        // Declaring it does nothing on its own; something has to acquire.
+        let shared = root.join("plugin/src/main/kotlin/nz/diaswarm/jni/SwarmNative.kt");
+        let text = std::fs::read_to_string(&shared).expect("SwarmNative.kt");
+        assert!(
+            text.contains("createMulticastLock"),
+            "nothing acquires a MulticastLock any more — the permission alone changes nothing"
+        );
+
+        // And both entry points have to call it, or one app is deaf.
+        for caller in [
+            "follower/src/main/kotlin/nz/diaswarm/follower/Endpoint.kt",
+            "plugin/src/main/kotlin/app/aaps/plugins/sync/swarm/SwarmPlugin.kt",
+        ] {
+            let text = std::fs::read_to_string(root.join(caller))
+                .unwrap_or_else(|e| panic!("{caller}: {e}"));
+            assert!(
+                text.contains("Multicast.hold"),
+                "{caller} no longer takes the multicast lock before starting its endpoint"
+            );
+        }
+    }
+
     /// WITHDRAWING HAS TO REACH THE VAULT THE DATA IS IN.
     ///
     /// **A READER IS TWO MEMBERS.** One in the core vault, wrapped per segment,
