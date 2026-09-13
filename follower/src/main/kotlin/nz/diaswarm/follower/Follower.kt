@@ -280,13 +280,7 @@ object Follower {
      * blocks normalised to mg/dL precisely so a reader does not have to guess.
      */
     fun target(context: Context, subject: Subject): Pair<Double, Double>? {
-        SwarmNative.check()
-        val json = SwarmNative.netProfile(
-            SwarmPaths.store(context).absolutePath,
-            subject.key,
-            SwarmPaths.identity(context).absolutePath,
-            subject.purpose
-        )
+        val json = profileJson(context, subject)
         if (json.isBlank()) return null
         return runCatching {
             val blocks = org.json.JSONObject(json).optJSONArray("target") ?: return null
@@ -294,6 +288,63 @@ object Follower {
             val first = blocks.getJSONObject(0)
             first.getDouble("lowTarget") to first.getDouble("highTarget")
         }.getOrNull()
+    }
+
+    /**
+     * The newest profile either vault holds, preferring whichever is newer.
+     *
+     * **NOT MERGED, BECAUSE A PROFILE IS NOT A SET.** Readings and treatments
+     * are records that accumulate, so the union of two vaults is never worse
+     * than either. A profile is a statement that replaces the one before it:
+     * two of them union to a contradiction, and the only sane answer is the
+     * later one. Compared on the record's own timestamp rather than on which
+     * vault answered, so a stale copy in either cannot win.
+     */
+    private fun profileJson(context: Context, subject: Subject): String {
+        SwarmNative.check()
+        val fromCore = SwarmNative.netProfile(
+            SwarmPaths.store(context).absolutePath,
+            subject.key,
+            SwarmPaths.identity(context).absolutePath,
+            subject.purpose
+        )
+        val fromKeys = keysProfile(context, subject)
+        // SAID OUT LOUD for the same reason the two merges are: a keys vault
+        // that returns no profile is indistinguishable, on screen, from one
+        // that returns the same profile — right up until the core vault is
+        // switched off and the basal chart goes flat.
+        android.util.Log.i(
+            SyncWorker.TAG,
+            "profile: core ${if (fromCore.isBlank()) "none" else recordedAt(fromCore).toString()}, " +
+                "keys ${if (fromKeys.isBlank()) "none" else recordedAt(fromKeys).toString()}"
+        )
+        if (fromKeys.isBlank()) return fromCore
+        if (fromCore.isBlank()) return fromKeys
+        return if (recordedAt(fromKeys) >= recordedAt(fromCore)) fromKeys else fromCore
+    }
+
+    /** A record's own `t`, or 0 when it will not parse. */
+    private fun recordedAt(json: String): Long =
+        runCatching { org.json.JSONObject(json).optLong("t", 0L) }.getOrDefault(0L)
+
+    /** What the keys vault can open, or empty. Never throws at the caller. */
+    private fun keysProfile(context: Context, subject: Subject): String {
+        if (!Prefs.keysVault(context) || subject.keys.isEmpty()) return ""
+        val handle = SwarmKeys.open(context)
+        if (handle == 0L) return ""
+        return try {
+            SwarmNative.keysProfile(
+                handle,
+                SwarmKeys.joinedDir(context, subject.key).absolutePath,
+                subject.keys,
+                subject.purpose
+            )
+        } catch (e: Throwable) {
+            android.util.Log.i(SyncWorker.TAG, "keys profile threw: $e")
+            ""
+        } finally {
+            SwarmNative.keysClose(handle)
+        }
     }
 
     /**
@@ -312,13 +363,10 @@ object Follower {
      * covering the day from local midnight.
      */
     fun scheduledBasal(context: Context, subject: Subject, atMs: Long): Double {
-        SwarmNative.check()
-        val json = SwarmNative.netProfile(
-            SwarmPaths.store(context).absolutePath,
-            subject.key,
-            SwarmPaths.identity(context).absolutePath,
-            subject.purpose
-        )
+        // Whichever vault has the later profile — see [profileJson]. This is
+        // the call that makes a missing profile dangerous rather than visible:
+        // 0.0 here turns every percentage TBR into a flat zero on the chart.
+        val json = profileJson(context, subject)
         if (json.isBlank()) return 0.0
         return runCatching {
             val blocks = org.json.JSONObject(json).optJSONArray("basal") ?: return 0.0

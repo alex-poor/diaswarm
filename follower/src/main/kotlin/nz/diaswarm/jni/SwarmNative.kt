@@ -504,6 +504,25 @@ object SwarmNative {
      * opened — the same answer [netGlucose] gives.
      */
     /**
+     * A followed subject's newest profile record out of the keys vault, as
+     * canonical JSON, or empty.
+     *
+     * **THE READER WHOSE ABSENCE MISLEADS RATHER THAN SHOWS.** A percentage TBR
+     * carries a bare number; the basal it is a percentage *of* comes from here.
+     * With no profile every percentage temp basal resolves to zero and the
+     * chart draws a confident flat line instead of an obviously missing one.
+     *
+     * Reads every epoch, not a tail: a profile is published when it changes, so
+     * a stable loop's newest profile can be weeks old.
+     */
+    external fun keysProfile(
+        handle: Long,
+        joinedDir: String,
+        subjectKeys: String,
+        purpose: String
+    ): String
+
+    /**
      * A followed subject's treatments out of the keys vault, in
      * [netTreatments]' shape.
      *

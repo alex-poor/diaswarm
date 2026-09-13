@@ -468,6 +468,67 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         pending.getOrPut(epoch) { StringBuilder() }.append(line).append('\n')
     }
 
+    /** Epochs this process has already given a profile record to. */
+    private val profiledEpochs = mutableSetOf<Long>()
+
+    /**
+     * Make sure every day being sealed carries the profile that was in force.
+     *
+     * **BECAUSE A DAY IS READ ON ITS OWN.** A profile record is emitted when
+     * somebody switches profile, so a stable loop publishes one and then
+     * nothing for weeks. The old vault hid that: a reader opens the whole
+     * grant, so a profile from March is still there in September. The keys
+     * vault is read a day or two at a time — that is the entire point of it,
+     * and what makes a 24-hour grant possible — and those days contained no
+     * profile at all.
+     *
+     * Caught on two phones rather than by a test: `profile: core
+     * 1788396070077, keys none`. Nothing errors. `scheduledBasal` answers 0.0,
+     * every percentage temp basal resolves against zero, and the follower draws
+     * a confident flat basal line instead of an obviously empty one. §2 says it
+     * plainly — "without basal rates, ISF, IC and targets by time of day ... the
+     * insulin records become uninterpretable" — and that has to be true of each
+     * day, not of the archive.
+     *
+     * So the profile in force is re-emitted into any day that has none. It is
+     * the real record with its real timestamp, straight through the same
+     * converter as any other — a re-publication, not a synthesis, so nothing
+     * here can state something the pump never did.
+     *
+     * Once per epoch per process: the vault drops a record a segment already
+     * holds, so a repeat costs nothing on disk, but it would be published again
+     * in the delta, and once a minute is a hundred times a day of nothing.
+     */
+    private fun ensureEachDayCarriesItsProfile() {
+        val now = System.currentTimeMillis()
+        for ((epoch, body) in pending) {
+            if (epoch in profiledEpochs) continue
+            if (body.contains("\"k\":\"profile\"")) {
+                profiledEpochs += epoch
+                continue
+            }
+            // Midday of that local day, or now for the day still running —
+            // asking about a moment that has not happened would be asking the
+            // database what it is going to do.
+            val middayUtc = epoch * 86_400_000L - offsetMs + 43_200_000L
+            val at = if (middayUtc > now) now else middayUtc
+            val record = runCatching {
+                persistenceLayer.getProfileSwitchActiveAt(at)?.let { SwarmRecords.from(it) }
+            }.getOrNull()
+            if (record == null) {
+                // A phone that has never had a profile switch. Nothing to say,
+                // and saying nothing is correct — but say it once, because a
+                // follower will see the same hole and have no idea why.
+                aapsLogger.info(LTag.CORE, "swarm: epoch $epoch has no profile to carry")
+                profiledEpochs += epoch
+                continue
+            }
+            body.append(record).append('\n')
+            profiledEpochs += epoch
+            aapsLogger.info(LTag.CORE, "swarm: carried the profile into epoch $epoch")
+        }
+    }
+
     /**
      * Seal each day this pass collected.
      *
@@ -484,6 +545,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         val vault = SwarmPaths.vault(context, this::class.java).absolutePath
         val identity = SwarmPaths.identity(context).absolutePath
         val shadow = openShadow()
+        ensureEachDayCarriesItsProfile()
         // **NOTHING ACCUMULATES WHILE THE SHADOW IS OFF, AND IT USED TO.**
         //
         // `shadowPending` was appended to unconditionally, and `flushShadow`

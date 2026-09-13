@@ -1929,6 +1929,79 @@ fn treatment_line(r: &Record) -> Option<String> {
     })
 }
 
+/// A followed subject's newest profile record out of the keys vault.
+///
+/// **THE THIRD READER, AND THE ONE THAT FAILS WORST.** Glucose draws a line and
+/// treatments draw marks; if either is missing you can see that it is missing.
+/// The profile is arithmetic other numbers depend on: a percentage TBR carries
+/// `rate` and no units, and resolving it needs the basal the subject was
+/// scheduling at that moment. Without a profile `scheduledBasal` answers 0.0,
+/// every percentage temp basal resolves to zero, and the chart draws a
+/// confident flat line that is wrong — rather than nothing, which would at
+/// least look wrong.
+///
+/// The target band comes from here too, and that one merely disappears.
+///
+/// Newest wins, as in `netProfile`: a profile record is a statement of what was
+/// scheduled from then on, and older ones are history.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysProfile<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    joined_dir: JString<'a>,
+    subject_keys: JString<'a>,
+    purpose: JString<'a>,
+) -> JString<'a> {
+    let (Ok(joined), Ok(keys), Ok(purpose)) =
+        (env.get_string(&joined_dir), env.get_string(&subject_keys), env.get_string(&purpose))
+    else {
+        return to_jstring(env, String::new());
+    };
+    let (joined, keys, purpose) = (String::from(joined), String::from(keys), String::from(purpose));
+    let Some(v) = keys_vault(handle) else { return to_jstring(env, String::new()) };
+    let offset = v.vault.offset();
+    let own_dir = v.vault.root().to_path_buf();
+
+    // EVERY EPOCH, unlike the two readers above. A profile is published when it
+    // changes, so the newest one may be weeks old — a tail window would answer
+    // "no profile" for somebody whose settings are simply stable, which is the
+    // best-run loop there is.
+    let out = follow_read(
+        &own_dir,
+        Path::new(&joined),
+        &v.store,
+        &v.handle,
+        &v.signing,
+        &keys,
+        &purpose,
+        0,
+        i64::MIN,
+        offset,
+    );
+    let Some(body) = out.strip_prefix("ok ").and_then(|rest| rest.split_once('\n')) else {
+        return to_jstring(env, String::new());
+    };
+    match newest_profile(body.1) {
+        Some(json) => to_jstring(env, json),
+        None => to_jstring(env, String::new()),
+    }
+}
+
+/// The latest `profile` record in an ndjson body, as canonical JSON.
+///
+/// Latest by the record's own `t`, never by position: segments are opened per
+/// epoch and concatenated, so arrival order says nothing about which profile
+/// was the one in force.
+fn newest_profile(body: &str) -> Option<String> {
+    body.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| Record::from_json(l).ok())
+        .filter(|r| r.kind() == "profile")
+        .max_by_key(|r| r.t())
+        .map(|r| r.to_canonical_json())
+}
+
 /// A followed subject's treatments out of the keys vault, in
 /// `netTreatments`' shape.
 ///
@@ -3075,5 +3148,42 @@ mod shadow_tests {
         // not be smuggled onto the treatment chart as a malformed row.
         assert!(treatment_line(&Record::new(5_000, "cgm").set("mgdl", Some(100.0.into()))).is_none());
         assert!(treatment_line(&Record::new(5_000, "loop").set("iob", Some(1.0.into()))).is_none());
+    }
+
+    /// THE PROFILE IN FORCE IS THE LATEST ONE, NOT THE LAST ONE READ.
+    ///
+    /// Segments are opened epoch by epoch and concatenated, so the order rows
+    /// arrive in is the order their days were opened — which is not the order
+    /// they were written, and a reader taking the last line would pick a
+    /// profile by which day happened to be read last.
+    ///
+    /// The stake is not cosmetic: the basal blocks in this record are what a
+    /// percentage temp basal is a percentage *of*.
+    #[test]
+    fn the_newest_profile_wins_whatever_order_the_epochs_arrived_in() {
+        use super::newest_profile;
+        use diaswarm_core::Record;
+
+        let profile = |t: i64, rate: f64| {
+            Record::new(t, "profile")
+                .set("basal", Some(serde_json::json!([{ "duration": 86_400_000, "amount": rate }])))
+                .to_canonical_json()
+        };
+        let body = [
+            profile(3_000, 0.9),
+            Record::new(9_000, "cgm").set("mgdl", Some(100.0.into())).to_canonical_json(),
+            profile(5_000, 0.45),
+            profile(1_000, 0.3),
+        ]
+        .join("\n");
+
+        let got = newest_profile(&body).expect("no profile found");
+        assert!(got.contains("0.45"), "picked the wrong profile: {got}");
+        assert_eq!(newest_profile(""), None);
+        assert_eq!(
+            newest_profile(&Record::new(1, "cgm").set("mgdl", Some(90.0.into())).to_canonical_json()),
+            None,
+            "a body with no profile in it must answer None, not a fabricated one"
+        );
     }
 }
