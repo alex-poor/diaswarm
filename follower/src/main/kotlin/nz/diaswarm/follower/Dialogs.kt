@@ -71,6 +71,8 @@ fun PeopleSheet(
     onUnits: () -> Unit,
     onKeysVault: () -> Unit,
     keysVault: Boolean,
+    onKeysOnly: () -> Unit,
+    keysOnly: Boolean,
     onBand: () -> Unit,
     bandLabel: String,
     mmol: Boolean,
@@ -126,6 +128,35 @@ fun PeopleSheet(
                         color = Text2,
                         fontSize = 12.sp
                     )
+                }
+                // ONLY OFFERED WHILE THE NEW VAULT IS ON, because a phone
+                // reading neither source shows a blank screen, and a blank
+                // screen is not a test of anything.
+                if (keysVault) {
+                    Column(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                            .clickable { onKeysOnly() }.padding(vertical = 8.dp)
+                    ) {
+                        Text(
+                            "Old vault: ${if (keysOnly) "ignored" else "still read"}",
+                            color = Text1,
+                            fontSize = 15.sp
+                        )
+                        // THE ONLY WAY TO ACTUALLY TEST THE CUTOVER. Both
+                        // vaults are read and merged, which is right during a
+                        // migration and is also why "the new one can stand
+                        // alone" has never been checked — the old one has been
+                        // covering for it at every step. Turn it off and
+                        // anything missing shows up now, not on the day the old
+                        // vault is retired.
+                        Text(
+                            "Ignores the old vault, so anything the new one is " +
+                                "missing shows up straight away. Turn it back on if " +
+                                "the graph looks wrong.",
+                            color = Text2,
+                            fontSize = 12.sp
+                        )
+                    }
                 }
                 Column(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))

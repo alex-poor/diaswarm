@@ -20,6 +20,7 @@ object Prefs {
     private const val HIGH_LINE = "high_line_mgdl"
     private const val KEYS_VAULT = "keys_vault"
     private const val HANDED_OVER_AT = "handed_over_at_"
+    private const val KEYS_ONLY = "keys_only"
 
     private fun p(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -68,6 +69,27 @@ object Prefs {
 
     fun setHandedOverAt(c: Context, subject: String, at: Long) =
         p(c).edit().putLong(HANDED_OVER_AT + subject, at).apply()
+
+    /**
+     * Read the keys vault and **nothing else** — the cutover, actually tested.
+     *
+     * **BECAUSE OTHERWISE THERE IS NOTHING TO TEST.** Every reader merges the
+     * two vaults, which is right during a migration and is also why "the keys
+     * vault can stand alone" has never been checked: the core vault has been
+     * quietly covering for it at every step. A gap in the new one is invisible
+     * while the old one is still there, which is the exact condition that hid
+     * three half-built readers.
+     *
+     * So this turns the old one off. Anything the keys vault cannot answer
+     * shows as missing, immediately and on screen, instead of the day the core
+     * vault is retired.
+     *
+     * Off by default, and useless without [keysVault] — a phone with neither
+     * source would show nothing at all, which is not a test, it is a blank
+     * screen. Gated on both.
+     */
+    fun keysOnly(c: Context): Boolean = keysVault(c) && p(c).getBoolean(KEYS_ONLY, false)
+    fun setKeysOnly(c: Context, v: Boolean) = p(c).edit().putBoolean(KEYS_ONLY, v).apply()
 
     fun keysVault(c: Context): Boolean = p(c).getBoolean(KEYS_VAULT, false)
     fun setKeysVault(c: Context, v: Boolean) = p(c).edit().putBoolean(KEYS_VAULT, v).apply()

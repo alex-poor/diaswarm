@@ -124,6 +124,10 @@ object Follower {
         // spends its whole life in. Deduped on timestamp, because the same
         // reading arriving twice is the normal case here, not an anomaly.
         val fromKeys = keysReadings(context, subject, since)
+        // KEYS ONLY MEANS KEYS ONLY — see [Prefs.keysOnly]. The core read is
+        // skipped entirely rather than discarded afterwards, so the mode also
+        // shows what the old vault was costing.
+        if (Prefs.keysOnly(context)) return fromKeys
         val fromCore = parseReadings(
             SwarmNative.netGlucose(
                 SwarmPaths.store(context).absolutePath,
@@ -210,6 +214,7 @@ object Follower {
         // Deduped on the whole row, which is what `netTreatments` already does
         // across overlapping segments.
         val fromKeys = keysTreatments(context, subject, since)
+        if (Prefs.keysOnly(context)) return fromKeys.sortedBy { it.at }
         val fromCore = parseTreatments(
             SwarmNative.netTreatments(
                 SwarmPaths.store(context).absolutePath,
@@ -311,7 +316,7 @@ object Follower {
      */
     fun runningTempTarget(context: Context, subject: Subject): TempTarget? {
         SwarmNative.check()
-        val fromCore = SwarmNative.netTempTarget(
+        val fromCore = if (Prefs.keysOnly(context)) "" else SwarmNative.netTempTarget(
             SwarmPaths.store(context).absolutePath,
             subject.key,
             SwarmPaths.identity(context).absolutePath,
@@ -400,7 +405,7 @@ object Follower {
      */
     private fun profileJson(context: Context, subject: Subject): String {
         SwarmNative.check()
-        val fromCore = SwarmNative.netProfile(
+        val fromCore = if (Prefs.keysOnly(context)) "" else SwarmNative.netProfile(
             SwarmPaths.store(context).absolutePath,
             subject.key,
             SwarmPaths.identity(context).absolutePath,

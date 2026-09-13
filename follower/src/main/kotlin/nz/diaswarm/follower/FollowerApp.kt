@@ -155,10 +155,15 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
         // The endpoint has to come back for this: see [Endpoint.restart].
         onKeysVault = {
             Prefs.setKeysVault(context, !Prefs.keysVault(context))
+            // Turning the vault off must take the keys-only mode with it, or
+            // the app would be left reading nothing at all.
+            if (!Prefs.keysVault(context)) Prefs.setKeysOnly(context, false)
             Endpoint.restart(context)
             tick++
         },
         keysVault = Prefs.keysVault(context),
+        onKeysOnly = { Prefs.setKeysOnly(context, !Prefs.keysOnly(context)); tick++ },
+        keysOnly = Prefs.keysOnly(context),
         onBand = { Prefs.cycleBand(context); tick++ },
         bandLabel = Prefs.bandLabel(context),
         mmol = Prefs.mmol(context),

@@ -1262,3 +1262,32 @@ as somebody editing their profile rather than going for a run.
 `event` is the remaining unread kind: site changes, sensor changes, notes. It is
 informational rather than clinical and nothing on screen claims otherwise, so it
 stays a known gap rather than a defect.
+
+### ✅ CLOSED — the cutover, actually tested, 2026-09-13 20:16
+
+There was no switch to throw. Every reader merges both vaults, which is right
+during a migration and is also exactly why "the keys vault can stand alone" had
+never been checked: **the old vault has been quietly covering for the new one at
+every step.** A gap in the new one is invisible while the old one is still
+there — which is the precise condition that hid three half-built readers.
+
+So Ayni gained a second toggle, *Old vault: ignored*, which skips the core reads
+rather than discarding their results afterwards. On phone B, with it on:
+
+```
+profile: core none, keys 1788396070077
+```
+
+and on screen: **12.1 mmol/L, 18 seconds old**, a full six-hour curve with no
+gaps, the target band, an 8 U bolus, 80 g of carbs, the basal trace and its
+`sched 0.45` line. All of it out of the keys vault, with the old one not read at
+all.
+
+That is the cutover. It is not a procedure and not a day — it is one tap, and it
+is reversible with the same tap, which is what the description on it says:
+*"Turn it back on if the graph looks wrong."*
+
+⚠️ **Left ON overnight on phone B**, deliberately. A migration that only ever
+runs with a safety net underneath it has not been tested; if the keys vault
+falls behind while nobody is watching, the graph will show it by morning, which
+is the whole point of the mode.
