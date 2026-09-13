@@ -42,8 +42,6 @@
     <string name="swarm_following_nothing">Nothing has arrived from them yet.</string>
     <string name="swarm_follow_invite">Follow someone by invite</string>
     <string name="swarm_follow_invite_summary">Paste an invite they sent you. Following costs them nothing; you cannot read anything until they share with you.</string>
-    <string name="swarm_stay_reachable">Stay reachable while asleep</string>
-    <string name="swarm_stay_reachable_summary">Holds the wifi connection open so the people you share with keep getting readings when the screen is off. Uses more battery. Off, they see older data until this phone is used again. No effect while charging.</string>
     <string name="swarm_shadow_spaces">Shadow the new vault (experimental)</string>
     <string name="swarm_shadow_spaces_summary">Also seal into the new vault, read it back, and log whether every record survived. Nothing reads it; the existing vault stays in charge.</string>
     <string name="swarm_resync">Re-read everything from the database</string>

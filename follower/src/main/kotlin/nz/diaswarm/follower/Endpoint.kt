@@ -39,7 +39,6 @@ object Endpoint {
         // BEFORE THE ENDPOINT, like initAndroid: mDNS starts with it, and a
         // lock taken afterwards misses whatever it announced meanwhile.
         nz.diaswarm.jni.Multicast.hold(context)
-        nz.diaswarm.jni.Multicast.stayReachable(context, Prefs.stayReachable(context))
         val h = SwarmNative.swarmJoin(
             SwarmPaths.store(context).absolutePath,
             SwarmPaths.nodeKey(context).absolutePath,

@@ -167,12 +167,18 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
         // Applied immediately rather than at next launch: a switch that takes
         // effect later is the defect this app already had once.
         onStayReachable = {
-            val want = !Prefs.stayReachable(context)
-            Prefs.setStayReachable(context, want)
-            nz.diaswarm.jni.Multicast.stayReachable(context, want)
+            Prefs.setStayReachable(context, !Prefs.stayReachable(context))
+            // Applied now, not at next launch. Starting the service IS the
+            // setting — there is nothing else it does.
+            StayAwake.apply(context)
             tick++
         },
         stayReachable = Prefs.stayReachable(context),
+        // Read every tick rather than remembered: the user grants this in
+        // Android's settings, outside this app, and comes back expecting the
+        // row to have noticed.
+        dozeExempt = StayAwake.exemptFromDoze(context),
+        onFixDoze = { StayAwake.ask(context) },
         onBand = { Prefs.cycleBand(context); tick++ },
         bandLabel = Prefs.bandLabel(context),
         mmol = Prefs.mmol(context),

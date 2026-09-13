@@ -38,6 +38,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Endpoint.start(applicationContext)
+        // Bring the service into line with the preference on every launch:
+        // Android may have killed it, and the user may have changed their mind
+        // in the system settings rather than in here.
+        StayAwake.apply(applicationContext)
         schedule()
         setContent { FollowerApp(onScan = { scanner.launch(scanOptions()) }, scanned = scanned, onScanHandled = { scanned = null }) }
     }

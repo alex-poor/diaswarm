@@ -102,12 +102,20 @@ object Prefs {
      * catches up in a rush when it wakes. With it, the radio stays associated
      * and the readings keep arriving.
      *
-     * **On by default**, because this app exists to answer "how are they right
-     * now" and a silently stale graph is its worst failure. Anyone who would
-     * rather have the battery turns it off in one tap, and gets the behaviour
-     * the app had before — which is not broken, just late.
+     * **OFF by default, and that is a change of mind with a measurement behind
+     * it.** It was on, when the mechanism was a `WifiLock` that cost battery
+     * and did nothing. What it takes to actually work is a foreground service
+     * with a permanent notification, and turning that on for everybody who
+     * updates — without asking, without explaining — is not a default anybody
+     * should choose on somebody else's behalf.
+     *
+     * Two hours unplugged said what it is worth: with this off, a sleeping
+     * phone made no fetch for forty minutes and the readings arrived in a rush
+     * when it woke. Neither answer is wrong. It is a notification and some
+     * battery against knowing now, and the person holding the phone is the one
+     * who should pick.
      */
-    fun stayReachable(c: Context): Boolean = p(c).getBoolean(STAY_REACHABLE, true)
+    fun stayReachable(c: Context): Boolean = p(c).getBoolean(STAY_REACHABLE, false)
     fun setStayReachable(c: Context, v: Boolean) =
         p(c).edit().putBoolean(STAY_REACHABLE, v).apply()
 

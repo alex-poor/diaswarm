@@ -1678,3 +1678,49 @@ and a permission prompt. That is a product decision, not a bug fix, and it is
 the same bargain every always-on Android app makes. The alternative is to accept
 the gap and make staleness loud — the pool already covers it whenever any other
 holder is awake.
+
+### ✅ The proper fix: clear the two flags the phone actually named
+
+The `WifiLock` is gone — it cost battery and did nothing, and so has the AAPS
+preference that switched it, which controlled nothing on a phone that already
+had both exemptions.
+
+`dumpsys netpolicy` named the remedies precisely, and there are exactly two:
+
+| flag | cleared by | who can do it |
+|---|---|---|
+| `APP_BACKGROUND` | a foreground service | the app |
+| `DOZE` | the battery-optimisation exemption | **only the user** |
+
+**`StayAwake`** is the first half: a foreground service that runs the sync loop
+itself on the same two-minute cadence rather than leaning on WorkManager — a
+periodic worker is exactly what Doze defers, so keeping a service alive so a
+deferred worker can run later would be theatre.
+
+**The second half cannot be taken, only granted**, and the row says so instead
+of claiming to be finished. Three states, three sentences, all before the tap:
+
+> **off** — "readings stop while the screen is off and catch up when you open
+> the app — measured at 40 minutes behind after two hours face down. On, ayni
+> keeps fetching, shows a permanent notification, and uses more battery."
+>
+> **on, exempt** — "Fetching while the screen is off. There is a permanent
+> notification while this is on; swipe it away by turning this off."
+>
+> **on, not exempt** — in amber — "On, but Android will still pause ayni when
+> the phone has been still for a while. Tap here to allow it to keep running —
+> that is the other half, and only you can grant it."
+
+Tapping in that third state opens Android's battery-optimisation list rather
+than firing `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. The direct prompt is one tap
+faster and is the one F-Droid and Play treat as a red flag, because it is the
+one apps abuse. Slower, and it asks for nothing it has not already explained.
+
+**Default off, which is a change of mind with a measurement behind it.** It was
+on when the mechanism was a lock that did nothing and cost only battery. What
+works costs a permanent notification, and switching that on for everybody who
+updates — unasked, unexplained — is not a default to choose on somebody's
+behalf.
+
+Verified on phone B: `isForeground=true`, `stay-awake service started`, not
+doze-exempt, and the row in amber saying exactly that.

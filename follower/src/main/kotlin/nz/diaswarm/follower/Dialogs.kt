@@ -18,6 +18,9 @@ import androidx.compose.ui.unit.sp
 private val Text1 = Color(0xFFE8EAED)
 private val Text2 = Color(0xFF9AA3B0)
 
+/** For a setting that is on and not finished — amber, not red: nothing is broken. */
+private val Warn = Color(0xFFE0A33A)
+
 /**
  * The code somebody else scans to start following you — or, in the one-scan
  * flow, the code they scan so THEY can share with YOU and hand their invite
@@ -75,6 +78,8 @@ fun PeopleSheet(
     keysOnly: Boolean,
     onStayReachable: () -> Unit,
     stayReachable: Boolean,
+    dozeExempt: Boolean,
+    onFixDoze: () -> Unit,
     onBand: () -> Unit,
     bandLabel: String,
     mmol: Boolean,
@@ -115,23 +120,33 @@ fun PeopleSheet(
                 // battery and freshness and applies to everybody.
                 Column(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                        .clickable { onStayReachable() }.padding(vertical = 8.dp)
+                        .clickable { if (stayReachable && !dozeExempt) onFixDoze() else onStayReachable() }
+                        .padding(vertical = 8.dp)
                 ) {
                     Text(
                         "Keep up to date while asleep: ${if (stayReachable) "on" else "off"}",
                         color = Text1,
                         fontSize = 15.sp
                     )
-                    // SAYS WHAT IT COSTS AND WHAT IT BUYS. Android closes the
-                    // connection about half a minute after the screen goes off,
-                    // so with this off the readings stop until the phone is
-                    // picked up and then arrive in a rush. Neither answer is
-                    // wrong; it is somebody's battery.
+                    // **THREE THINGS, AND ALL THREE SAID BEFORE THE TAP.** What
+                    // it does, what it costs, and — when it is on but only half
+                    // done — what is still missing and where to fix it.
+                    // Measured, not guessed: two hours unplugged produced forty
+                    // minutes with no fetch at all.
                     Text(
-                        "Holds the wifi connection open so readings keep arriving with the " +
-                            "screen off. Uses more battery. Off, they catch up when you next " +
-                            "open the app.",
-                        color = Text2,
+                        if (!stayReachable)
+                            "Off: readings stop while the screen is off and catch up when you " +
+                                "open the app — measured at 40 minutes behind after two hours " +
+                                "face down. On, ayni keeps fetching, shows a permanent " +
+                                "notification, and uses more battery."
+                        else if (dozeExempt)
+                            "Fetching while the screen is off. There is a permanent " +
+                                "notification while this is on; swipe it away by turning this off."
+                        else
+                            "On, but Android will still pause ayni when the phone has been " +
+                                "still for a while. Tap here to allow it to keep running — " +
+                                "that is the other half, and only you can grant it.",
+                        color = if (stayReachable && !dozeExempt) Warn else Text2,
                         fontSize = 12.sp
                     )
                 }

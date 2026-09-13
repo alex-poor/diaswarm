@@ -712,58 +712,6 @@ object Multicast {
     @Volatile
     private var lock: android.net.wifi.WifiManager.MulticastLock? = null
 
-    /**
-     * Keep the wifi radio associated while the screen is off.
-     *
-     * **THE SAME SHAPE OF GAP AS THE MULTICAST LOCK.** Deep doze closed both
-     * relay sockets within 35 seconds — measured — and a relay cannot push to a
-     * node that is not connected to it, so the subject's phone becomes
-     * unreachable by any route while it sleeps. A foreground service keeps the
-     * process alive; it does not keep the *radio* associated. This does.
-     *
-     * It is the network answer to the question "BLE stays up all night, why
-     * doesn't a socket" — BLE stays up because something holds it up.
-     *
-     * ⚠️ **It costs battery, and that is not a footnote.** Holding wifi high
-     * performance overnight is a real drain on somebody else's phone, which is
-     * why the follower makes it a choice rather than a default nobody was told
-     * about. `HIGH_PERF` is deprecated on API 29+ in favour of `LOW_LATENCY`,
-     * which is aimed at gaming and is not what is wanted; the deprecated
-     * constant still does the thing being asked for.
-     *
-     * Released as well as acquired, because a lock that cannot be given back is
-     * a setting the user cannot actually turn off.
-     */
-    @Volatile
-    private var wifi: android.net.wifi.WifiManager.WifiLock? = null
-
-    @Synchronized
-    @Suppress("DEPRECATION")
-    fun stayReachable(context: android.content.Context, want: Boolean) {
-        try {
-            if (!want) {
-                wifi?.let { if (it.isHeld) it.release() }
-                wifi = null
-                android.util.Log.i("diaswarm", "wifi lock released — reachable only while awake")
-                return
-            }
-            if (wifi != null) return
-            val manager = context.applicationContext
-                .getSystemService(android.content.Context.WIFI_SERVICE)
-                as android.net.wifi.WifiManager
-            val held = manager.createWifiLock(
-                android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF,
-                "diaswarm-reachable"
-            )
-            held.setReferenceCounted(false)
-            held.acquire()
-            wifi = held
-            android.util.Log.i("diaswarm", "wifi lock held — stays reachable with the screen off")
-        } catch (e: Throwable) {
-            android.util.Log.w("diaswarm", "no wifi lock: $e")
-        }
-    }
-
     @Synchronized
     fun hold(context: android.content.Context) {
         if (lock != null) return
