@@ -1751,3 +1751,26 @@ behalf.
 
 Verified on phone B: `isForeground=true`, `stay-awake service started`, not
 doze-exempt, and the row in amber saying exactly that.
+
+### ⚠️ Everything measured today was on one LAN
+
+Worth writing down before it is mistaken for more than it is. Phone B reports
+`relay=connected(1)` while `ss -tan` shows **no relay socket at all** — because
+both phones are on the same wifi and connect directly. The relay is not carrying
+this traffic and has not been carrying it all morning.
+
+So today establishes same-LAN behaviour. It says nothing new about following
+somebody from another network, which has not been exercised since 2026-09-11 and
+is the case a relay exists for. The overnight outage was also same-LAN: mDNS deaf
+and the app doze-blocked, with the relay incidental.
+
+**And two of the three instruments built today lie in some conditions:**
+
+| signal | trust |
+|---|---|
+| `relay_estab` (socket count) | **low** — wrong twice: pinned to IPv4 while the link was IPv6, then reading 0 when there is legitimately no relay socket |
+| `ayni_relay` (iroh's own state) | medium — says `connected(1)` with no socket visible |
+| `last_refresh` (did a fetch land) | **high** — measures the outcome, not a proxy for it |
+
+Read `last_refresh`. It is the only one that answers the question anybody
+actually has, which is whether the readings are arriving.
