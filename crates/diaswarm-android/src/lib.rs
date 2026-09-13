@@ -3523,6 +3523,136 @@ mod shadow_tests {
         assert_eq!(held, 72, "the day did not accumulate across flushes");
     }
 
+    /// EVERY JNI DECLARATION IS EITHER CALLED, OR ON THE LIST OF ONES THAT ARE NOT.
+    ///
+    /// **THE AUDIT I DID NOT RUN, AND IT COST A NIGHT.** On 2026-09-14 a
+    /// follower went blind because `swarmTick` was declared in `SwarmNative`
+    /// and called from nowhere: the app joined the pool and never took a turn
+    /// in it, so it could only ever reach a subject at the address it was
+    /// handed. Two audits had been run that week — emitted record kinds against
+    /// consumed ones, public Rust functions against called ones — and neither
+    /// pointed at this seam, which is where the defect was.
+    ///
+    /// A bare "everything must be called" rule is no good here: several
+    /// declarations are dead *by decision* — the `spaces*` family belongs to
+    /// the message layer D26 dropped, and a few keys helpers were superseded.
+    /// So the dead ones are listed by name. The list is the point: adding a
+    /// declaration and forgetting to call it fails immediately, and so does
+    /// quietly dropping the last call to a live one.
+    ///
+    /// If this fails, the fix is one of three things — call it, delete it, or
+    /// put it on the list with a reason. Not the third by reflex.
+    #[test]
+    fn every_jni_declaration_is_called_or_knowingly_dead() {
+        // Dead by decision, each with the reason it is still declared.
+        const KNOWN_DEAD: &[(&str, &str)] = &[
+            ("spacesOpen", "D26 dropped the spaces message layer"),
+            ("spacesClose", "D26"),
+            ("spacesSubject", "D26"),
+            ("spacesSeal", "D26 — still measured by opcost, not used by an app"),
+            ("spacesGrant", "D26"),
+            ("spacesRevoke", "D26"),
+            ("spacesStatus", "D26"),
+            ("header", "core helper, exercised by the Rust tests"),
+            ("canonicalLine", "core helper, exercised by the Rust tests"),
+            ("keysSubject", "superseded by keysIdentity"),
+            ("keysRevoke", "superseded by keysRevokeReader, which derives the tag"),
+            ("keysFollowRead", "superseded by keysGlucose/keysTreatments/keysProfile"),
+            ("keysCarry", "superseded by keysCarryAll"),
+        ];
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let decls = std::fs::read_to_string(
+            root.join("plugin/src/main/kotlin/nz/diaswarm/jni/SwarmNative.kt"),
+        )
+        .expect("SwarmNative.kt");
+
+        // Every call site in either app, minus the declarations themselves.
+        let mut callers = String::new();
+        for dir in ["follower/src/main/kotlin", "plugin/src/main/kotlin"] {
+            collect_kotlin(&root.join(dir), &mut callers);
+        }
+
+        let mut orphans = Vec::new();
+        for line in decls.lines() {
+            let Some(rest) = line.trim().strip_prefix("external fun ") else { continue };
+            let name: String =
+                rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            if name.is_empty() || KNOWN_DEAD.iter().any(|(d, _)| *d == name) {
+                continue;
+            }
+            // A call is `SwarmNative.name(` from outside, or bare `name(` from
+            // inside the object itself — `check()` calls `specVersion()`.
+            let qualified = format!("SwarmNative.{name}(");
+            let bare = format!(" {name}()");
+            if !callers.contains(&qualified) && !callers.contains(&bare) {
+                orphans.push(name);
+            }
+        }
+
+        assert!(
+            orphans.is_empty(),
+            "declared in SwarmNative and called by neither app: {orphans:?}\n\
+             Call it, delete it, or add it to KNOWN_DEAD with the reason."
+        );
+    }
+
+    /// AN APP THAT JOINS THE POOL MUST ALSO TAKE A TURN IN IT.
+    ///
+    /// **THE RULE THE LAST TEST COULD NOT EXPRESS, AND THE ONE THAT MATTERS.**
+    /// Checking that every declaration is called *by some app* cannot catch
+    /// what actually happened: AAPS called `swarmTick` all along and Ayni never
+    /// did, so the union looked complete while the follower sat in a pool of
+    /// one, unable to find a subject that had moved. Verified by mutation —
+    /// deleting Ayni's call leaves the union check green.
+    ///
+    /// So this is per app, and narrow enough to be true rather than tidy. Not
+    /// every app should call every function: a follower has no business
+    /// granting, and the publisher does not read its own vault. What every
+    /// pool member owes the pool is the same three things — join it, take a
+    /// turn in it, leave it — and a member that only joins is a member that
+    /// learns nothing and is never found.
+    #[test]
+    fn every_app_that_joins_the_pool_also_ticks_it() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for app in ["follower/src/main/kotlin", "plugin/src/main/kotlin"] {
+            let mut src = String::new();
+            collect_kotlin(&root.join(app), &mut src);
+            if !src.contains("SwarmNative.swarmJoin(") {
+                continue; // does not join, owes the pool nothing
+            }
+            for required in ["swarmTick", "swarmLeave"] {
+                assert!(
+                    src.contains(&format!("SwarmNative.{required}(")),
+                    "{app} calls swarmJoin but never {required}.\n\
+                     A member that joins and never ticks announces nothing, learns nobody, \n\
+                     and can only reach a subject at the address it was handed — which works \n\
+                     until that address changes. That is the 2026-09-14 outage."
+                );
+            }
+        }
+    }
+
+    /// Every `.kt` under a directory, concatenated, minus the declarations.
+    fn collect_kotlin(dir: &std::path::Path, out: &mut String) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for e in entries.filter_map(|e| e.ok()) {
+            let path = e.path();
+            if path.is_dir() {
+                collect_kotlin(&path, out);
+            } else if path.extension().is_some_and(|x| x == "kt") {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    for line in text.lines() {
+                        if !line.trim().starts_with("external fun ") {
+                            out.push_str(line);
+                            out.push('\n');
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// BOTH APPS MUST STILL ASK ANDROID FOR MULTICAST, AND STILL TAKE THE LOCK.
     ///
     /// **THE ONE DEFECT NO RUNTIME TEST IN THIS REPO CAN CATCH.** p2panda spawns

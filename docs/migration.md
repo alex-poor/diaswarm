@@ -1577,3 +1577,41 @@ lands on a different person's battery than the benefit.
 `mState=ACTIVE`), which is why the loop phone survived being unplugged and
 carried around this morning and did not survive the night. The lock is what
 makes an *unplugged* phone reachable.
+
+### 🔍 The audit I never ran, turned into a test — and the test was wrong first
+
+Two audits had been run that week: emitted record kinds against consumed ones,
+and public Rust functions against called ones. Neither pointed at the
+Kotlin↔JNI seam, which is where the defect was. `swarmTick` sat in
+`SwarmNative.kt` declared and called from nowhere, in a file edited six times
+that day.
+
+Running that audit now finds fourteen uncalled declarations — and that is the
+problem with the naive rule, because thirteen of them are dead **by decision**:
+the `spaces*` family belongs to the layer D26 dropped, and a few keys helpers
+were superseded. Nothing distinguished those from the forgotten one. So they are
+listed by name with a reason, and the list is the point: a new declaration that
+nothing calls fails immediately.
+
+**Then mutation testing threw the first version away.** Deleting Ayni's call to
+`swarmTick` left it **green**, because the check unioned call sites across both
+apps and AAPS called it all along. That union is exactly the shape of the bug —
+one app does it, the other does not — so the test could never have caught the
+thing it was written for.
+
+The rule that works is per app, and narrower:
+
+> An app that calls `swarmJoin` must also call `swarmTick` and `swarmLeave`.
+
+Not every app should call every function — a follower has no business granting,
+a publisher does not read its own vault. But every pool member owes the pool the
+same three things, and a member that only joins announces nothing, learns
+nobody, and can reach a subject only at the address it was handed. Mutation
+confirms it now fails correctly:
+
+```
+follower/src/main/kotlin calls swarmJoin but never swarmTick.
+```
+
+Four mutation checks on this suite now, and **two** of them changed the design
+rather than confirming it.
