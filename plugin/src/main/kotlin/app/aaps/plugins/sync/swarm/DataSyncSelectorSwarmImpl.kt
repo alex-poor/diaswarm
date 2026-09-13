@@ -939,6 +939,9 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * grant on, and draining the queue would throw away claims that would
      * verify later.
      */
+    /** Readers this process has already taken a handover for. */
+    private val grantedHandovers = mutableSetOf<String>()
+
     private fun applyHandovers() {
         if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return
         val verified = try {
@@ -968,12 +971,18 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 val tag = SwarmNative.keysGrant(handle, keys, purpose)
                 if (tag.startsWith("error")) {
                     aapsLogger.error(LTag.CORE, "swarm: handover grant failed: $tag")
-                } else {
+                } else if (grantedHandovers.add("$keys|$purpose")) {
                     aapsLogger.info(
                         LTag.CORE,
                         "swarm: handed over a reader as ${tag.take(16)}… ($purpose)"
                     )
                 }
+                // AND SILENCE AFTER THAT. `keysGrant` is idempotent now — a
+                // repeat returns the same tag and publishes nothing — but a
+                // line that says "handed over a reader" every time one is
+                // *offered* reads as a grant that happened. It was printing
+                // every two minutes for the same reader while the log grew
+                // underneath it, and looked like the system working.
             }
         } finally {
             SwarmNative.keysClose(handle)

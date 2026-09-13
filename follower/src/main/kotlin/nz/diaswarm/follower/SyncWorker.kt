@@ -70,6 +70,12 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                         // subject with no keys identity of their own has no
                         // keys vault to be granted on.
                         if (subject.keys.isEmpty()) continue
+                        // AND NOT EVERY PASS. See [Prefs.handedOverAt]: this
+                        // was asking once a minute, for ever, and the subject
+                        // was granting once a minute, for ever.
+                        val since = System.currentTimeMillis() -
+                            Prefs.handedOverAt(applicationContext, subject.key)
+                        if (since < HANDOVER_RETRY_MS) continue
                         val took = SwarmNative.netHandOver(
                             Endpoint.handle,
                             store,
@@ -77,7 +83,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                             subject.key,
                             identity
                         )
-                        if (took == 1L) Log.i(TAG, "handed over to ${subject.short}")
+                        if (took == 1L) {
+                            Prefs.setHandedOverAt(applicationContext, subject.key, System.currentTimeMillis())
+                            Log.i(TAG, "handed over to ${subject.short}")
+                        }
                     }
                 }
             }
@@ -93,6 +102,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
 
     companion object {
         const val TAG = "diaswarm"
+
+        /** How long to leave a subject alone between keys-identity offers. */
+        private const val HANDOVER_RETRY_MS = 30 * 60 * 1000L
         const val UNIQUE = "diaswarm-sync"
 
         /**

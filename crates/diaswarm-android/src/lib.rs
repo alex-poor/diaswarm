@@ -2214,17 +2214,26 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGrant<'a>(
             Err(e) => return to_jstring(env, format!("error bundle {e}")),
         },
     };
-    let (welcome, tag) = match v.vault.grant(bundle, &purpose) {
-        Ok(pair) => pair,
+    let tag = match v.vault.grant(bundle, &purpose) {
+        Ok((welcome, tag)) => {
+            if let Err(e) = v.handle.block_on(diaswarm_keys::wire::publish_control(
+                &v.store,
+                &v.signing,
+                &welcome,
+            )) {
+                return to_jstring(env, format!("error publish {e}"));
+            }
+            tag
+        }
+        // **ALREADY IN IS SUCCESS, AND SAYING SO IS THE POINT.** The caller
+        // asked for this reader to be able to read, and they can. Publishing a
+        // second welcome would be the bug: see `Error::AlreadyGranted`. The tag
+        // is the same one the first grant returned, so the caller's bookkeeping
+        // is unchanged and a retry is indistinguishable from a first attempt —
+        // which is what makes the follower's retries free.
+        Err(diaswarm_keys::Error::AlreadyGranted(tag)) => tag,
         Err(e) => return to_jstring(env, format!("error grant {e}")),
     };
-    if let Err(e) = v.handle.block_on(diaswarm_keys::wire::publish_control(
-        &v.store,
-        &v.signing,
-        &welcome,
-    )) {
-        return to_jstring(env, format!("error publish {e}"));
-    }
     let mut hex = String::with_capacity(64);
     for b in &tag.0 {
         hex.push_str(&format!("{b:02x}"));

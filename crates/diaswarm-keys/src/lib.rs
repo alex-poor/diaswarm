@@ -121,6 +121,22 @@ pub enum Error {
     /// The control message was genuine and was not this vault's welcome.
     #[error("that control message does not welcome this vault into the group")]
     NotWelcomed,
+    /// This reader is already in the group under this purpose.
+    ///
+    /// **NOT A FAILURE — A RE-GRANT THAT MUST NOT BE PUBLISHED.** Adding
+    /// somebody who is already in produces a second, valid welcome, and every
+    /// one of those is a control message that goes in the log for ever and a
+    /// member added again in the DGM state that every party keeps. A follower
+    /// retrying a handover it cannot tell succeeded — which is the normal
+    /// state of a network — would otherwise grow both without bound on
+    /// somebody else's phone. Measured before it was caught: the same reader
+    /// re-granted every two minutes, 68 control operations and a DGM state
+    /// from 3 KB to 17.6 KB in under seven hours.
+    ///
+    /// Carries the tag, because the caller usually wants it and has no other
+    /// way to learn it without re-deriving.
+    #[error("that reader is already granted")]
+    AlreadyGranted(GrantTag),
     #[error(transparent)]
     Store(#[from] p2panda_store::SqliteError),
     #[error(transparent)]
@@ -772,6 +788,13 @@ impl Vault {
     ) -> Result<(Message, GrantTag), Error> {
         let mut state = self.state.take().ok_or(Error::NoSecret)?;
         let tag = Self::tag_for(&state.dcgka.my_keys, &bundle, purpose)?;
+        // ALREADY IN IS NOT A REASON TO ADD AGAIN. See [`Error::AlreadyGranted`]
+        // — the tag is derived from the pair and the purpose, so it is stable
+        // across retries, which is exactly what makes this check possible.
+        if state.dcgka.dgm.members.contains(&tag) {
+            self.state = Some(state);
+            return Err(Error::AlreadyGranted(tag));
+        }
         state.dcgka.pki = KeyRegistry::add_longterm_bundle(state.dcgka.pki, tag, bundle)
             .map_err(|e| Error::Crypto(e.to_string()))?;
         let (state, msg) =

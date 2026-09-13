@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use diaswarm_core::{EPOCH_MS, Record};
-use diaswarm_keys::{Vault, wire};
+use diaswarm_keys::{Error, Vault, wire};
 use p2panda_core::SigningKey;
 use p2panda_encryption::Rng;
 use p2panda_store::{SqliteStore, SqliteStoreBuilder};
@@ -243,6 +243,54 @@ fn one_reader_is_a_different_member_to_every_subject() {
     let (_w, a) = subject.grant(reader_bundle.clone(), "follow").expect("grant");
     let (_w, b) = subject.grant(reader_bundle, "clinician").expect("grant");
     assert_ne!(a, b, "the same reader under two purposes got one name");
+}
+
+/// GRANTING SOMEBODY WHO IS ALREADY IN MUST NOT PUBLISH ANYTHING.
+///
+/// **A RETRY IS THE NORMAL STATE OF A NETWORK, NOT AN EDGE CASE.** A follower
+/// cannot tell whether a handover it sent arrived, so it sends it again; the
+/// subject's phone was granting again every time. Each re-grant is a valid
+/// control message that lives in the log for ever, and a member re-added in the
+/// DGM state that every party keeps and replays.
+///
+/// Measured on two phones before it was caught: the same reader re-granted
+/// every two minutes, 68 control operations and a DGM state that went from
+/// 3 KB to 17.6 KB in under seven hours — on a phone driving an insulin pump,
+/// driven by a message any peer can send.
+///
+/// Re-granting after a REVOKE is a different thing and must still work: the
+/// revoke takes them out of the group, so the check does not see them.
+#[test]
+fn granting_a_reader_who_is_already_in_publishes_nothing() {
+    let rng = Rng::default();
+    let subject_key = SigningKey::from_bytes(&rand32());
+    let root = tmp("regrant");
+    let mut subject = Vault::open(&root, OFFSET, &subject_key).expect("vault");
+    let (subject_mgr, _b) = Vault::key_bundle(&rng).expect("bundle");
+    subject.create(subject_mgr).expect("create");
+    let (_reader_mgr, reader_bundle) = Vault::key_bundle(&rng).expect("bundle");
+
+    let (_welcome, tag) = subject.grant(reader_bundle.clone(), "follow").expect("grant");
+
+    for attempt in 0..5 {
+        match subject.grant(reader_bundle.clone(), "follow") {
+            Err(Error::AlreadyGranted(again)) => {
+                assert_eq!(again, tag, "the same reader got a different name on retry {attempt}")
+            }
+            Ok(_) => panic!("retry {attempt} published a second welcome"),
+            Err(e) => panic!("retry {attempt} failed for the wrong reason: {e}"),
+        }
+    }
+
+    // A different purpose is a different member and is not a retry.
+    subject.grant(reader_bundle.clone(), "clinician").expect("a second purpose is not a re-grant");
+
+    // And after a revoke they can be let back in.
+    subject.revoke(tag).expect("revoke");
+    let (_welcome, again) = subject
+        .grant(reader_bundle, "follow")
+        .expect("a revoked reader must be grantable again");
+    assert_eq!(again, tag, "the tag is derived from the pair, so it survives a revoke");
 }
 
 /// A SHORT ANSWER MUST NEVER BE A SILENT ONE.

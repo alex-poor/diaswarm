@@ -19,6 +19,7 @@ object Prefs {
     private const val LOW_LINE = "low_line_mgdl"
     private const val HIGH_LINE = "high_line_mgdl"
     private const val KEYS_VAULT = "keys_vault"
+    private const val HANDED_OVER_AT = "handed_over_at_"
 
     private fun p(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -47,6 +48,27 @@ object Prefs {
      * turning this on before the person you follow has updated breaks pairing
      * rather than degrading it. Off, this app behaves exactly as it shipped.
      */
+    /**
+     * When this phone last offered its keys identity to a subject, per subject.
+     *
+     * **BECAUSE THE OFFER WAS BEING MADE EVERY PASS, FOR EVER.** A handover is
+     * a request the subject applies on their side, and nothing told this phone
+     * it had landed — so it asked again a minute later, and the subject's phone
+     * granted again each time. That is fixed on the receiving side too
+     * (`Error::AlreadyGranted`), which is where it has to be fixed, because
+     * this phone is not the only thing that can send one.
+     *
+     * Still throttled rather than stopped: "did it work?" has no reliable
+     * answer here, and a handover that is genuinely lost has to be retried or
+     * the pairing never completes. Half an hour is slow enough to be free and
+     * quick enough that nobody waits for it.
+     */
+    fun handedOverAt(c: Context, subject: String): Long =
+        p(c).getLong(HANDED_OVER_AT + subject, 0L)
+
+    fun setHandedOverAt(c: Context, subject: String, at: Long) =
+        p(c).edit().putLong(HANDED_OVER_AT + subject, at).apply()
+
     fun keysVault(c: Context): Boolean = p(c).getBoolean(KEYS_VAULT, false)
     fun setKeysVault(c: Context, v: Boolean) = p(c).edit().putBoolean(KEYS_VAULT, v).apply()
 
