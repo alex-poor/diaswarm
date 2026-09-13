@@ -616,12 +616,26 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmTick<'a>(
     }
     let pooled = unsafe { &*(handle as *const Pooled) };
     let take = max_adopt.max(0) as usize;
+    // **RELAY STATE RIDES ALONG**, because a pool pass is the one thing both
+    // apps already run on a cadence and already log. A node whose relay
+    // connection has gone is unreachable from every other network while looking
+    // perfectly healthy from its own side — the loop phone was found in exactly
+    // that state after a night, twelve hours into a process that had connected
+    // fine at startup. An outage nobody can see is one nobody fixes.
+    let relay = pooled.runtime.block_on(pooled.swarm.relay_state());
     match pooled.runtime.block_on(pooled.swarm.tick_and_adopt(take)) {
         Ok((r, adopted)) => to_jstring(
             env,
-            format!("{}\t{}\t{}\t{}\t{}", r.pool, r.buckets, r.held, r.wanted.len(), adopted),
+            format!(
+                "{}\t{}\t{}\t{}\t{}\trelay={relay}",
+                r.pool,
+                r.buckets,
+                r.held,
+                r.wanted.len(),
+                adopted
+            ),
         ),
-        Err(_) => to_jstring(env, String::new()),
+        Err(_) => to_jstring(env, format!("\t\t\t\t\trelay={relay}")),
     }
 }
 

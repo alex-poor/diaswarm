@@ -1349,3 +1349,44 @@ holds a connection to it. Everything above restores discovery *on one wifi*.
 Following somebody from another network — the actual point of a relay, and
 recorded as working on 2026-09-11 — is not currently working and has its own
 investigation.
+
+### 🔍 And the relay leg: it connects, then quietly stops being there
+
+The first read of this was wrong and worth correcting. "The relay is broken" —
+it is not. An endpoint built exactly as the app builds one reaches its home
+relay from a laptop in under a second, with or without the trailing dot in
+`DEFAULT_RELAY`:
+
+```
+CONNECTED "https://aps1-1.relay.n0.iroh.link."  state: Connected
+CONNECTED "https://aps1-1.relay.n0.iroh.link"   state: Connected
+```
+
+And on the loop phone, straight after a restart:
+
+```
+ESTAB 192.168.88.224:45840  5.223.65.62:443  users:(("cout.androidaps",pid=12109))
+ESTAB 192.168.88.224:52900  5.223.65.62:443  users:(("cout.androidaps",pid=12109))
+```
+
+**What is broken is that it does not stay.** Twelve hours into the previous
+process — a night with the phone asleep — that same app held no TCP connection
+at all. A relay cannot push to a node that is not connected to it, so a phone in
+that state is unreachable from every other network, while looking perfectly
+healthy from its own side: still sealing, still publishing, `shadow agrees`.
+
+That is why both legs were down at once. mDNS was deaf permanently; the relay
+went quiet overnight. Either one alone would have been invisible.
+
+**Instrumented rather than repaired.** Every pool pass now reports it, in the
+line both apps already print:
+
+```
+pool 1  1  1  0  0  relay=connected(1)
+```
+
+Re-creating an endpoint is a heavy, disruptive act and the right trigger is not
+yet known — whether it drops on doze, on a wifi change, or after a fixed idle
+period changes what the fix should be. That needs to be watched over days on a
+phone that sleeps, and now it can be. Guessing at a reconnection policy from one
+night's evidence is how the last two defects got written.

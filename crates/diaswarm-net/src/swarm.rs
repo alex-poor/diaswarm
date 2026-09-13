@@ -246,6 +246,35 @@ impl Swarm {
     /// Read from the presence topic rather than remembered, because pool size
     /// decides how much every peer carries and a stale count means everyone
     /// quietly holding the wrong amount.
+    /// Whether this node is reachable through a relay right now, in a word.
+    ///
+    /// **BECAUSE AN UNCONNECTED RELAY IS AN INVISIBLE OUTAGE.** A relay cannot
+    /// push to a node that is not there, so a phone whose relay connection has
+    /// gone is unreachable from any other network — while looking perfectly
+    /// healthy from its own side, still sealing and still publishing. That is
+    /// exactly the state the loop phone was found in after a night: no TCP
+    /// connection at all, twelve hours into a process that had connected fine
+    /// at startup.
+    ///
+    /// It is reported rather than repaired here on purpose. Re-creating an
+    /// endpoint is a heavy, disruptive act and the right trigger for it is not
+    /// yet known — first this has to be observable over days, on a phone that
+    /// sleeps.
+    pub async fn relay_state(&self) -> String {
+        let Ok(ep) = self.iroh_endpoint().await else { return "unknown".into() };
+        use iroh::Watcher as _;
+        let status = ep.home_relay_status().get();
+        if status.is_empty() {
+            return "none".into();
+        }
+        // `RelayStatus`'s state field is private, so this reads its Debug —
+        // ugly, and the alternative is guessing. If iroh makes it public this
+        // becomes one match.
+        let connected =
+            status.iter().filter(|s| format!("{s:?}").contains("Connected")).count();
+        if connected > 0 { format!("connected({connected})") } else { "disconnected".into() }
+    }
+
     pub async fn pool_members(&self) -> Result<Vec<String>> {
         let me = self.node_id().await?;
         let mut ids: Vec<String> = self

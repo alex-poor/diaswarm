@@ -838,7 +838,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             LTag.CORE,
             "swarm: pool ${f.getOrElse(0) { "?" }} peers, ${f.getOrElse(1) { "?" }} buckets, " +
                 "holding ${f.getOrElse(2) { "?" }}, want ${f.getOrElse(3) { "?" }}, " +
-                "took ${f.getOrElse(4) { "?" }}"
+                "took ${f.getOrElse(4) { "?" }}, ${f.getOrElse(5) { "relay=?" }}"
         )
     }
 
