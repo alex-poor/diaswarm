@@ -1004,3 +1004,51 @@ All three readers now agree on real data on real hardware:
 The keys columns are smaller because publishing started at 10:26 today and
 nothing backfilled. That resolves itself with time, and the merge means nobody
 sees the difference while it does.
+
+### 🐛 The soak found a way for anyone to grow somebody else's phone
+
+Set up to measure storage overnight, and the baseline itself was the finding.
+In 2½ hours the keys directory grew 1.9 MB while the segments — the actual
+records — grew 76 KB. The rest was a SQLite WAL and a group state file, and the
+group state file is the one that matters:
+
+```
+17:00:23  swarm: handed over a reader as 265a21af855bdaf6… (follow)
+17:02:11  swarm: handed over a reader as 265a21af855bdaf6… (follow)
+```
+
+**The same reader, granted again every two minutes, for ever.** A D27 handover
+is a request the follower cannot tell landed, so it asked again on every pass,
+and the subject's phone granted again every time. Each re-grant is a valid
+control message that stays in the log for ever and a member re-added in the DGM
+state that every party keeps and replays:
+
+| | 10:26 | 17:02 |
+|---|---|---|
+| control operations | 0 | 68 |
+| `group.cbor` | 3.0 KB | 17.6 KB |
+
+Climbing, on a phone driving an insulin pump, driven by a message any peer can
+send. That is remote-triggerable growth, not an inefficiency.
+
+`Vault::grant` returns `Error::AlreadyGranted(tag)` now rather than adding a
+member who is already there. What makes the check possible is D13 itself: the
+tag is `HKDF(ECDH(subject, reader), purpose)`, so it is *stable across retries* —
+the same pair and purpose always name the same member. A revoked reader is out
+of the group, so letting them back in still works.
+
+The receiving side is where it had to be fixed. The follower asks every half
+hour now instead of every pass, and the plugin says "handed over a reader" once
+per reader instead of every time one is offered — but throttling the sender is
+politeness. **A phone must not be growable by somebody else's retry loop.**
+
+⚠️ **Still open, watched overnight:** `keys.sqlite` is 4 KB with a 2.9 MB WAL
+and has never checkpointed since the vault was created. SQLite's auto-checkpoint
+fires at 1000 pages (~4 MB), which it has not reached, so this may simply be
+normal and bound itself. The soak will say.
+
+⚠️ **And a question the cutover raises:** `accept_handover` proves a reader
+already holds a grant *on the core vault*. Once revocation moves to the keys
+vault, revoking there and not on the core vault would leave a handover as a way
+back in. Nothing to fix today — revocation is still a core-vault operation — but
+it must be fixed with whatever UI takes revocation over.
