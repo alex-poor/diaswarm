@@ -672,6 +672,51 @@ impl Vault {
         serde_json::from_slice(&fs::read(path)?).map_err(|e| VaultError::Malformed(e.to_string()))
     }
 
+    /// Accept a reader's `diaswarm-keys` identity, if they can prove it is
+    /// theirs.
+    ///
+    /// **THE MIGRATION STEP, AND THE ONE PLACE IT CAN GO WRONG.** A follower
+    /// already granted here is known by `tag` and an X25519 key in the private
+    /// book. They cannot be granted on the keys vault without publishing an
+    /// identity the subject has never seen, and the subject must not take that
+    /// on trust: the tag they quote is readable by anyone holding a replica of
+    /// the grant log, so an impostor could quote somebody else's and attach
+    /// their own identity.
+    ///
+    /// The proof closes it — see [`crate::seal::handover_proof`]. Returns the
+    /// reader's public key when it holds, so the caller can go on to grant that
+    /// identity on the keys vault, and `None` when it does not.
+    ///
+    /// **`None` COVERS BOTH "NOT A READER" AND "BAD PROOF"**, deliberately. A
+    /// caller that could tell them apart would answer, for any tag an attacker
+    /// cared to try, whether that tag is one this subject has granted — which
+    /// is the membership question D13 exists to keep private.
+    pub fn accept_handover(
+        &self,
+        subject: &Identity,
+        tag: &str,
+        keys_identity: &str,
+        proof: &[u8],
+    ) -> Result<Option<String>, VaultError> {
+        let Some(known) = self.readers()?.into_iter().find(|k| k.tag == tag) else {
+            return Ok(None);
+        };
+        let Ok(bytes) = unhex(&known.reader) else { return Ok(None) };
+        let Ok(reader_pub): Result<[u8; 32], _> = bytes.try_into() else { return Ok(None) };
+
+        if crate::seal::handover_proof_valid(
+            &subject.encryption,
+            &reader_pub,
+            &known.purpose,
+            keys_identity,
+            proof,
+        ) {
+            Ok(Some(known.reader))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Note a reader's key against their tag, so later segments can be wrapped.
     ///
     /// An upsert keyed by tag, and the tag already fixes the purpose, so

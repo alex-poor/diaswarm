@@ -648,3 +648,157 @@ fn a_bounded_read_skips_old_epochs_and_keeps_the_boundary_one() {
     assert!(vault.read_as_from(&run.b, "follow", base + 10).unwrap().is_empty());
     let _ = run.dir.path();
 }
+
+// ---------------------------------------------------------------------------
+// D27 · an existing follower moves to the keys vault without re-pairing
+// ---------------------------------------------------------------------------
+
+/// BOTH SIDES DERIVE THE SAME PROOF, AND NOBODY ELSE CAN.
+///
+/// **THE WHOLE POINT IS THAT A TAG IS NOT A SECRET.** Tags sit in the grant log
+/// in clear and the log replicates, so an impostor holding a replica can quote
+/// anybody's tag. What they cannot do is produce this, because it comes from
+/// the ECDH secret the tag is derived from — which needs one of the two private
+/// keys.
+#[test]
+fn a_handover_proof_comes_from_the_pair_and_not_from_the_tag() {
+    use diaswarm_core::seal::{handover_proof_for, handover_proof_valid};
+
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let impostor = Identity::generate();
+
+    let subject_pub = x25519_dalek::PublicKey::from(&subject.encryption).to_bytes();
+    let reader_pub = x25519_dalek::PublicKey::from(&reader.encryption).to_bytes();
+    let impostor_pub = x25519_dalek::PublicKey::from(&impostor.encryption).to_bytes();
+
+    let identity = "a36c6964656e746974795f6b657958200011223344556677";
+
+    // The reader computes it from its side; the subject verifies from theirs.
+    let proof = handover_proof_for(&reader.encryption, &subject_pub, "follow", identity);
+    assert!(
+        handover_proof_valid(&subject.encryption, &reader_pub, "follow", identity, &proof),
+        "the two sides of one relationship disagreed about the proof"
+    );
+
+    // An impostor who knows the tag, the purpose and the identity still cannot
+    // produce it — they would need the reader's secret.
+    let forged = handover_proof_for(&impostor.encryption, &subject_pub, "follow", identity);
+    assert!(
+        !handover_proof_valid(&subject.encryption, &reader_pub, "follow", identity, &forged),
+        "an impostor's proof was accepted for somebody else's relationship"
+    );
+    // …and offering it against their own key is simply a different relationship,
+    // which is a grant the subject never made.
+    assert!(
+        handover_proof_valid(&subject.encryption, &impostor_pub, "follow", identity, &forged),
+        "the impostor's own relationship should verify — it is just not the reader's"
+    );
+}
+
+/// THE PROOF IS BOUND TO THE IDENTITY AND THE PURPOSE.
+///
+/// Without that binding a proof could be lifted off one bundle and attached to
+/// another — the subject would check a signature over a value it then ignores —
+/// or a `follow` handover replayed to claim a `clinician` grant between the
+/// same two people, which §7.2 makes a separate key tree precisely to avoid.
+#[test]
+fn a_handover_proof_does_not_transfer_between_identities_or_purposes() {
+    use diaswarm_core::seal::{handover_proof_for, handover_proof_valid};
+
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let subject_pub = x25519_dalek::PublicKey::from(&subject.encryption).to_bytes();
+    let reader_pub = x25519_dalek::PublicKey::from(&reader.encryption).to_bytes();
+
+    let mine = "a36c6964656e746974795f6b6579582000112233";
+    let theirs = "a36c6964656e746974795f6b6579582044556677";
+
+    let proof = handover_proof_for(&reader.encryption, &subject_pub, "follow", mine);
+
+    assert!(handover_proof_valid(&subject.encryption, &reader_pub, "follow", mine, &proof));
+    assert!(
+        !handover_proof_valid(&subject.encryption, &reader_pub, "follow", theirs, &proof),
+        "a proof was accepted for a different keys identity"
+    );
+    assert!(
+        !handover_proof_valid(&subject.encryption, &reader_pub, "clinician", mine, &proof),
+        "a follow handover was accepted as a clinician one"
+    );
+
+    // And the separator does its job: ("ab","c") must not equal ("a","bc").
+    let a = handover_proof_for(&reader.encryption, &subject_pub, "ab", "c");
+    let b = handover_proof_for(&reader.encryption, &subject_pub, "a", "bc");
+    assert_ne!(a, b, "the purpose and the identity ran together in the context");
+
+    // A truncated or padded proof is refused rather than compared short.
+    assert!(!handover_proof_valid(&subject.encryption, &reader_pub, "follow", mine, &proof[..31]));
+    let mut long = proof.to_vec();
+    long.push(0);
+    assert!(!handover_proof_valid(&subject.encryption, &reader_pub, "follow", mine, &long));
+}
+
+/// AN EXISTING FOLLOWER MOVES ACROSS WITHOUT RE-PAIRING.
+///
+/// **THE PROPERTY THE WHOLE OF D27 IS FOR.** Following is meant to be permanent
+/// until revoked. A cutover that made every existing follower scan a new code
+/// would break that for everybody at once, which is not a migration, it is a
+/// re-pairing with extra steps.
+///
+/// The subject already knows this reader: a tag and an X25519 key in the
+/// private book. All that is missing is a keys identity, which the reader can
+/// supply and prove is theirs. Nobody else can, even knowing the tag.
+#[test]
+fn a_reader_already_granted_can_hand_over_a_keys_identity() {
+    use diaswarm_core::seal::handover_proof_for;
+
+    let dir = tempdir::TempDir::new("handover").unwrap();
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let impostor = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject, OFFSET).expect("vault");
+
+    let subject_pub = x25519_dalek::PublicKey::from(&subject.encryption).to_bytes();
+    let reader_pub = x25519_dalek::PublicKey::from(&reader.encryption).to_bytes();
+
+    // The pairing that already happened, on the old vault.
+    let tag = diaswarm_core::vault::hex(
+        &diaswarm_core::seal::grant_tag(&subject.encryption, &reader_pub, "follow"),
+    );
+    vault.record_grant(&subject, &reader_pub, "follow", "grant", 0).expect("grant");
+    vault.remember_reader(&tag, &reader_pub, "follow").expect("book");
+
+    let identity = "a36c6964656e746974795f6b657958200badc0ffee";
+
+    // The reader proves the identity is theirs, from its own side.
+    let proof = handover_proof_for(&reader.encryption, &subject_pub, "follow", identity);
+    let accepted = vault.accept_handover(&subject, &tag, identity, &proof).expect("check");
+    assert_eq!(
+        accepted.as_deref(),
+        Some(diaswarm_core::vault::hex(&reader_pub).as_str()),
+        "a reader the subject already granted could not hand over an identity"
+    );
+
+    // An impostor who has read the tag out of the replicated grant log cannot.
+    let forged = handover_proof_for(&impostor.encryption, &subject_pub, "follow", identity);
+    assert_eq!(
+        vault.accept_handover(&subject, &tag, identity, &forged).expect("check"),
+        None,
+        "an impostor quoting a tag from the log was accepted"
+    );
+
+    // Nor can the real reader hand over a *different* identity with that proof.
+    assert_eq!(
+        vault.accept_handover(&subject, &tag, "a36c6964656e74697479ffff", &proof).expect("check"),
+        None,
+        "a proof was reused for another identity"
+    );
+
+    // A tag this subject has never granted is refused the same way a bad proof
+    // is — the caller must not be able to probe for who is a reader.
+    let stranger = diaswarm_core::vault::hex(&[9u8; 32]);
+    assert_eq!(
+        vault.accept_handover(&subject, &stranger, identity, &proof).expect("check"),
+        None
+    );
+}

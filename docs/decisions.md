@@ -835,10 +835,31 @@ check in front of it. The JNI keeps `keysGrant` for a fresh pairing and gains a
 `keysAdopt` that takes the reader's core key and the proof. Nothing about the
 cutover forecloses this, which is the point of writing it down now.
 
-⚠️ **Not implemented.** The channel is the open question — the existing
-transport carries `Request::Offer` (D25) and could carry this, but a new request
-type is a wire change and wire changes cost an ALPN bump. Worth doing once,
-alongside the invite carrying a bundle, rather than twice.
+✅ **The proof is built, 2026-09-13.** `seal::handover_proof` is HKDF over the
+ECDH secret with the purpose and the claimed identity in the context, and
+`Vault::accept_handover` looks the reader up in the private book and checks it.
+
+Three properties, each a test:
+
+* **both sides derive it and nobody else can** — an impostor who has read the
+  tag out of a replicated grant log cannot produce it, because it needs one of
+  the two private keys;
+* **it does not transfer** — bound to the identity, so a proof cannot be lifted
+  onto another bundle, and to the purpose, so a `follow` handover cannot be
+  replayed as `clinician` between the same pair;
+* **compared in constant time**, because an early return tells an attacker who
+  can ask repeatedly how much of a guess was right.
+
+**`accept_handover` answers `None` for "not a reader" and "bad proof" alike**,
+deliberately. Distinguishing them would answer, for any tag somebody cared to
+try, whether this subject has granted it — the membership question D13 exists to
+keep private.
+
+⚠️ **Still not wired to a transport.** The values exist and are proven between
+two vaults; nothing carries them between two phones yet. `Request::Offer`
+already carries an invite and the invite already carries a keys identity, so the
+remaining question is only where the proof rides — and whether that costs an
+ALPN bump, which the bundle work turned out not to.
 
 ### D25 · Sharing writes to the peer it dials, and that moved the wire to `diaswarm/6`
 

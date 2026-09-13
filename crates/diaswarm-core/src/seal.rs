@@ -41,6 +41,9 @@ pub const WRAP_INFO: &[u8] = b"diaswarm-wrap-v1";
 /// Domain separator for grant tags. See [`grant_tag`].
 pub const TAG_INFO: &[u8] = b"diaswarm-grant-tag-v1";
 
+/// Domain separator for a keys-vault handover. See [`handover_proof`].
+pub const HANDOVER_INFO: &[u8] = b"diaswarm-keys-handover-v1";
+
 pub const KEY_BYTES: usize = 32;
 pub const NONCE_BYTES: usize = 12;
 
@@ -96,6 +99,75 @@ pub fn grant_tag(mine: &StaticSecret, theirs: &[u8; 32], purpose: &str) -> [u8; 
 /// without either crate reaching into the other's key material.
 pub fn grant_tag_from_shared(shared: &[u8; 32], purpose: &str) -> [u8; 32] {
     derive(shared, TAG_INFO, purpose.as_bytes())
+}
+
+/// Proof that a `diaswarm-keys` identity belongs to a reader who already holds
+/// a grant on this vault.
+///
+/// **THE MIGRATION PROBLEM, IN ONE VALUE.** A follower granted on the old vault
+/// is known to the subject by an X25519 key and a relationship tag
+/// ([D13](../../docs/decisions.md)). The new vault grants against a
+/// `LongTermKeyBundle`, which is a different key type under a different manager
+/// and **cannot be derived from what the subject already holds** — so the
+/// follower has to publish one. What must not happen is the subject believing
+/// whoever asks.
+///
+/// **A TAG AUTHENTICATES NOTHING.** Tags appear in the grant log in clear, and
+/// the log replicates: D13 hides *who* a reader is, not *that* a grant exists.
+/// Anyone holding a replica can read every tag in it, so an impostor quoting
+/// one and attaching their own bundle would be granted that person's data.
+///
+/// What the two parties already share, and nobody else has, is the ECDH secret
+/// the tag itself is derived from. So the reader sends its identity with this
+/// proof over it, and the subject recomputes from `readers.json` — no round
+/// trip, no new key material, and nothing to steal from the log.
+///
+/// **THE CONTEXT BINDS BOTH THINGS THAT COULD OTHERWISE BE SWAPPED**: the
+/// purpose, so a `follow` handover cannot be replayed as `clinician` against
+/// the same pair; and the identity being claimed, so a proof cannot be lifted
+/// off one bundle and attached to another.
+pub fn handover_proof(shared: &[u8; 32], purpose: &str, keys_identity: &str) -> [u8; KEY_BYTES] {
+    let mut context = Vec::with_capacity(purpose.len() + keys_identity.len() + 1);
+    context.extend_from_slice(purpose.as_bytes());
+    // A separator, so ("ab", "c") and ("a", "bc") are different contexts.
+    context.push(0);
+    context.extend_from_slice(keys_identity.as_bytes());
+    derive(shared, HANDOVER_INFO, &context)
+}
+
+/// The same proof, computed from one's own secret and the other's public key.
+pub fn handover_proof_for(
+    mine: &StaticSecret,
+    theirs: &[u8; 32],
+    purpose: &str,
+    keys_identity: &str,
+) -> [u8; KEY_BYTES] {
+    let shared = mine.diffie_hellman(&PublicKey::from(*theirs));
+    handover_proof(shared.as_bytes(), purpose, keys_identity)
+}
+
+/// Whether a handover proof is the one this pair would produce.
+///
+/// **COMPARED IN CONSTANT TIME**, because the alternative leaks how much of a
+/// guess was right, and an attacker who can ask repeatedly can walk a byte at a
+/// time to a valid proof. The saving from an early return is a few nanoseconds;
+/// the cost is the whole mechanism.
+pub fn handover_proof_valid(
+    mine: &StaticSecret,
+    theirs: &[u8; 32],
+    purpose: &str,
+    keys_identity: &str,
+    offered: &[u8],
+) -> bool {
+    let want = handover_proof_for(mine, theirs, purpose, keys_identity);
+    if offered.len() != want.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (a, b) in want.iter().zip(offered.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
 }
 
 /// One epoch's content key. Independent of every other epoch's.
