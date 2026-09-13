@@ -1204,11 +1204,87 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultGrant<'a>(
     }
 }
 
+/// What this subject's private book says a reader's keys identity is, or empty.
+///
+/// **SO THAT ONE WITHDRAWAL CAN REACH BOTH VAULTS.** The caller names a reader
+/// the only way a person can — by the key in their invite — and this answers
+/// with the other half, which `keysRevokeReader` turns back into the member to
+/// remove. Empty means this subject has never seen a keys identity for them:
+/// an older reader who has not handed over yet, or somebody whose app has no
+/// keys vault. Not an error, and the core withdrawal still stands on its own.
+///
+/// It reads `readers.json`, which never leaves the phone — see the note at the
+/// top of `diaswarm-core::vault`.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultReaderKeys<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    vault_path: JString<'a>,
+    reader_pub: JString<'a>,
+    purpose: JString<'a>,
+) -> JString<'a> {
+    let (Ok(v), Ok(r), Ok(p)) =
+        (env.get_string(&vault_path), env.get_string(&reader_pub), env.get_string(&purpose))
+    else {
+        return to_jstring(env, String::new());
+    };
+    let (v, r, p) = (String::from(v), String::from(r).to_ascii_lowercase(), String::from(p));
+    let Ok(vault) = Vault::open(Path::new(&v)) else { return to_jstring(env, String::new()) };
+    let Ok(book) = vault.readers() else { return to_jstring(env, String::new()) };
+    let found = book
+        .into_iter()
+        .find(|k| k.reader.eq_ignore_ascii_case(&r) && k.purpose == p)
+        .and_then(|k| k.keys)
+        .unwrap_or_default();
+    to_jstring(env, found)
+}
+
+/// Write down a reader's keys identity, so a withdrawal can find them later.
+///
+/// **CALLED WHERE THE FACT ARRIVES.** A scan reads both halves of a v3 invite
+/// and grants on both vaults; this records which keys member the second grant
+/// created, without which `keysRevokeReader` has nobody to name. A handover
+/// records the same thing at the moment it proves it — see
+/// `Vault::accept_handover`.
+///
+/// 0 whether or not it matched: a reader this subject does not know is not an
+/// error here, it is a caller doing this before granting.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultNoteReaderKeys<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    vault_path: JString<'a>,
+    reader_pub: JString<'a>,
+    purpose: JString<'a>,
+    keys_identity: JString<'a>,
+) -> jlong {
+    let (Ok(v), Ok(r), Ok(p), Ok(k)) = (
+        env.get_string(&vault_path),
+        env.get_string(&reader_pub),
+        env.get_string(&purpose),
+        env.get_string(&keys_identity),
+    ) else {
+        return -1;
+    };
+    let (v, r, p, k) =
+        (String::from(v), String::from(r), String::from(p), String::from(k));
+    let Ok(vault) = Vault::open(Path::new(&v)) else { return -3 };
+    match vault.remember_reader_keys(&r, &p, &k) {
+        Ok(()) => 0,
+        Err(_) => -4,
+    }
+}
+
 /// Withdraw, immediately. Returns the segment it takes effect from.
 ///
 /// Rotates first, so everything written after this lands in a segment the
 /// reader is not wrapped for. Not "at the next day boundary" — at UTC+12 that
 /// could have been most of a day.
+///
+/// **THIS IS HALF A WITHDRAWAL ONCE THE KEYS VAULT HOLDS THE DATA.** The caller
+/// has to follow it with `keysRevokeReader`; `vaultReaderKeys` says who to
+/// name. Left as two calls rather than one because the two vaults fail
+/// independently and a caller that is told which half worked can say so.
 #[no_mangle]
 pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultRevoke<'a>(
     mut env: JNIEnv<'a>,
@@ -2217,6 +2293,68 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGrant<'a>(
     grant_and_publish(env, v, bundle, &purpose, false)
 }
 
+/// Withdraw a reader from the keys vault, naming them by their identity rather
+/// than by a tag nobody kept.
+///
+/// **THE OTHER HALF OF A WITHDRAWAL.** A reader is two members: one in the core
+/// vault, wrapped per segment, and one in the keys group. Granting does both —
+/// a scan that did only one was fixed as soon as it was seen. Revoking did only
+/// the core one, so after the cutover, withdrawing would have removed somebody
+/// from the vault that no longer holds the data and left them reading the one
+/// that does. A safety control that silently does nothing is worse than one
+/// that is missing.
+///
+/// It takes the identity, not the tag, because D13's tag is *derived*: the same
+/// pair and purpose always name the same member, so there is no book to keep
+/// and none to fall out of step. `keysGrant` computes it one way in; this
+/// computes the identical thing on the way out.
+///
+/// 0 on success, and 0 again when they were not a member — withdrawing from
+/// somebody who is already out is the outcome the caller asked for.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRevokeReader<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    reader_bundle: JString<'a>,
+    purpose: JString<'a>,
+) -> jlong {
+    let (Ok(bundle), Ok(purpose)) = (env.get_string(&reader_bundle), env.get_string(&purpose))
+    else {
+        return -1;
+    };
+    let (bundle, purpose) = (String::from(bundle), String::from(purpose));
+    let bundle = match diaswarm_keys::decode_identity(&bundle) {
+        Ok(id) => id.bundle,
+        Err(_) => match diaswarm_keys::decode_bundle(&bundle) {
+            Ok(b) => b,
+            Err(_) => return -2,
+        },
+    };
+    let Some(v) = keys_vault(handle) else { return -3 };
+    let tag = match v.vault.tag_of(bundle, &purpose) {
+        Ok(t) => t,
+        Err(_) => return -4,
+    };
+    match v.vault.revoke(tag) {
+        Ok(message) => {
+            if let Err(e) = v.handle.block_on(diaswarm_keys::wire::publish_control(
+                &v.store,
+                &v.signing,
+                &message,
+            )) {
+                let _ = e;
+                return -5;
+            }
+            0
+        }
+        // NOT A MEMBER IS THE ANSWER THE CALLER WANTED. They asked for this
+        // reader to be unable to read, and they cannot.
+        Err(diaswarm_keys::Error::Group(_)) => 0,
+        Err(_) => -6,
+    }
+}
+
 /// Grant from a D27 handover: the same grant, minus the authority to reverse a
 /// revoke.
 ///
@@ -3166,6 +3304,58 @@ mod shadow_tests {
             held = fields["held"].parse().unwrap();
         }
         assert_eq!(held, 72, "the day did not accumulate across flushes");
+    }
+
+    /// WITHDRAWING HAS TO REACH THE VAULT THE DATA IS IN.
+    ///
+    /// **A READER IS TWO MEMBERS.** One in the core vault, wrapped per segment,
+    /// and one in the keys group named by a derived tag. Granting always did
+    /// both — a scan that did only one was fixed the day it was noticed.
+    /// Revoking did only the core one, and nothing had kept the tag: it came
+    /// back from `keysGrant`, went into a log line, and was dropped. So after
+    /// the cutover, withdrawing would have removed somebody from the vault that
+    /// no longer holds the data and left them reading the one that does.
+    ///
+    /// What makes the fix small is D13. The tag is derived from the pair and
+    /// the purpose, so the way out can recompute exactly what the way in
+    /// created, and the only thing worth storing is the identity it derives
+    /// from — one input, two derivations, no second book to fall out of step.
+    #[test]
+    fn a_withdrawal_names_the_same_member_the_grant_created() {
+        use diaswarm_keys::{Vault, encode_identity, decode_identity, KeysIdentity};
+
+        let (mut subject, _store, _rt, _key) = vault("withdraw");
+        let rng = diaswarm_keys::Rng::default();
+
+        // A reader as the app sees one: an identity out of an invite.
+        let (_reader_mgr, reader_bundle) = Vault::key_bundle(&rng).unwrap();
+        let reader_signer = p2panda_core::SigningKey::generate();
+        let identity = encode_identity(&KeysIdentity {
+            signer: reader_signer.verifying_key(),
+            bundle: reader_bundle,
+        })
+        .unwrap();
+        let bundle = decode_identity(&identity).unwrap().bundle;
+
+        let (_welcome, granted) = subject.grant(bundle.clone(), "follow").expect("grant");
+
+        // The tag is never stored. Recomputing it from the identity alone —
+        // which is all a withdrawal has — must name the member that was added.
+        let named = subject.tag_of(bundle.clone(), "follow").expect("derive");
+        assert_eq!(named, granted, "a withdrawal would have removed the wrong member");
+
+        subject.revoke(named).expect("revoke");
+
+        // And they are out: a handover cannot put them back, and the derivation
+        // still agrees so a second withdrawal is not an error either.
+        assert!(
+            matches!(
+                subject.grant_unattended(bundle.clone(), "follow"),
+                Err(diaswarm_keys::Error::Revoked(_))
+            ),
+            "a revoked reader was let back in by a handover"
+        );
+        assert_eq!(subject.tag_of(bundle, "follow").unwrap(), granted);
     }
 
     /// THE ROW SHAPE IS THE CONTRACT, AND BOTH VAULTS READ THE SAME ONE.

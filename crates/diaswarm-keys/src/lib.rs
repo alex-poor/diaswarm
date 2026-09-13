@@ -425,6 +425,18 @@ impl Vault {
         Ok(GrantTag(diaswarm_core::seal::grant_tag_from_shared(&shared, purpose)))
     }
 
+    /// The tag this vault would name `bundle` under, without granting anything.
+    ///
+    /// **THE SAME DERIVATION, RUN ON THE WAY OUT.** Withdrawing a reader needs
+    /// to name the member that granting created, and D13 makes that free: the
+    /// pair and the purpose always produce the same tag, so nothing has to
+    /// remember one. Keeping a book of tags would be a second record to fall
+    /// out of step with the first.
+    pub fn tag_of(&self, bundle: LongTermKeyBundle, purpose: &str) -> Result<GrantTag, Error> {
+        let state = self.state.as_ref().ok_or(Error::NoSecret)?;
+        Self::tag_for(&state.dcgka.my_keys, &bundle, purpose)
+    }
+
     /// Where this vault lives. A caller that holds one vault and needs to open
     /// another beside it — a follower joining a second subject — would
     /// otherwise have to be told the path twice and could be told two

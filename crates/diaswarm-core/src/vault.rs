@@ -267,6 +267,25 @@ pub struct KnownReader {
     pub tag: String,
     pub reader: String,
     pub purpose: String,
+    /// Their `diaswarm-keys` identity, once this subject has seen one.
+    ///
+    /// **BECAUSE WITHDRAWING HAS TO REACH BOTH VAULTS.** A reader is two
+    /// members: one here, wrapped per segment, and one in the keys group, named
+    /// by a tag derived from the pair. Granting already does both — a scan that
+    /// did only one was fixed as soon as it was noticed. Revoking did only
+    /// this one, and nothing recorded who the other member *was*, so there was
+    /// no way to name them: the tag came back from `keysGrant`, went into a log
+    /// line and was dropped.
+    ///
+    /// It does not need to be stored, strictly — D13's tag is derived, so it
+    /// can always be recomputed from this. That is exactly why this is the
+    /// field worth keeping and the tag is not: one input, two derivations, and
+    /// no second book to fall out of step with the first.
+    ///
+    /// `None` for a reader granted before this existed, or one whose app has no
+    /// keys vault. `#[serde(default)]`, so an existing book still loads.
+    #[serde(default)]
+    pub keys: Option<String>,
 }
 
 pub struct Vault {
@@ -711,10 +730,45 @@ impl Vault {
             keys_identity,
             proof,
         ) {
+            // **WRITE IT DOWN HERE, because this is where it is proven.** The
+            // claim has just been checked against a secret only these two
+            // share, so this is the one moment the subject knows a reader's
+            // keys identity *and* knows it is theirs. Without recording it,
+            // withdrawing from the keys vault later has nobody to name — see
+            // [`KnownReader::keys`].
+            self.remember_reader_keys(&known.reader, &known.purpose, keys_identity)?;
             Ok(Some(known.reader))
         } else {
             Ok(None)
         }
+    }
+
+    /// Note a reader's keys identity. Silent if this subject does not know them.
+    ///
+    /// Keyed by reader and purpose rather than by tag, because that is what
+    /// both callers hold: a scan has just read the reader's invite, and a
+    /// handover has just proved one. Separate from [`Vault::remember_reader`]
+    /// because the two facts arrive at different moments — the encryption key
+    /// comes with the invite, and the keys identity may come much later, in a
+    /// handover from somebody granted long before any of this existed.
+    pub fn remember_reader_keys(
+        &self,
+        reader: &str,
+        purpose: &str,
+        keys: &str,
+    ) -> Result<(), VaultError> {
+        let mut book = self.readers()?;
+        let Some(slot) = book
+            .iter_mut()
+            .find(|k| k.reader.eq_ignore_ascii_case(reader) && k.purpose == purpose)
+        else {
+            return Ok(());
+        };
+        if slot.keys.as_deref() == Some(keys) {
+            return Ok(());
+        }
+        slot.keys = Some(keys.to_string());
+        self.write_readers(&book)
     }
 
     /// Note a reader's key against their tag, so later segments can be wrapped.
@@ -733,15 +787,26 @@ impl Vault {
             tag: tag.to_string(),
             reader: hex(reader_pub),
             purpose: purpose.to_string(),
+            // KEPT ACROSS AN UPSERT. A re-grant of the same reader must not
+            // forget which keys member they are, or withdrawing would go back
+            // to having nobody to name.
+            keys: book.iter().find(|k| k.tag == tag).and_then(|k| k.keys.clone()),
         };
         match book.iter_mut().find(|k| k.tag == tag) {
             Some(slot) => *slot = entry,
             None => book.push(entry),
         }
+        self.write_readers(&book)
+    }
+
+    /// Write the private book back, with the permissions it has to have.
+    ///
+    /// One place, because there are two writers now and the mode matters: this
+    /// is the file that undoes D13's unlinkability, so it is not left readable
+    /// the way a sealed segment safely is.
+    fn write_readers(&self, book: &[KnownReader]) -> Result<(), VaultError> {
         let path = self.root.join("readers.json");
-        fs::write(&path, serde_json::to_vec_pretty(&book).unwrap())?;
-        // The book is the one file here that undoes D13's unlinkability, so it
-        // is not left readable the way a sealed segment safely is.
+        fs::write(&path, serde_json::to_vec_pretty(book).unwrap())?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

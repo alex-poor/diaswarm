@@ -1116,3 +1116,44 @@ of publishing catching up with a six-hour window, exactly as predicted, with the
 merge covering the gap while it did. Treatments are 166 of 177 and closing.
 
 The one number that must stay boring is `group.cbor`, and it is.
+
+### 🐛 Withdrawing reached the wrong vault
+
+The grant path was fixed weeks ago: a scan grants on **both** vaults, because
+"the reader gets wraps for the old vault and is not a member of the new one" is
+a follower who stops reading the day the old vault goes away. Withdrawing was
+never given the same treatment. It removed the core-vault member and nothing
+else.
+
+After the cutover that is the worst shape a control can have: you withdraw
+somebody from the vault that no longer holds the data, the log says
+`withdrew … — immediate`, and they carry on reading the vault that does. **A
+safety control that silently does nothing is worse than one that is missing** —
+a missing one sends you looking for another way.
+
+Nothing had kept the keys tag, either. It came back from `keysGrant`, went into
+a log line and was dropped, so even wired up there would have been nobody to
+name.
+
+D13 is what makes the fix small. The tag is `HKDF(ECDH(subject, reader),
+purpose)` — derived, not assigned — so the way out can recompute exactly what
+the way in created. The only thing worth storing is the identity it derives
+*from*: one input, two derivations, and no second book to fall out of step with
+the first. It goes in `readers.json`, the private book that already exists and
+already never leaves the phone, written at the two moments it is known — a scan
+that reads a v3 invite, and a handover at the instant it proves one.
+
+```
+swarm: withdrew 265a21af855bdaf6… from segment 41 — immediate
+swarm: withdrew 265a21af855bdaf6… from the keys vault too
+```
+
+And when this subject has never seen a keys identity for them — an older reader,
+or one whose app has no keys vault — it says so rather than passing over it,
+because "no keys member" and "failed to remove the keys member" look identical
+from outside and only one of them is fine.
+
+**Three halves found in one evening, all the same shape:** the emitter always
+did the whole job, and each consumer was built far enough to look like it
+worked. Glucose without treatments. Treatments without the profile. Granting
+without withdrawing.

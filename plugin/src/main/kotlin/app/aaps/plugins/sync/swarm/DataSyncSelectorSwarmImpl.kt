@@ -939,6 +939,51 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * grant on, and draining the queue would throw away claims that would
      * verify later.
      */
+    /**
+     * Withdraw a reader from the keys vault too, if this phone knows them there.
+     *
+     * The book records a reader's keys identity when a handover proves it, and
+     * a scan records it at the same moment it grants. Empty means neither has
+     * happened — an older reader, or one whose app has no keys vault — and
+     * there is nothing to withdraw from, which is said out loud rather than
+     * passed over, because "no keys member" and "failed to remove the keys
+     * member" look identical from the outside and only one of them is fine.
+     */
+    private fun revokeOnKeys(who: String) {
+        if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return
+        val theirKeys = try {
+            SwarmNative.vaultReaderKeys(
+                SwarmPaths.vault(context, this::class.java).absolutePath,
+                who,
+                PURPOSE
+            )
+        } catch (e: Throwable) {
+            aapsLogger.error(LTag.CORE, "swarm: could not look up a reader's keys identity: $e")
+            return
+        }
+        if (theirKeys.isEmpty()) {
+            aapsLogger.info(LTag.CORE, "swarm: no keys member for ${who.take(16)}… — nothing to withdraw there")
+            return
+        }
+        val handle = openShadow()
+        if (handle == 0L) {
+            aapsLogger.error(LTag.CORE, "swarm: keys withdrawal skipped — no keys vault")
+            return
+        }
+        try {
+            val rc = SwarmNative.keysRevokeReader(handle, theirKeys, PURPOSE)
+            if (rc == 0L) aapsLogger.info(LTag.CORE, "swarm: withdrew ${who.take(16)}… from the keys vault too")
+            else aapsLogger.error(LTag.CORE, "swarm: keys withdrawal failed ($rc)")
+        } catch (e: Throwable) {
+            aapsLogger.error(LTag.CORE, "swarm: keys withdrawal threw: $e")
+        } finally {
+            SwarmNative.keysClose(handle)
+        }
+        // Forget the handover so a later deliberate re-grant is not mistaken
+        // for a repeat — the tombstone decides whether they come back, not this.
+        grantedHandovers.remove("$theirKeys|$PURPOSE")
+    }
+
     /** Readers this process has already taken a handover for. */
     private val grantedHandovers = mutableSetOf<String>()
 
@@ -1045,6 +1090,12 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                         if (tag.startsWith("error")) {
                             aapsLogger.error(LTag.CORE, "swarm: keys grant failed: $tag")
                         } else {
+                            // **WRITTEN DOWN HERE, where both halves are in
+                            // hand.** The tag is derived and so never needs
+                            // keeping; the identity it is derived FROM does, or
+                            // withdrawing later has nobody to name. This is the
+                            // only moment a scan has it.
+                            SwarmNative.vaultNoteReaderKeys(vault, who, PURPOSE, theirKeys)
                             aapsLogger.info(LTag.CORE, "swarm: keys granted as ${tag.take(16)}…")
                         }
                     } catch (e: Throwable) {
@@ -1100,6 +1151,14 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 LTag.CORE,
                 "swarm: withdrew ${who.take(16)}… from segment $from — immediate"
             )
+            // **AND FROM THE KEYS VAULT, WHICH IS WHERE THE DATA IS GOING.**
+            // Without this, withdrawing after the cutover removes somebody from
+            // the vault that no longer holds anything and leaves them reading
+            // the one that does — the exact mirror of the scan that used to
+            // grant on only one of the two. Attempted even when the core half
+            // failed: the two are independent, and half a withdrawal is still
+            // better than none.
+            revokeOnKeys(who)
         }
     }
 

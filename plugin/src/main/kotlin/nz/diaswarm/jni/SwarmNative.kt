@@ -530,6 +530,47 @@ object SwarmNative {
      * Returns the same 64 hex characters, or `error revoked`, which is the
      * refusal working.
      */
+    /**
+     * Withdraw a reader from the keys vault, named by their identity.
+     *
+     * **THE OTHER HALF OF A WITHDRAWAL.** A reader is two members: one in the
+     * core vault, wrapped per segment, and one in the keys group. Granting does
+     * both. Revoking did only the core one — so after the cutover, withdrawing
+     * would remove somebody from the vault that no longer holds the data and
+     * leave them reading the one that does. A safety control that silently does
+     * nothing is worse than one that is missing.
+     *
+     * Takes the identity, not a tag: D13's tag is derived, so the same pair and
+     * purpose always name the same member and there is no book to keep.
+     *
+     * 0 on success, and 0 when they were not a member — the caller asked for
+     * them to be unable to read, and they cannot.
+     */
+    /**
+     * Write down a reader's keys identity, so a withdrawal can find them later.
+     *
+     * Called where the fact arrives: a scan reads both halves of a v3 invite
+     * and grants on both vaults, and this records which keys member the second
+     * grant created. Without it [keysRevokeReader] has nobody to name.
+     */
+    external fun vaultNoteReaderKeys(
+        vaultPath: String,
+        readerPub: String,
+        purpose: String,
+        keysIdentity: String
+    ): Long
+
+    external fun keysRevokeReader(handle: Long, readerBundle: String, purpose: String): Long
+
+    /**
+     * What this subject's private book says a reader's keys identity is, or
+     * empty.
+     *
+     * Empty is not an error: an older reader who has not handed over yet, or
+     * somebody whose app has no keys vault. The core withdrawal stands alone.
+     */
+    external fun vaultReaderKeys(vaultPath: String, readerPub: String, purpose: String): String
+
     external fun keysGrantUnattended(handle: Long, readerBundle: String, purpose: String): String
 
     external fun keysProfile(
