@@ -1234,9 +1234,20 @@ Two things nearly went wrong writing the fix, and both were caught by checking
 rather than by a test:
 
 ⚠️ **I assumed `dur` was minutes.** `TT.duration` is documented in the AAPS
-source as milliseconds. Multiplying by 60,000 would have shown a thirty-minute
-exercise target as running for thirty **hours** — the band wrong for a day and a
-quarter after it ended.
+source as milliseconds, and the arithmetic is far worse than the "thirty hours"
+I first wrote. The one temporary target in this subject's history is 60 minutes
+— 3,600,000 ms. Treating that number as minutes gives `3,600,000 × 60,000` ms,
+which is **6.8 years**: the follower would have shown an expired exercise target
+as running, permanently, overriding the profile band for the life of the app.
+
+The real record settles it out loud:
+
+```
+temp target: set 8 hours ago for 60 min, expired
+```
+
+60 minutes read correctly, judged expired, profile band shown — which is exactly
+what the screen says: `target 7.0–7.0 mmol/L`.
 
 ⚠️ **A cancellation is a record, not an absence.** AAPS calls a temporary target
 off by writing another one with zero duration. "Newest wins" is not merely the

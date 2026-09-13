@@ -324,15 +324,30 @@ object Follower {
             recordedAt(fromKeys) >= recordedAt(fromCore) -> fromKeys
             else -> fromCore
         }
-        if (json.isBlank()) return null
+        if (json.isBlank()) {
+            android.util.Log.i(SyncWorker.TAG, "temp target: none published")
+            return null
+        }
         return runCatching {
             val o = org.json.JSONObject(json)
             val at = o.optLong("t", 0L)
             val durationMs = o.optLong("dur", 0L)
             // Zero duration is how a temporary target is CANCELLED, not a
             // malformed record — so it is a null answer, not a warning.
-            if (at <= 0L || durationMs <= 0L) return null
+            if (at <= 0L || durationMs <= 0L) {
+                android.util.Log.i(SyncWorker.TAG, "temp target: newest is a cancellation")
+                return null
+            }
             val until = at + durationMs
+            // SAID OUT LOUD like the other three readers, because "expired" and
+            // "never read it" produce the same screen and only one is fine —
+            // and because the arithmetic here is the part that was nearly
+            // wrong by a factor of sixty.
+            android.util.Log.i(
+                SyncWorker.TAG,
+                "temp target: set ${ageWords(at)} for ${durationMs / 60_000} min, " +
+                    if (until > System.currentTimeMillis()) untilWords(until) else "expired"
+            )
             if (until <= System.currentTimeMillis()) return null
             val low = o.optDouble("lo", 0.0)
             val high = o.optDouble("hi", 0.0)
