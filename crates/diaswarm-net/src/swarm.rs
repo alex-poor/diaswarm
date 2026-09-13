@@ -433,6 +433,25 @@ impl Swarm {
         crate::wire::offer_on(&endpoint, &alpn, addr, ours).await
     }
 
+    /// Offer a subject we follow our `diaswarm-keys` identity (D27).
+    ///
+    /// Through the pool's own endpoint, for the reason `refresh_follows` gives:
+    /// a follower that dials only the address it scanned is exactly as
+    /// available as the subject's phone, and a subject asleep is a subject
+    /// unreachable.
+    pub async fn hand_over(
+        &self,
+        store: &std::path::Path,
+        subject: &str,
+        mine: &diaswarm_core::vault::Identity,
+        keys_identity: &str,
+    ) -> Result<bool> {
+        let endpoint = self.iroh_endpoint().await?;
+        let alpn = wire_alpn(self.endpoint.network_id());
+        crate::peer::hand_over_to(store, subject, mine, keys_identity, Some((&endpoint, &alpn)))
+            .await
+    }
+
     /// Tell the address book where a followed subject can be reached.
     ///
     /// Idempotent and cheap, and run on every pass rather than only at startup:

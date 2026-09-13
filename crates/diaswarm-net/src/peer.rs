@@ -304,6 +304,70 @@ pub fn add_follow_via(
     }
 }
 
+/// Offer a subject we already follow a `diaswarm-keys` identity, and prove it
+/// is ours.
+///
+/// **THE READER'S HALF OF [D27](../../docs/decisions.md).** This peer was
+/// granted on the subject's old vault long ago. The new vault needs an identity
+/// the subject has never seen, and only the reader can supply one — with a
+/// proof only the two of them can produce, because a tag is readable by anyone
+/// holding a replica of the grant log.
+///
+/// Tries the subject's upstreams in order and stops at the first that takes it.
+/// A subject too old to understand the request replies empty, which reads as
+/// "not taken" — and is exactly right: the reader goes on reading the vault it
+/// already reads, and nothing anyone relies on stops.
+pub async fn hand_over_to(
+    store: &Path,
+    subject_hex: &str,
+    mine: &diaswarm_core::vault::Identity,
+    keys_identity: &str,
+    endpoint: Option<(&iroh::Endpoint, &[u8])>,
+) -> Result<bool> {
+    let follows = load_follows(store)?;
+    let Some(follow) = follows.into_iter().find(|f| f.subject == subject_hex) else {
+        anyhow::bail!("not following {subject_hex}");
+    };
+    // The purpose this peer reads under. A relay follows without one and has
+    // nothing to hand over: it was never granted anything.
+    let Some(purpose) = follow.purpose.as_deref() else { return Ok(false) };
+
+    let Ok(bytes) = diaswarm_core::vault::unhex(subject_hex) else {
+        anyhow::bail!("a subject is hex")
+    };
+    let subject_pub: [u8; 32] =
+        bytes.try_into().map_err(|_| anyhow::anyhow!("a subject is 32 bytes"))?;
+    let proof = diaswarm_core::vault::hex(&diaswarm_core::seal::handover_proof_for(
+        &mine.encryption,
+        &subject_pub,
+        purpose,
+        keys_identity,
+    ));
+    let tag = diaswarm_core::vault::hex(&diaswarm_core::seal::grant_tag(
+        &mine.encryption,
+        &subject_pub,
+        purpose,
+    ));
+
+    for upstream in &follow.from {
+        let Ok(addr) = parse_upstream(upstream) else { continue };
+        let sent = match endpoint {
+            Some((ep, alpn)) => {
+                crate::wire::hand_over(ep, alpn, addr, &tag, keys_identity, &proof).await
+            }
+            None => {
+                let ep = iroh::Endpoint::bind(iroh::endpoint::presets::Minimal).await?;
+                let alpn = crate::swarm::default_wire_alpn();
+                crate::wire::hand_over(&ep, &alpn[..], addr, &tag, keys_identity, &proof).await
+            }
+        };
+        if matches!(sent, Ok(true)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// What one refresh of one subject did.
 #[derive(Debug, Clone)]
 pub struct Refreshed {

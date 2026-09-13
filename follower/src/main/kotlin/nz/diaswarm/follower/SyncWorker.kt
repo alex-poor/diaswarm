@@ -55,6 +55,31 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                     SwarmPaths.identity(applicationContext).absolutePath
                 )
                 Log.i(TAG, if (carried < 0) "keys carry unavailable ($carried)" else "keys carrying $carried log(s)")
+
+                // **OFFER OUR KEYS IDENTITY TO PEOPLE WHO ALREADY GRANTED US.**
+                // They granted this phone on the old vault, possibly months
+                // ago; the new one needs an identity they have never seen, and
+                // only we can supply it with a proof only the two of us can
+                // make. Nobody scans anything. A subject that has not moved to
+                // the keys vault, or is too old to understand the request,
+                // answers 0 — and that is the status quo, not a failure.
+                val identity = SwarmKeys.identity(applicationContext)
+                if (identity.isNotEmpty()) {
+                    for (subject in Follower.following(applicationContext)) {
+                        // Only where we have something to hand over to: a
+                        // subject with no keys identity of their own has no
+                        // keys vault to be granted on.
+                        if (subject.keys.isEmpty()) continue
+                        val took = SwarmNative.netHandOver(
+                            Endpoint.handle,
+                            store,
+                            SwarmPaths.identity(applicationContext).absolutePath,
+                            subject.key,
+                            identity
+                        )
+                        if (took == 1L) Log.i(TAG, "handed over to ${subject.short}")
+                    }
+                }
             }
             Result.success()
         } catch (e: Throwable) {

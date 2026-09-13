@@ -1809,6 +1809,120 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGlucose<'a>(
     to_jstring(env, out)
 }
 
+/// Offer our keys identity to a subject we already follow, and prove it is ours.
+///
+/// **THE READER'S HALF OF D27 (see `vaultAcceptHandovers` for the other).**
+/// Returns 1 if the subject took it, 0 if it did not — which includes a subject
+/// too old to understand the request, and is not an error: the reader goes on
+/// reading the vault it already reads.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netHandOver<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    store_path: JString<'a>,
+    identity_path: JString<'a>,
+    subject_hex: JString<'a>,
+    keys_identity: JString<'a>,
+) -> jlong {
+    let (Ok(store), Ok(id_s), Ok(subject), Ok(keys)) = (
+        env.get_string(&store_path),
+        env.get_string(&identity_path),
+        env.get_string(&subject_hex),
+        env.get_string(&keys_identity),
+    ) else {
+        return -1;
+    };
+    let store = PathBuf::from(String::from(store));
+    let (subject, keys) = (String::from(subject), String::from(keys));
+    let Some(mine) = load_or_create_identity(&PathBuf::from(String::from(id_s))) else {
+        return -2;
+    };
+
+    // **THROUGH THE POOL'S ENDPOINT WHEN THERE IS ONE**, for the reason
+    // `netRefresh` gives: a follower that dials only the address it scanned is
+    // exactly as available as the subject's phone.
+    if handle != 0 {
+        let pooled = unsafe { &*(handle as *const Pooled) };
+        return match pooled
+            .runtime
+            .block_on(pooled.swarm.hand_over(&store, &subject, &mine, &keys))
+        {
+            Ok(true) => 1,
+            Ok(false) => 0,
+            Err(_) => -3,
+        };
+    }
+
+    let Ok(runtime) = tokio::runtime::Runtime::new() else { return -2 };
+    match runtime.block_on(diaswarm_net::peer::hand_over_to(&store, &subject, &mine, &keys, None)) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(_) => -3,
+    }
+}
+
+/// Take the handover queue, keep what verifies, and say what may be granted.
+///
+/// **THE QUEUE IS WRITTEN BY STRANGERS AND READ HERE, WHERE THE SECRET IS.**
+/// `Request::Handover`'s network handler records claims without believing any
+/// of them — it answers anyone and holds no key. This is the other half: the
+/// subject's own encryption secret recomputes the proof, and only a claim that
+/// matches a reader already in the private book survives.
+///
+/// Returns `keys-identity<TAB>purpose` per verified claim, for the caller to
+/// grant on the keys vault. Nothing is granted here: that needs the keys vault
+/// and its store, and doing it in two steps keeps the check independent of what
+/// is done with the answer.
+///
+/// **A CLAIM THAT DOES NOT VERIFY IS DROPPED, NOT REPORTED.** Saying which ones
+/// failed, and why, would answer "is this tag one you have granted?" for
+/// anybody who cared to ask — the membership question D13 exists to keep
+/// private.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultAcceptHandovers<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    store_path: JString<'a>,
+    vault_path: JString<'a>,
+    identity_path: JString<'a>,
+) -> JString<'a> {
+    let (Ok(store), Ok(vault_p), Ok(id_s)) = (
+        env.get_string(&store_path),
+        env.get_string(&vault_path),
+        env.get_string(&identity_path),
+    ) else {
+        return to_jstring(env, String::new());
+    };
+    let store = PathBuf::from(String::from(store));
+    let vault_p = PathBuf::from(String::from(vault_p));
+    let Some(subject) = load_or_create_identity(&PathBuf::from(String::from(id_s))) else {
+        return to_jstring(env, String::new());
+    };
+    let Ok(vault) = Vault::open(&vault_p) else {
+        return to_jstring(env, String::new());
+    };
+
+    let claims = diaswarm_net::peer::take_handovers(&store).unwrap_or_default();
+    let mut out: Vec<String> = Vec::new();
+    for claim in claims {
+        let Ok(proof) = diaswarm_core::vault::unhex(&claim.proof) else { continue };
+        // The purpose comes from the book, not from the claim: a claimant must
+        // not be able to choose which key tree they are handed over into.
+        let Ok(readers) = vault.readers() else { continue };
+        let Some(known) = readers.into_iter().find(|k| k.tag == claim.tag) else { continue };
+        if vault
+            .accept_handover(&subject, &claim.tag, &claim.keys, &proof)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            out.push(format!("{}\t{}", claim.keys, known.purpose));
+        }
+    }
+    to_jstring(env, out.join("\n"))
+}
+
 /// Carry every keys log this phone should hold: its own, and each it follows.
 ///
 /// **ONE CALL, BECAUSE THE DECODING BELONGS IN RUST.** A follow records the

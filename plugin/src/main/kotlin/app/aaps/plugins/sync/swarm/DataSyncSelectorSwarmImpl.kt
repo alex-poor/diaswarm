@@ -855,6 +855,60 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     }
 
     /**
+     * Grant readers who have handed over a keys identity and proved it is
+     * theirs.
+     *
+     * **THIS IS HOW AN EXISTING FOLLOWER MOVES WITHOUT RE-PAIRING (D27).** They
+     * were granted on the old vault long ago; the new one needs an identity the
+     * subject has never seen, and they are the only party who can supply it and
+     * prove it. Nobody has to scan anything.
+     *
+     * Runs only when the keys vault is in use: with it off there is nothing to
+     * grant on, and draining the queue would throw away claims that would
+     * verify later.
+     */
+    private fun applyHandovers() {
+        if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return
+        val verified = try {
+            SwarmNative.vaultAcceptHandovers(
+                SwarmPaths.store(context).absolutePath,
+                SwarmPaths.vault(context, this::class.java).absolutePath,
+                SwarmPaths.identity(context).absolutePath
+            )
+        } catch (e: Throwable) {
+            aapsLogger.error(LTag.CORE, "swarm: handovers threw: $e")
+            return
+        }
+        val lines = verified.lines().filter { it.isNotBlank() }
+        if (lines.isEmpty()) return
+
+        val handle = openShadow()
+        if (handle == 0L) {
+            aapsLogger.error(LTag.CORE, "swarm: ${lines.size} handover(s) verified, no keys vault")
+            return
+        }
+        try {
+            for (line in lines) {
+                val f = line.split('\t')
+                val keys = f.getOrNull(0).orEmpty()
+                val purpose = f.getOrNull(1).orEmpty().ifEmpty { PURPOSE }
+                if (keys.isEmpty()) continue
+                val tag = SwarmNative.keysGrant(handle, keys, purpose)
+                if (tag.startsWith("error")) {
+                    aapsLogger.error(LTag.CORE, "swarm: handover grant failed: $tag")
+                } else {
+                    aapsLogger.info(
+                        LTag.CORE,
+                        "swarm: handed over a reader as ${tag.take(16)}… ($purpose)"
+                    )
+                }
+            }
+        } finally {
+            SwarmNative.keysClose(handle)
+        }
+    }
+
+    /**
      * Act on a grant or withdrawal the user asked for, then clear the request.
      *
      * Cleared whether it succeeded or not: a request left in place would be
@@ -862,6 +916,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * silently. The log line is the record of what happened.
      */
     private fun applyPendingGrants() {
+        applyHandovers()
         val vault = SwarmPaths.vault(context, this::class.java).absolutePath
         val identity = SwarmPaths.identity(context).absolutePath
 

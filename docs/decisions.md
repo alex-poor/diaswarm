@@ -880,8 +880,22 @@ optional request is not worth paying it.
 *Reopens if:* a change arrives that genuinely breaks fetching, at which point
 the bump has to happen and this variant rides along with it.
 
-⚠️ **Still not wired into either app.** The mechanism is proven end to end at
-the protocol level; no plugin drains the queue and no follower sends a claim.
+✅ **And both apps do it.** The follower offers its identity to every subject it
+follows that has published one, on the pass it already runs; the subject drains
+the queue where grants already happen, verifies each claim against its private
+book, and grants what survives on the keys vault. Nobody scans anything.
+
+Two details that are not incidental. **The purpose comes from the subject's
+book, never from the claim** — otherwise a claimant would choose which key tree
+they are handed into, and §7.2 makes `follow`, `clinician` and `cohort` separate
+trees precisely so that is not theirs to choose. And **the reader only offers to
+subjects that have published a keys identity**, because one that has not has no
+keys vault to be granted on and the request would be noise.
+
+⚠️ **Untested on hardware.** The mechanism is proven between two vaults and over
+a real connection in `tests/peer.rs`; the app plumbing around it has been
+compiled and not run. Everything that went wrong on 2026-09-13 went wrong in
+exactly that gap.
 
 ### D25 · Sharing writes to the peer it dials, and that moved the wire to `diaswarm/6`
 

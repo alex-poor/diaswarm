@@ -459,6 +459,42 @@ object SwarmNative {
     external fun keysCarryAll(poolHandle: Long, storePath: String, identityPath: String): Long
 
     /**
+     * Take the handover queue, keep what verifies, and say what may be granted.
+     *
+     * **THE QUEUE IS WRITTEN BY STRANGERS.** `Request::Handover`'s handler
+     * records claims without believing any of them — it answers anyone and
+     * holds no key. This is the other half, where the subject's own secret
+     * recomputes the proof; only a claim matching a reader already in the
+     * private book survives.
+     *
+     * Returns `keys-identity<TAB>purpose` per verified claim, for the caller to
+     * grant on the keys vault. A claim that does not verify is dropped and not
+     * reported: saying which failed would answer "is this tag one you have
+     * granted?" for anybody who asked.
+     */
+    /**
+     * Offer our keys identity to a subject we already follow, and prove it is
+     * ours (D27).
+     *
+     * 1 if the subject took it, 0 if not — which includes a subject too old to
+     * understand the request, and is not an error: the reader goes on reading
+     * the vault it already reads.
+     */
+    external fun netHandOver(
+        poolHandle: Long,
+        storePath: String,
+        identityPath: String,
+        subjectHex: String,
+        keysIdentity: String
+    ): Long
+
+    external fun vaultAcceptHandovers(
+        storePath: String,
+        vaultPath: String,
+        identityPath: String
+    ): String
+
+    /**
      * A followed subject's readings out of the keys vault, in [netGlucose]'s
      * shape: `millis<TAB>mgdl<TAB>trend<TAB>src`, oldest first.
      *
