@@ -204,14 +204,65 @@ object Follower {
     fun treatments(context: Context, subject: Subject, hours: Int): List<Treatment> {
         SwarmNative.check()
         val since = System.currentTimeMillis() - hours * 3_600_000L
-        return SwarmNative.netTreatments(
-            SwarmPaths.store(context).absolutePath,
-            subject.key,
-            SwarmPaths.identity(context).absolutePath,
-            subject.purpose,
-            since,
-            MAX_TREATMENTS
-        ).lines().filter { it.isNotBlank() }.mapNotNull { row ->
+        // **BOTH VAULTS, MERGED**, for the reason `readings` gives: during a
+        // migration one is complete and the other is filling in, and a chart
+        // that silently loses boluses is worse than one that draws a few twice.
+        // Deduped on the whole row, which is what `netTreatments` already does
+        // across overlapping segments.
+        val fromKeys = keysTreatments(context, subject, since)
+        val fromCore = parseTreatments(
+            SwarmNative.netTreatments(
+                SwarmPaths.store(context).absolutePath,
+                subject.key,
+                SwarmPaths.identity(context).absolutePath,
+                subject.purpose,
+                since,
+                MAX_TREATMENTS
+            )
+        )
+        if (fromKeys.isEmpty()) return fromCore
+        val seen = LinkedHashMap<String, Treatment>()
+        for (t in fromCore + fromKeys) seen.putIfAbsent("${t.kind}|${t.at}|${t.value}|${t.dur}", t)
+        // SAID OUT LOUD, like the readings merge, because the failure this
+        // guards is a silent zero: a keys read that returns no treatments
+        // looks exactly like a day with no treatments in it.
+        android.util.Log.i(
+            SyncWorker.TAG,
+            "merged ${fromCore.size} core + ${fromKeys.size} keys = ${seen.size} treatments for ${subject.short}"
+        )
+        return seen.values.sortedBy { it.at }
+    }
+
+    /** What the keys vault can open, or empty. Never throws at the caller. */
+    private fun keysTreatments(context: Context, subject: Subject, since: Long): List<Treatment> {
+        if (!Prefs.keysVault(context) || subject.keys.isEmpty()) return emptyList()
+        val handle = SwarmKeys.open(context)
+        if (handle == 0L) return emptyList()
+        val raw = try {
+            SwarmNative.keysTreatments(
+                handle,
+                SwarmKeys.joinedDir(context, subject.key).absolutePath,
+                subject.keys,
+                subject.purpose,
+                since,
+                MAX_TREATMENTS.toLong()
+            )
+        } catch (e: Throwable) {
+            android.util.Log.i(SyncWorker.TAG, "keys treatments threw: $e")
+            ""
+        } finally {
+            SwarmNative.keysClose(handle)
+        }
+        if (raw.startsWith("error")) {
+            android.util.Log.i(SyncWorker.TAG, "keys treatments: $raw")
+            return emptyList()
+        }
+        return parseTreatments(raw)
+    }
+
+    /** One row shape, parsed in one place, so the two vaults cannot drift. */
+    private fun parseTreatments(raw: String): List<Treatment> =
+        raw.lines().filter { it.isNotBlank() && !it.startsWith("#") }.mapNotNull { row ->
             val f = row.split('\t')
             val kind = f.getOrNull(0) ?: return@mapNotNull null
             val at = f.getOrNull(1)?.toLongOrNull() ?: return@mapNotNull null
@@ -219,7 +270,6 @@ object Follower {
             if (at <= 0) null
             else Treatment(kind, at, value, f.getOrNull(3)?.toDouble()?.toLong() ?: 0L, f.getOrNull(4).orEmpty())
         }
-    }
 
     /**
      * The target range this subject publishes, in mg/dL, or null.

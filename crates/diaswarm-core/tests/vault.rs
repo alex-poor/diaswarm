@@ -205,7 +205,7 @@ fn resealing_a_segment_does_not_invalidate_wraps_already_published() {
 #[test]
 fn the_grant_log_names_nobody() {
     // §12.0: the data was encrypted and the social graph was not.
-    let (run, vault, _) = live_run(3, 2);
+    let (run, _vault, _) = live_run(3, 2);
     let raw = std::fs::read_to_string(run.dir.path().join("grants.ndjson")).unwrap();
     let reader_hex = diaswarm_core::vault::hex(&run.a.enc_public());
 
@@ -575,7 +575,7 @@ fn a_holder_can_verify_the_chain_without_the_subjects_secret() {
 fn an_older_vault_publishes_its_signing_key_on_the_next_seal() {
     let dir = tempdir::TempDir::new("heal").unwrap();
     let subject = Identity::generate();
-    let vault = Vault::create(dir.path(), &subject, OFFSET).unwrap();
+    let _vault = Vault::create(dir.path(), &subject, OFFSET).unwrap();
 
     // Strip the key, the way a vault written by the earlier build looks.
     let meta = std::fs::read_to_string(dir.path().join("meta.json")).unwrap();

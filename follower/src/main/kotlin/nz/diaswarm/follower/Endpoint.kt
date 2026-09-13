@@ -61,6 +61,40 @@ object Endpoint {
         Log.i(SyncWorker.TAG, "in the pool as ${SwarmNative.swarmNodeId(h).take(16)}")
     }
 
+    /**
+     * Tear the endpoint down and bring it back with the current preferences.
+     *
+     * **BECAUSE THE KEYS PATH IS DECIDED AT JOIN TIME, ONCE.** `swarmJoin`
+     * builds the `KeysReplicator` — or does not — from the directory it is
+     * handed, and nothing later can add one: every keys call into a pool that
+     * joined without it returns -3, and the app logs `keys carry unavailable`
+     * and carries on looking healthy. Turning the preference on and watching
+     * nothing happen is the same defect as leaving it on after it was turned
+     * off, which is written up above; it just fails in the other direction.
+     *
+     * Off the main thread, because this closes a QUIC endpoint and opens
+     * another. The gap is a few seconds of not being in the pool, which is
+     * what relaunching the app has always cost.
+     */
+    fun restart(context: Context) {
+        val app = context.applicationContext
+        Thread {
+            synchronized(this) {
+                val old = handle
+                handle = 0L
+                if (old != 0L) {
+                    try {
+                        SwarmNative.swarmLeave(old)
+                    } catch (e: Throwable) {
+                        Log.w(SyncWorker.TAG, "leaving the pool threw: $e")
+                    }
+                }
+            }
+            start(app)
+            Sync.now(app)
+        }.start()
+    }
+
     /** This phone's own invite, or empty until it is serving. */
     fun invite(context: Context): String {
         if (handle == 0L) return ""

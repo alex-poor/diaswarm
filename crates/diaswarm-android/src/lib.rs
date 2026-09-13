@@ -974,40 +974,12 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netTreatments<'a>(
         return to_jstring(env, String::new());
     };
 
-    let num = |r: &Record, k: &str| r.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let txt = |r: &Record, k: &str| {
-        r.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string()
-    };
 
     let mut rows: Vec<(i64, String)> = opened
         .values()
         .flatten()
         .filter(|r| r.t() > since_ms)
-        .filter_map(|r| {
-            let kind = r.kind();
-            let line = match kind {
-                "bolus" => format!("bolus\t{}\t{}\t0\t{}", r.t(), num(r, "u"), txt(r, "type")),
-                "carb" => format!("carb\t{}\t{}\t{}\t", r.t(), num(r, "g"), num(r, "dur")),
-                "tbr" => {
-                    // `abs` decides what `rate` MEANS — U/h or a percentage of
-                    // basal. Handing the number over without it would put a
-                    // "150" on a chart that could be 150% or 150 U/h.
-                    let abs = r.get("abs").and_then(|v| v.as_bool()).unwrap_or(false);
-                    format!(
-                        "tbr\t{}\t{}\t{}\t{}",
-                        r.t(),
-                        num(r, "rate"),
-                        num(r, "dur"),
-                        if abs { "abs" } else { "" }
-                    )
-                }
-                "extbolus" => {
-                    format!("extbolus\t{}\t{}\t{}\t", r.t(), num(r, "u"), num(r, "dur"))
-                }
-                _ => return None,
-            };
-            Some((r.t(), line))
-        })
+        .filter_map(|r| treatment_line(r).map(|line| (r.t(), line)))
         .collect();
 
     // Same overlap as `netGlucose`: segments legitimately repeat, and a bolus
@@ -1921,6 +1893,115 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultAcceptHandovers<'a>
         }
     }
     to_jstring(env, out.join("\n"))
+}
+
+/// One treatment record as a row, or `None` if it is not a treatment.
+///
+/// **ONE PLACE DECIDES THE SHAPE, BECAUSE THERE ARE TWO READERS NOW.** The core
+/// vault and the keys vault both produce these, the follower parses them in one
+/// function, and a difference between the two would show up as a chart that
+/// changes when a subject migrates. Today has already produced four bugs of
+/// exactly that kind — two halves of one contract drifting because nothing held
+/// them together.
+fn treatment_line(r: &Record) -> Option<String> {
+    let num = |r: &Record, k: &str| r.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let txt = |r: &Record, k: &str| {
+        r.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string()
+    };
+    Some(match r.kind() {
+        "bolus" => format!("bolus\t{}\t{}\t0\t{}", r.t(), num(r, "u"), txt(r, "type")),
+        "carb" => format!("carb\t{}\t{}\t{}\t", r.t(), num(r, "g"), num(r, "dur")),
+        "tbr" => {
+            // `abs` decides what `rate` MEANS — U/h or a percentage of basal.
+            // Handing the number over without it would put a "150" on a chart
+            // that could be 150% or 150 U/h.
+            let abs = r.get("abs").and_then(|v| v.as_bool()).unwrap_or(false);
+            format!(
+                "tbr\t{}\t{}\t{}\t{}",
+                r.t(),
+                num(r, "rate"),
+                num(r, "dur"),
+                if abs { "abs" } else { "" }
+            )
+        }
+        "extbolus" => format!("extbolus\t{}\t{}\t{}\t", r.t(), num(r, "u"), num(r, "dur")),
+        _ => return None,
+    })
+}
+
+/// A followed subject's treatments out of the keys vault, in
+/// `netTreatments`' shape.
+///
+/// **THE HALF THAT WOULD HAVE GONE MISSING AT A CUTOVER.** `keysGlucose` was
+/// written first and on its own it is enough for the graph line — so a keys
+/// read looks healthy while bolus, carb and basal quietly vanish from it. The
+/// emitter has always drained all four; only the reader was incomplete.
+///
+/// Same rows as `netTreatments` so the follower's parsing and its chart are
+/// untouched, and the same overlap rule: segments legitimately repeat, and a
+/// bolus drawn twice is a bolus that looks like two.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysTreatments<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    joined_dir: JString<'a>,
+    subject_keys: JString<'a>,
+    purpose: JString<'a>,
+    since_ms: jlong,
+    limit: jlong,
+) -> JString<'a> {
+    let (Ok(joined), Ok(keys), Ok(purpose)) =
+        (env.get_string(&joined_dir), env.get_string(&subject_keys), env.get_string(&purpose))
+    else {
+        return to_jstring(env, String::new());
+    };
+    let (joined, keys, purpose) = (String::from(joined), String::from(keys), String::from(purpose));
+    let Some(v) = keys_vault(handle) else { return to_jstring(env, String::new()) };
+    let offset = v.vault.offset();
+    let own_dir = v.vault.root().to_path_buf();
+
+    let tail = if since_ms > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(since_ms);
+        (((now.saturating_sub(since_ms)) / 86_400_000) + 2).max(2) as u64
+    } else {
+        0
+    };
+
+    let out = follow_read(
+        &own_dir,
+        Path::new(&joined),
+        &v.store,
+        &v.handle,
+        &v.signing,
+        &keys,
+        &purpose,
+        tail,
+        i64::MIN,
+        offset,
+    );
+    let Some(body) = out.strip_prefix("ok ").and_then(|rest| rest.split_once('\n')) else {
+        return to_jstring(env, String::new());
+    };
+
+    let mut rows: Vec<(i64, String)> = body
+        .1
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| Record::from_json(l).ok())
+        .filter(|r| r.t() > since_ms)
+        .filter_map(|r| treatment_line(&r).map(|line| (r.t(), line)))
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    rows.dedup_by(|a, b| a.1 == b.1);
+    if limit > 0 {
+        rows.truncate(limit as usize);
+    }
+    to_jstring(env, rows.iter().map(|(_, l)| l.clone()).collect::<Vec<_>>().join("\n"))
 }
 
 /// Carry every keys log this phone should hold: its own, and each it follows.
@@ -2944,5 +3025,55 @@ mod shadow_tests {
             held = fields["held"].parse().unwrap();
         }
         assert_eq!(held, 72, "the day did not accumulate across flushes");
+    }
+
+    /// THE ROW SHAPE IS THE CONTRACT, AND BOTH VAULTS READ THE SAME ONE.
+    ///
+    /// `keysTreatments` and `netTreatments` build their rows from this one
+    /// function precisely so a subject moving between vaults cannot change
+    /// what their chart draws. This pins the shape so the two cannot be
+    /// separated by an edit to one of them — which is the only way they could
+    /// drift now.
+    ///
+    /// `abs` is the field worth the test. It is not a value, it decides what
+    /// `rate` *means*: 150 is either 150% of basal or 150 U/h, and a chart
+    /// given the number without the flag has no way to tell.
+    #[test]
+    fn a_treatment_row_says_the_same_thing_whichever_vault_read_it() {
+        use super::treatment_line;
+        use diaswarm_core::Record;
+
+        let row = |r: Record| treatment_line(&r).expect("a known kind produced no row");
+
+        assert_eq!(
+            row(Record::new(1_000, "bolus").set("u", Some(2.5.into())).set("type", Some("SMB".into()))),
+            "bolus\t1000\t2.5\t0\tSMB"
+        );
+        assert_eq!(
+            row(Record::new(2_000, "carb").set("g", Some(30.0.into()))),
+            "carb\t2000\t30\t0\t"
+        );
+        assert_eq!(
+            row(Record::new(3_000, "tbr").set("rate", Some(150.0.into())).set("dur", Some(30.0.into()))),
+            "tbr\t3000\t150\t30\t",
+            "a percentage TBR must not be labelled absolute"
+        );
+        assert_eq!(
+            row(Record::new(3_000, "tbr")
+                .set("rate", Some(1.5.into()))
+                .set("dur", Some(30.0.into()))
+                .set("abs", Some(true.into()))),
+            "tbr\t3000\t1.5\t30\tabs",
+            "an absolute TBR that loses its flag reads as a percentage"
+        );
+        assert_eq!(
+            row(Record::new(4_000, "extbolus").set("u", Some(1.0.into())).set("dur", Some(60.0.into()))),
+            "extbolus\t4000\t1\t60\t"
+        );
+
+        // Everything else belongs to the glucose reader or to nobody, and must
+        // not be smuggled onto the treatment chart as a malformed row.
+        assert!(treatment_line(&Record::new(5_000, "cgm").set("mgdl", Some(100.0.into()))).is_none());
+        assert!(treatment_line(&Record::new(5_000, "loop").set("iob", Some(1.0.into()))).is_none());
     }
 }

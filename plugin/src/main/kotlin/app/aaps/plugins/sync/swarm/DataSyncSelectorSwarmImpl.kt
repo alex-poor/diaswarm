@@ -729,6 +729,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * to do all at once on mobile data.
      */
     private fun poolPass() {
+        // BEFORE ANYTHING USES THE HANDLE. A pool joined under the opposite
+        // keys preference is a pool whose keys calls all fail -3; this is the
+        // only thing here that runs on a cadence, so it is where the two get
+        // reconciled. See [SwarmEndpoint.rejoinIfPreferencesChanged].
+        SwarmEndpoint.rejoinIfPreferencesChanged?.invoke()
         val handle = SwarmEndpoint.handle
         if (handle == 0L) return
         val report = SwarmNative.swarmTick(handle, 2)

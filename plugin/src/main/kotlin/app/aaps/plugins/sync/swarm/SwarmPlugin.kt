@@ -120,6 +120,17 @@ class SwarmPlugin @Inject constructor(
     /** The running endpoint, while enabled. 0 when not serving. */
     private var serving: Long = 0L
 
+    /**
+     * Whether the pool now running was joined WITH the keys replicator.
+     *
+     * Kept because the answer is fixed at join time and nothing later can
+     * change it — see the note on the keys directory in [startServing]. A
+     * preference that disagrees with this is a preference that is doing
+     * nothing, so [rejoinIfKeysPreferenceChanged] compares the two on every
+     * pass and rebuilds the pool when they have parted company.
+     */
+    private var servingWithKeys: Boolean = false
+
     override fun onStart() {
         super.onStart()
         if (isEnabled()) {
@@ -452,6 +463,8 @@ class SwarmPlugin @Inject constructor(
             return
         }
         SwarmEndpoint.handle = serving
+        servingWithKeys = preferences.get(SwarmBooleanKey.ShadowSpacesVault)
+        SwarmEndpoint.rejoinIfPreferencesChanged = { rejoinIfKeysPreferenceChanged() }
         aapsLogger.info(LTag.CORE, "swarm: in the pool as ${SwarmNative.swarmNodeId(serving)}")
         aapsLogger.info(
             LTag.CORE,
@@ -465,10 +478,45 @@ class SwarmPlugin @Inject constructor(
 
     private fun stopServing() {
         SwarmEndpoint.handle = 0L
+        SwarmEndpoint.rejoinIfPreferencesChanged = null
         if (serving == 0L) return
         SwarmNative.swarmLeave(serving)
         serving = 0L
+        servingWithKeys = false
         aapsLogger.info(LTag.CORE, "swarm: left the pool")
+    }
+
+    /**
+     * Rebuild the pool when the keys preference no longer matches it.
+     *
+     * **TURNING IT ON USED TO DO NOTHING, AND SAY SO WRONGLY.** The keys
+     * directory is read once, by `swarmJoin`; a pool that joined without it
+     * has no replicator and never gains one. So switching the preference on
+     * mid-run left every keys call returning -3 — logged as "keys carry
+     * unavailable" here and as "shadow vault would not open" from the shadow
+     * path, which reads as a broken vault rather than as a pool that was never
+     * asked for one. Only a process restart fixed it, and nothing told anybody
+     * to restart.
+     *
+     * Checked on the pass rather than hooked to the preference screen because
+     * this is the state that actually matters — how the running pool was
+     * built — and it is right even when the preference changes somewhere this
+     * plugin never hears about. The cost is one boolean comparison a minute.
+     *
+     * The gap is a few seconds off the network. Nothing is lost in it: sealing
+     * writes to disk regardless of the pool, and unpublished segments are
+     * published on the next pass.
+     */
+    private fun rejoinIfKeysPreferenceChanged() {
+        if (serving == 0L) return
+        val wanted = preferences.get(SwarmBooleanKey.ShadowSpacesVault)
+        if (wanted == servingWithKeys) return
+        aapsLogger.info(
+            LTag.CORE,
+            "swarm: keys vault ${if (wanted) "on" else "off"} — rejoining the pool so the switch means something"
+        )
+        stopServing()
+        startServing()
     }
 
     /**

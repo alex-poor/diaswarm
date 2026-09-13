@@ -23,4 +23,21 @@ object SwarmEndpoint {
 
     @Volatile
     var handle: Long = 0L
+
+    /**
+     * Ask the owner to rebuild the pool if the keys preference has moved.
+     *
+     * **BECAUSE THE POOL DECIDES ONCE, AT JOIN.** `swarmJoin` either builds the
+     * keys replicator or does not, from the directory it is handed, and no
+     * later call can add one — so flipping the preference on used to change
+     * nothing until the process was restarted, while every keys call returned
+     * -3 and the logs blamed the vault.
+     *
+     * Set by [SwarmPlugin] while it is serving, and called from the sync pass,
+     * which is the only thing here that runs on a cadence. Null when nothing is
+     * serving, which is the honest answer rather than a no-op: there is no pool
+     * to disagree with.
+     */
+    @Volatile
+    var rejoinIfPreferencesChanged: (() -> Unit)? = null
 }

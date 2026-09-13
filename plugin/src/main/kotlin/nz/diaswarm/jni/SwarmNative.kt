@@ -503,6 +503,25 @@ object SwarmNative {
      * the screen is not what is being tested. Empty when nothing can be
      * opened — the same answer [netGlucose] gives.
      */
+    /**
+     * A followed subject's treatments out of the keys vault, in
+     * [netTreatments]' shape.
+     *
+     * **THE HALF THAT WOULD HAVE GONE MISSING AT A CUTOVER.** [keysGlucose] on
+     * its own is enough for the graph line, so a keys read looks healthy while
+     * bolus, carb and basal quietly vanish from it. Both vaults build these
+     * rows from one function, so the chart cannot change when a subject
+     * migrates.
+     */
+    external fun keysTreatments(
+        handle: Long,
+        joinedDir: String,
+        subjectKeys: String,
+        purpose: String,
+        sinceMs: Long,
+        limit: Long
+    ): String
+
     external fun keysGlucose(
         handle: Long,
         joinedDir: String,

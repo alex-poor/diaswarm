@@ -137,7 +137,12 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
         onShowInvite = { showPeople = false; Endpoint.expectOffer(); showInvite = true },
         onChoose = { Prefs.setGraphSubject(context, it.key); tick++; showPeople = false },
         onUnits = { Prefs.setMmol(context, !Prefs.mmol(context)); tick++ },
-        onKeysVault = { Prefs.setKeysVault(context, !Prefs.keysVault(context)); tick++ },
+        // The endpoint has to come back for this: see [Endpoint.restart].
+        onKeysVault = {
+            Prefs.setKeysVault(context, !Prefs.keysVault(context))
+            Endpoint.restart(context)
+            tick++
+        },
         keysVault = Prefs.keysVault(context),
         onBand = { Prefs.cycleBand(context); tick++ },
         bandLabel = Prefs.bandLabel(context),
