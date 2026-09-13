@@ -1208,3 +1208,46 @@ honestly when withdrawn rather than claiming a success they cannot deliver.
 *(Earlier in this file I wrote "nine readers" from a log line counting grant
 events. The book holds seven; `9 grants` counts statements in `grants.ndjson`,
 which includes more than one per reader.)*
+
+### 🐛 The fourth half, found by looking instead of waiting
+
+Three consumers had been built far enough to look like they worked, so rather
+than wait for a fourth, I compared what the emitter produces against what
+anything reads:
+
+```
+emitted:  bolus carb cgm event extbolus profile target tbr     (8)
+consumed: bolus carb cgm       extbolus profile        tbr     (6)
+```
+
+**`target` is a temporary target, and nothing had ever read one.** The hero card
+shows a band labelled as the subject's, and the code drawing it is explicit that
+attributing a threshold to somebody who never published it is not allowed. But
+the band came only from the profile — so a subject running an exercise target,
+or eating soon, or treating a hypo, had their *profile* band displayed as theirs
+while the loop was aiming somewhere else entirely.
+
+Not a cutover regression: both vaults ignored it equally. Which is why it
+survived this long.
+
+Two things nearly went wrong writing the fix, and both were caught by checking
+rather than by a test:
+
+⚠️ **I assumed `dur` was minutes.** `TT.duration` is documented in the AAPS
+source as milliseconds. Multiplying by 60,000 would have shown a thirty-minute
+exercise target as running for thirty **hours** — the band wrong for a day and a
+quarter after it ended.
+
+⚠️ **A cancellation is a record, not an absence.** AAPS calls a temporary target
+off by writing another one with zero duration. "Newest wins" is not merely the
+right rule for choosing between live targets, it is the only rule that sees a
+cancellation at all — a reader taking the newest target *with a non-zero
+duration* would show one somebody switched off an hour ago. There is a test.
+
+The card says when a band is temporary and why — `target 4.4–7.8 mmol/L ·
+temporary, activity, 22 min left` — because a band that silently changes reads
+as somebody editing their profile rather than going for a run.
+
+`event` is the remaining unread kind: site changes, sensor changes, notes. It is
+informational rather than clinical and nothing on screen claims otherwise, so it
+stays a known gap rather than a defect.

@@ -1013,6 +1013,55 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netTreatments<'a>(
 /// before the window a follower is watching. Bounding this to recent epochs
 /// would silently leave a long-settled profile unfindable.
 #[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netTempTarget<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    store_path: JString<'a>,
+    subject: JString<'a>,
+    identity_path: JString<'a>,
+    purpose: JString<'a>,
+) -> JString<'a> {
+    let (Ok(store), Ok(subj), Ok(id), Ok(p)) = (
+        env.get_string(&store_path),
+        env.get_string(&subject),
+        env.get_string(&identity_path),
+        env.get_string(&purpose),
+    ) else {
+        return to_jstring(env, String::new());
+    };
+    let dir = PathBuf::from(String::from(store)).join(String::from(subj));
+    let Some(reader) = load_or_create_identity(Path::new(&String::from(id))) else {
+        return to_jstring(env, String::new());
+    };
+    let Ok(vault) = Vault::open(&dir) else { return to_jstring(env, String::new()) };
+    let Ok(opened) = vault.read_as(&reader, &String::from(p)) else {
+        return to_jstring(env, String::new());
+    };
+    let newest = opened
+        .values()
+        .flatten()
+        .filter(|r| r.kind() == "target")
+        .max_by_key(|r| r.t());
+    match newest {
+        Some(r) => to_jstring(env, r.to_canonical_json()),
+        None => to_jstring(env, String::new()),
+    }
+}
+
+/// The subject's newest temporary target, as canonical JSON, or empty.
+///
+/// **THE TARGET ON SCREEN IS A CLINICAL STATEMENT ATTRIBUTED TO THEM**, and
+/// until now it came only from the profile. A temporary target — exercise,
+/// eating soon, a hypo — replaces it for as long as it runs, so the screen was
+/// showing the profile's band and calling it theirs while the loop was aiming
+/// somewhere else entirely. The emitter has always published these; nothing
+/// read them.
+///
+/// Newest wins, and that also handles cancelling: AAPS calls a temporary target
+/// off by writing another one with zero duration, so no special case is needed.
+/// Whether it is still running is the caller's arithmetic, because only the
+/// caller knows what time it is on the phone doing the asking.
+#[no_mangle]
 pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_netProfile<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
@@ -2064,18 +2113,73 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysProfile<'a>(
     }
 }
 
-/// The latest `profile` record in an ndjson body, as canonical JSON.
+/// The latest record of one kind in an ndjson body, as canonical JSON.
 ///
 /// Latest by the record's own `t`, never by position: segments are opened per
-/// epoch and concatenated, so arrival order says nothing about which profile
-/// was the one in force.
-fn newest_profile(body: &str) -> Option<String> {
+/// epoch and concatenated, so arrival order says nothing about which record was
+/// the one in force.
+///
+/// Used for the two kinds that are *statements rather than events* — a profile
+/// and a temporary target. Both are replaced by the next one rather than
+/// accumulating, and for both the cancellation is itself a record: AAPS writes
+/// a temporary target of zero duration to call one off, so "newest wins"
+/// handles cancelling without a special case.
+fn newest_of_kind(body: &str, kind: &str) -> Option<String> {
     body.lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| Record::from_json(l).ok())
-        .filter(|r| r.kind() == "profile")
+        .filter(|r| r.kind() == kind)
         .max_by_key(|r| r.t())
         .map(|r| r.to_canonical_json())
+}
+
+fn newest_profile(body: &str) -> Option<String> {
+    newest_of_kind(body, "profile")
+}
+
+/// A followed subject's newest temporary target out of the keys vault.
+///
+/// The keys-vault half of `netTempTarget`; see that for why it exists. Reads
+/// every epoch rather than a tail, for the same reason the profile does: a
+/// temporary target set yesterday and still running would be invisible to a
+/// window that only looks at today.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysTempTarget<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    joined_dir: JString<'a>,
+    subject_keys: JString<'a>,
+    purpose: JString<'a>,
+) -> JString<'a> {
+    let (Ok(joined), Ok(keys), Ok(purpose)) =
+        (env.get_string(&joined_dir), env.get_string(&subject_keys), env.get_string(&purpose))
+    else {
+        return to_jstring(env, String::new());
+    };
+    let (joined, keys, purpose) = (String::from(joined), String::from(keys), String::from(purpose));
+    let Some(v) = keys_vault(handle) else { return to_jstring(env, String::new()) };
+    let offset = v.vault.offset();
+    let own_dir = v.vault.root().to_path_buf();
+    let out = follow_read(
+        &own_dir,
+        Path::new(&joined),
+        &v.store,
+        &v.handle,
+        &v.signing,
+        &keys,
+        &purpose,
+        0,
+        i64::MIN,
+        offset,
+    );
+    let Some(body) = out.strip_prefix("ok ").and_then(|rest| rest.split_once('\n')) else {
+        return to_jstring(env, String::new());
+    };
+    match newest_of_kind(body.1, "target") {
+        Some(json) => to_jstring(env, json),
+        None => to_jstring(env, String::new()),
+    }
 }
 
 /// A followed subject's treatments out of the keys vault, in
@@ -3356,6 +3460,44 @@ mod shadow_tests {
             "a revoked reader was let back in by a handover"
         );
         assert_eq!(subject.tag_of(bundle, "follow").unwrap(), granted);
+    }
+
+    /// A CANCELLED TEMPORARY TARGET IS A RECORD, NOT AN ABSENCE.
+    ///
+    /// AAPS calls a temporary target off by writing another one with zero
+    /// duration. So "newest wins" is not just the right rule for picking
+    /// between two live targets — it is the ONLY rule that sees a cancellation
+    /// at all. A reader that took the newest target with a non-zero duration
+    /// would happily show an exercise target somebody switched off an hour ago.
+    #[test]
+    fn cancelling_a_temporary_target_is_the_newest_record_not_a_missing_one() {
+        use super::newest_of_kind;
+        use diaswarm_core::Record;
+
+        let tt = |t: i64, dur: f64| {
+            Record::new(t, "target")
+                .set("lo", Some(80.0.into()))
+                .set("hi", Some(140.0.into()))
+                .set("dur", Some(dur.into()))
+                .set("why", Some("ACTIVITY".into()))
+                .to_canonical_json()
+        };
+        // Set at 1000 for 30 minutes, cancelled at 2000. Out of order on
+        // purpose: epochs are concatenated, so arrival order proves nothing.
+        let body = [tt(2_000, 0.0), tt(1_000, 1_800_000.0)].join("\n");
+        let got = newest_of_kind(&body, "target").expect("no target found");
+        assert!(got.contains("\"dur\":0"), "picked the set, not the cancel: {got}");
+
+        // And the profile is a different statement read by the same helper —
+        // one body, two kinds, neither answering for the other.
+        let mixed = [
+            tt(1_000, 1_800_000.0),
+            Record::new(5_000, "profile").set("basal", Some(serde_json::json!([]))).to_canonical_json(),
+        ]
+        .join("\n");
+        assert!(newest_of_kind(&mixed, "target").unwrap().contains("ACTIVITY"));
+        assert!(newest_of_kind(&mixed, "profile").unwrap().contains("basal"));
+        assert_eq!(newest_of_kind(&mixed, "cgm"), None);
     }
 
     /// THE ROW SHAPE IS THE CONTRACT, AND BOTH VAULTS READ THE SAME ONE.

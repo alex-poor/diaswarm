@@ -68,6 +68,9 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
         subject?.let { Follower.treatments(context, it, Prefs.rangeHours(context)) } ?: emptyList()
     }
     val target = remember(tick, subject) { subject?.let { Follower.target(context, it) } }
+    // Read separately from [target] so the card can SAY it is temporary. A band
+    // that silently changes looks like they edited their profile.
+    val tempTarget = remember(tick, subject) { subject?.let { Follower.runningTempTarget(context, it) } }
     val followed = remember(tick) { Follower.following(context) }
     val low = remember(tick) { Prefs.lowLine(context) }
     val high = remember(tick) { Prefs.highLine(context) }
@@ -107,7 +110,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
                 subject == null    -> ChooseCard(followed) { Prefs.setGraphSubject(context, it.key); tick++ }
                 readings.isEmpty() -> WaitingCard(subject)
                 else               -> {
-                    HeroCard(context, readings, treatments, target, low, high)
+                    HeroCard(context, readings, treatments, target, tempTarget, low, high)
                     Card(
                         colors = CardDefaults.cardColors(containerColor = Card),
                         modifier = Modifier.fillMaxWidth().weight(1f)
@@ -169,6 +172,7 @@ private fun HeroCard(
     readings: List<Follower.Reading>,
     treatments: List<Follower.Treatment>,
     target: Pair<Double, Double>?,
+    tempTarget: Follower.TempTarget?,
     lowLine: Double,
     highLine: Double
 ) {
@@ -197,8 +201,19 @@ private fun HeroCard(
                 }
             }
             target?.let { (lo, hi) ->
+                // **SAYS WHEN IT IS TEMPORARY, AND WHY.** The band was always
+                // the profile's, so a subject running an exercise target had
+                // their profile band shown as theirs while the loop aimed
+                // somewhere else. Now it follows the temporary one — and says
+                // so, because a band that silently changes reads as somebody
+                // editing their profile rather than going for a run.
+                val label = "target ${Prefs.show(context, lo)}–${Prefs.show(context, hi)} " +
+                    Prefs.unitLabel(context)
                 Text(
-                    "target ${Prefs.show(context, lo)}–${Prefs.show(context, hi)} ${Prefs.unitLabel(context)}",
+                    tempTarget?.let { tt ->
+                        val why = tt.why.lowercase().replace('_', ' ').takeIf { it.isNotBlank() && it != "custom" }
+                        "$label · temporary${why?.let { ", $it" } ?: ""}, ${Follower.untilWords(tt.until)}"
+                    } ?: label,
                     color = Text2, fontSize = 13.sp
                 )
             }

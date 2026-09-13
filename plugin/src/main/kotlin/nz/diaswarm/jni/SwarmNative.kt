@@ -573,6 +573,34 @@ object SwarmNative {
 
     external fun keysGrantUnattended(handle: Long, readerBundle: String, purpose: String): String
 
+    /**
+     * A followed subject's newest temporary target, as canonical JSON, or
+     * empty. Two readers, one per vault, same shape.
+     *
+     * **THE TARGET ON SCREEN IS A CLINICAL STATEMENT ATTRIBUTED TO THEM.** Until
+     * now it came only from the profile, so a subject with a temporary target
+     * running — exercise, eating soon, a hypo — had their profile band shown as
+     * theirs while the loop was aiming somewhere else. The emitter has always
+     * published these; nothing read them.
+     *
+     * Newest wins, which also handles cancelling: AAPS calls one off by writing
+     * another with zero duration. Whether it is still running is the caller's
+     * arithmetic — only the caller knows what time it is.
+     */
+    external fun netTempTarget(
+        storePath: String,
+        subject: String,
+        identityPath: String,
+        purpose: String
+    ): String
+
+    external fun keysTempTarget(
+        handle: Long,
+        joinedDir: String,
+        subjectKeys: String,
+        purpose: String
+    ): String
+
     external fun keysProfile(
         handle: Long,
         joinedDir: String,

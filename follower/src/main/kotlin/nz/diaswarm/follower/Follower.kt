@@ -279,7 +279,90 @@ object Follower {
      * making one on their behalf. §2 requires profile records to carry target
      * blocks normalised to mg/dL precisely so a reader does not have to guess.
      */
-    fun target(context: Context, subject: Subject): Pair<Double, Double>? {
+    fun target(context: Context, subject: Subject): Pair<Double, Double>? =
+        runningTempTarget(context, subject)?.let { it.low to it.high }
+            ?: profileTarget(context, subject)
+
+    /** A temporary target, while it is running. */
+    data class TempTarget(val low: Double, val high: Double, val until: Long, val why: String)
+
+    /**
+     * The subject's temporary target, if one is running right now.
+     *
+     * **A TEMPORARY TARGET REPLACES THE PROFILE'S, AND THE SCREEN SAID
+     * OTHERWISE.** The band on the hero card is labelled as *theirs*, and the
+     * code that draws it is explicit that attributing a threshold to somebody
+     * who never published it is not allowed. Showing their profile band while
+     * they are running an exercise target does exactly that — the loop is
+     * aiming somewhere else and the screen says it is not.
+     *
+     * Newest record wins, from whichever vault has the later one, which is also
+     * how a cancellation arrives: AAPS calls a temporary target off by writing
+     * another with zero duration, so an expired or cancelled one simply fails
+     * the `until` test below and the profile takes over again.
+     *
+     * `dur` is **milliseconds**, checked against `TT.duration` rather than
+     * assumed — the first draft of this assumed minutes, which would have left
+     * a thirty-minute exercise target showing as running for thirty hours, and
+     * the band on screen wrong for a day and a quarter after it ended.
+     *
+     * `lo` and `hi` are mg/dL, like everything else crossing this boundary: the
+     * emitter normalises on the way out precisely so a reader never has to ask.
+     */
+    fun runningTempTarget(context: Context, subject: Subject): TempTarget? {
+        SwarmNative.check()
+        val fromCore = SwarmNative.netTempTarget(
+            SwarmPaths.store(context).absolutePath,
+            subject.key,
+            SwarmPaths.identity(context).absolutePath,
+            subject.purpose
+        )
+        val fromKeys = keysTempTarget(context, subject)
+        val json = when {
+            fromKeys.isBlank() -> fromCore
+            fromCore.isBlank() -> fromKeys
+            recordedAt(fromKeys) >= recordedAt(fromCore) -> fromKeys
+            else -> fromCore
+        }
+        if (json.isBlank()) return null
+        return runCatching {
+            val o = org.json.JSONObject(json)
+            val at = o.optLong("t", 0L)
+            val durationMs = o.optLong("dur", 0L)
+            // Zero duration is how a temporary target is CANCELLED, not a
+            // malformed record — so it is a null answer, not a warning.
+            if (at <= 0L || durationMs <= 0L) return null
+            val until = at + durationMs
+            if (until <= System.currentTimeMillis()) return null
+            val low = o.optDouble("lo", 0.0)
+            val high = o.optDouble("hi", 0.0)
+            if (low <= 0.0 || high <= 0.0) return null
+            TempTarget(low, high, until, o.optString("why", ""))
+        }.getOrNull()
+    }
+
+    /** What the keys vault can open, or empty. Never throws at the caller. */
+    private fun keysTempTarget(context: Context, subject: Subject): String {
+        if (!Prefs.keysVault(context) || subject.keys.isEmpty()) return ""
+        val handle = SwarmKeys.open(context)
+        if (handle == 0L) return ""
+        return try {
+            SwarmNative.keysTempTarget(
+                handle,
+                SwarmKeys.joinedDir(context, subject.key).absolutePath,
+                subject.keys,
+                subject.purpose
+            )
+        } catch (e: Throwable) {
+            android.util.Log.i(SyncWorker.TAG, "keys temp target threw: $e")
+            ""
+        } finally {
+            SwarmNative.keysClose(handle)
+        }
+    }
+
+    /** The band the profile schedules, which applies when nothing overrides it. */
+    private fun profileTarget(context: Context, subject: Subject): Pair<Double, Double>? {
         val json = profileJson(context, subject)
         if (json.isBlank()) return null
         return runCatching {
@@ -465,6 +548,23 @@ object Follower {
             secs < 7200      -> "1 hour ago"
             secs < 86_400    -> "${secs / 3600} hours ago"
             else             -> "${secs / 86_400} days ago"
+        }
+    }
+
+    /**
+     * How long something still has to run, in the same voice as [ageWords].
+     *
+     * Rounds UP to the minute rather than down, so a target with forty seconds
+     * left reads "1 min left" instead of "0 min left" — a countdown that hits
+     * zero while the thing is still running says the wrong thing about somebody
+     * else's treatment.
+     */
+    fun untilWords(until: Long, now: Long = System.currentTimeMillis()): String {
+        val secs = ((until - now) / 1000).coerceAtLeast(0)
+        return when {
+            secs < 3600   -> "${(secs + 59) / 60} min left"
+            secs < 7200   -> "1 hour left"
+            else          -> "${secs / 3600} hours left"
         }
     }
 
