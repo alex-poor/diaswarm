@@ -164,6 +164,15 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
         keysVault = Prefs.keysVault(context),
         onKeysOnly = { Prefs.setKeysOnly(context, !Prefs.keysOnly(context)); tick++ },
         keysOnly = Prefs.keysOnly(context),
+        // Applied immediately rather than at next launch: a switch that takes
+        // effect later is the defect this app already had once.
+        onStayReachable = {
+            val want = !Prefs.stayReachable(context)
+            Prefs.setStayReachable(context, want)
+            nz.diaswarm.jni.Multicast.stayReachable(context, want)
+            tick++
+        },
+        stayReachable = Prefs.stayReachable(context),
         onBand = { Prefs.cycleBand(context); tick++ },
         bandLabel = Prefs.bandLabel(context),
         mmol = Prefs.mmol(context),

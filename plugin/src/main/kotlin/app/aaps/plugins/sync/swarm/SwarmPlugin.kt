@@ -419,6 +419,12 @@ class SwarmPlugin @Inject constructor(
         // the network changed — silently, on a phone driving a pump.
         SwarmNative.initAndroid(context.applicationContext)
         nz.diaswarm.jni.Multicast.hold(context)
+        // UNCONDITIONAL HERE, unlike the follower. This phone is the one being
+        // read: if it is unreachable nobody sees anything, and it is already
+        // holding a foreground service and a wake lock to drive a pump. The
+        // follower makes it a choice because the cost lands on a different
+        // person's battery than the benefit.
+        nz.diaswarm.jni.Multicast.stayReachable(context, true)
 
         // SERVE EVEN WITH NOTHING OF OUR OWN TO SERVE.
         //

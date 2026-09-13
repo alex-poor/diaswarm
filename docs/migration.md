@@ -1523,3 +1523,57 @@ so now.
 That is three mutation checks on this suite — the permission guard, the bare
 node id, and this — and one of them changed what the code claims about itself.
 A test whose failure mode has never been observed is a decoration.
+
+### ✅ A sleeping subject CAN be reachable — it needs a `WifiLock`
+
+The question was a good one: if AAPS keeps BLE alive all night to receive
+readings, why can a socket not stay up? Two answers.
+
+**First, Nightscout does not solve this — it avoids it.** That is a push model:
+the phone makes brief *outbound* HTTPS calls to an always-on server, and the
+follower reads from the same server. Neither phone ever has to be *reachable*,
+and Doze permits short outbound bursts. The always-on third party absorbs the
+whole problem. This project deliberately has no such party, so the subject's
+phone has to be reachable *inbound* — a connection that persists, not a burst
+that succeeds. Strictly harder, and the cost of not having a server.
+
+**Second, BLE stays up because something holds it up, and nothing was holding
+the radio.** AAPS runs a foreground service with an ongoing notification; that
+keeps the *process* alive. It does not keep the *wifi radio associated*. The
+network equivalent is `WifiManager.createWifiLock(WIFI_MODE_FULL_HIGH_PERF)`,
+and nothing in this repo took one.
+
+Measured on phone B, same phone, same session, `dumpsys deviceidle force-idle`:
+
+| | 20s | 35s | 1 min | 2 min | 2m40s |
+|---|---|---|---|---|---|
+| **lock held** | 2 sockets | estab=1 | estab=1 | estab=1 | estab=1 |
+| **lock released** | — | **estab=0** | estab=0 | estab=0 | — |
+
+Gone within seconds without it, alive throughout with it. No permission needed:
+`acquireWifiLock uid=10253 lockMode=3` is granted on request.
+
+**It is a choice in Ayni, because it spends somebody's battery.** New row in the
+⋯ sheet, above the experimental ones since it is about freshness rather than
+migration:
+
+> **Keep up to date while asleep: on**
+> Holds the wifi connection open so readings keep arriving with the screen off.
+> Uses more battery. Off, they catch up when you next open the app.
+
+Default on — this app exists to answer "how are they right now", and a silently
+stale graph is its worst failure — and one tap gives exactly the old behaviour,
+which was never broken, only late. Applied immediately rather than at next
+launch, because a switch that takes effect later is a defect this app has
+already had once. The lock is *released* as well as acquired, verified both
+ways: `wifi lock held` / `wifi lock released — reachable only while awake`.
+
+**Unconditional in the plugin.** That phone is the one being read: if it is
+unreachable nobody sees anything, and it already holds a foreground service and
+a wake lock to drive a pump. The follower gets the choice because there the cost
+lands on a different person's battery than the benefit.
+
+⚠️ **Still true: a phone on a charger never dozes at all** (`mCharging=true` →
+`mState=ACTIVE`), which is why the loop phone survived being unplugged and
+carried around this morning and did not survive the night. The lock is what
+makes an *unplugged* phone reachable.

@@ -73,6 +73,8 @@ fun PeopleSheet(
     keysVault: Boolean,
     onKeysOnly: () -> Unit,
     keysOnly: Boolean,
+    onStayReachable: () -> Unit,
+    stayReachable: Boolean,
     onBand: () -> Unit,
     bandLabel: String,
     mmol: Boolean,
@@ -109,6 +111,30 @@ fun PeopleSheet(
                     modifier = Modifier.fillMaxWidth().clickable { onShowInvite() }.padding(vertical = 8.dp))
                 Text("Units: ${if (mmol) "mmol/L" else "mg/dL"}", color = Text1, fontSize = 15.sp,
                     modifier = Modifier.fillMaxWidth().clickable { onUnits() }.padding(vertical = 8.dp))
+                // BEFORE THE EXPERIMENTAL ROWS, because this one is about
+                // battery and freshness and applies to everybody.
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                        .clickable { onStayReachable() }.padding(vertical = 8.dp)
+                ) {
+                    Text(
+                        "Keep up to date while asleep: ${if (stayReachable) "on" else "off"}",
+                        color = Text1,
+                        fontSize = 15.sp
+                    )
+                    // SAYS WHAT IT COSTS AND WHAT IT BUYS. Android closes the
+                    // connection about half a minute after the screen goes off,
+                    // so with this off the readings stop until the phone is
+                    // picked up and then arrive in a rush. Neither answer is
+                    // wrong; it is somebody's battery.
+                    Text(
+                        "Holds the wifi connection open so readings keep arriving with the " +
+                            "screen off. Uses more battery. Off, they catch up when you next " +
+                            "open the app.",
+                        color = Text2,
+                        fontSize = 12.sp
+                    )
+                }
                 Column(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
                         .clickable { onKeysVault() }.padding(vertical = 8.dp)

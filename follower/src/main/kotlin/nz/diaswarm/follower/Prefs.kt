@@ -21,6 +21,7 @@ object Prefs {
     private const val KEYS_VAULT = "keys_vault"
     private const val HANDED_OVER_AT = "handed_over_at_"
     private const val KEYS_ONLY = "keys_only"
+    private const val STAY_REACHABLE = "stay_reachable"
 
     private fun p(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -90,6 +91,25 @@ object Prefs {
      */
     fun keysOnly(c: Context): Boolean = keysVault(c) && p(c).getBoolean(KEYS_ONLY, false)
     fun setKeysOnly(c: Context, v: Boolean) = p(c).edit().putBoolean(KEYS_ONLY, v).apply()
+
+    /**
+     * Whether this phone holds the wifi radio up so it stays reachable asleep.
+     *
+     * **A CHOICE, BECAUSE IT SPENDS SOMEBODY'S BATTERY.** Deep doze closes the
+     * relay connection within about half a minute, and a phone that is not
+     * connected to a relay cannot be reached through one — so without this a
+     * follower goes quiet whenever the screen has been off for a while, and
+     * catches up in a rush when it wakes. With it, the radio stays associated
+     * and the readings keep arriving.
+     *
+     * **On by default**, because this app exists to answer "how are they right
+     * now" and a silently stale graph is its worst failure. Anyone who would
+     * rather have the battery turns it off in one tap, and gets the behaviour
+     * the app had before — which is not broken, just late.
+     */
+    fun stayReachable(c: Context): Boolean = p(c).getBoolean(STAY_REACHABLE, true)
+    fun setStayReachable(c: Context, v: Boolean) =
+        p(c).edit().putBoolean(STAY_REACHABLE, v).apply()
 
     fun keysVault(c: Context): Boolean = p(c).getBoolean(KEYS_VAULT, false)
     fun setKeysVault(c: Context, v: Boolean) = p(c).edit().putBoolean(KEYS_VAULT, v).apply()
