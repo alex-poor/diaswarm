@@ -1,0 +1,52 @@
+# A diaswarm pool member, as a systemd USER service.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp diaswarm-peer.service ~/.config/systemd/user/
+#   systemctl --user enable --now diaswarm-peer
+#   journalctl --user -fu diaswarm-peer
+#
+# A USER unit, not a system one, and that is deliberate: this holds a share of
+# other people's sealed records and needs no privilege whatsoever. It reads and
+# writes one directory under your own home. Nothing here should ever want root.
+#
+# ON A HEADLESS MACHINE, run `loginctl enable-linger $USER` as well, or systemd
+# stops your user's services when you log out — which on a server is most of the
+# time, and would make an "always-on" carrier one that runs while you are ssh'd
+# in. That is the single most likely way this gets silently misconfigured.
+
+[Unit]
+Description=diaswarm pool peer — carries sealed records it cannot read
+Documentation=https://github.com/alex-poor/diaswarm
+# Do not race the network on boot; the peer retries anyway, but a first pass
+# that fails for want of a route is a confusing first log line.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/diaswarm-peer
+Restart=on-failure
+RestartSec=30s
+
+# IT CARRIES STRANGERS' CIPHERTEXT, SO GIVE IT AS LITTLE AS POSSIBLE. None of
+# this is required for it to work; all of it is cheap. If a line here ever
+# stops the peer starting, delete that line rather than the sandbox.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# The one place it may write.
+ReadWritePaths=%S/diaswarm
+Environment=XDG_DATA_HOME=%S
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=default.target

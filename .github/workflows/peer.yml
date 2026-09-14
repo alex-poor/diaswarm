@@ -1,0 +1,162 @@
+# Build the desktop peer for every platform somebody might leave running.
+#
+# WHY EXECUTABLES AND NOT "cargo install". A carrier is useful in proportion to
+# how many people run one, and "install a Rust toolchain first" excludes most of
+# them. The value of this binary is availability — a machine that does not sleep
+# holding somebody's sealed records — so the barrier to running it should be
+# downloading a file.
+#
+# NATIVE RUNNERS, NO CROSS-COMPILATION. The record core builds SQLite from C
+# (libsqlite3-sys is bundled, so there is no system library to find) and `ring`
+# assembles per target. Cross-compiling either is a way to spend a day; GitHub
+# has a runner for each of these, so each target builds where it runs.
+#
+# Tag `peer-v0.1.0` to release. The version in the tag must match
+# `crates/diaswarm-peer/Cargo.toml` or the build fails rather than publishing a
+# binary that lies about what it is — the same rule `fdroid/` applies to Ayni.
+
+name: peer
+
+on:
+  push:
+    tags: ["peer-v*"]
+  workflow_dispatch:
+
+# NO `pull_request` TRIGGER, DELIBERATELY. A matrix cannot be made conditional
+# per entry, so a PR would start five runners in order for four of them to skip
+# — and `crates.yml` already builds and tests this crate on every PR that
+# touches it. Releasing is the only thing this workflow does that that one does
+# not.
+
+permissions:
+  contents: write   # only to attach binaries to a release
+
+concurrency:
+  group: peer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      # ONE TARGET FAILING MUST NOT CANCEL THE REST. The first release of this
+      # is the first time it has ever been built for macOS or Windows, and
+      # finding out that four of five work is more useful than finding out that
+      # one of them failed first.
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,   target: x86_64-unknown-linux-gnu,  ext: "" }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, ext: "" }
+          - { os: macos-13,        target: x86_64-apple-darwin,       ext: "" }
+          - { os: macos-latest,    target: aarch64-apple-darwin,      ext: "" }
+          - { os: windows-latest,  target: x86_64-pc-windows-msvc,    ext: ".exe" }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/diaswarm-peer/target
+          key: peer-${{ matrix.target }}-${{ hashFiles('crates/*/Cargo.toml') }}
+          restore-keys: peer-${{ matrix.target }}-
+
+      # THE TAG AND THE CRATE MUST AGREE. A release whose binary reports a
+      # different version from the tag it came from is a bug report nobody can
+      # act on, and `--version` is the first thing anybody will quote.
+      - name: The tag says what the crate says
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/peer-v}"
+          CRATE=$(grep -m1 '^version' crates/diaswarm-peer/Cargo.toml | cut -d'"' -f2)
+          echo "tag $TAG / crate $CRATE"
+          [ "$TAG" = "$CRATE" ] || { echo "::error::tag peer-v$TAG does not match crate version $CRATE"; exit 1; }
+
+      - name: Build
+        working-directory: crates/diaswarm-peer
+        run: cargo build --release
+
+      # IT HAS TO ACTUALLY RUN. A binary that links and then dies on start is
+      # the failure a cross-compiled artifact hides, and `--once` does a whole
+      # pass — join a pool, carry, report — in its own temporary directory.
+      - name: It starts, and does one pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="crates/diaswarm-peer/target/release/diaswarm-peer${{ matrix.ext }}"
+          "$BIN" --version
+          "$BIN" --help > /dev/null
+          "$BIN" "${RUNNER_TEMP}/peer-smoke" --once --adopt 0 --network ci-smoke --json
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME="diaswarm-peer-${{ matrix.target }}"
+          mkdir -p "dist/$NAME"
+          cp "crates/diaswarm-peer/target/release/diaswarm-peer${{ matrix.ext }}" "dist/$NAME/"
+          cp packaging/README.md LICENSE "dist/$NAME/"
+          case "${{ matrix.target }}" in
+            *linux*)   cp packaging/systemd/diaswarm-peer.service "dist/$NAME/" ;;
+            *darwin*)  cp packaging/launchd/nz.diaswarm.peer.plist "dist/$NAME/" ;;
+            *windows*) cp packaging/windows/install-task.ps1 "dist/$NAME/" ;;
+          esac
+          cd dist
+          if [ -n "${{ matrix.ext }}" ]; then
+            7z a "$NAME.zip" "$NAME" > /dev/null
+          else
+            tar czf "$NAME.tar.gz" "$NAME"
+          fi
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diaswarm-peer-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dl }
+
+      - name: Checksums, and attach
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out && find dl -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} out/ \;
+          cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS
+          cat > notes.md <<'EOF'
+          **diaswarm-peer** holds a share of other people's sealed records so
+          that somebody's phone can sleep and their data stay reachable.
+
+          **It can read none of what it holds.** It is granted nothing, and no
+          setting changes that. What it costs you is disk — roughly 329 MB a
+          year per subject on a one-minute sensor, and there is no pruning yet.
+
+          Unpack, put the binary on your `PATH`, and follow `README.md` in the
+          archive for the service file for your platform. `--help` explains the
+          rest.
+
+          *Ayni* is Quechua for the reciprocity this runs on: you give because
+          you will need, and somebody else gives because they will too.
+          EOF
+          gh release create "${GITHUB_REF#refs/tags/}" --title "${GITHUB_REF#refs/tags/}" \
+            --notes-file notes.md ./* || \
+          gh release upload "${GITHUB_REF#refs/tags/}" ./* --clobber

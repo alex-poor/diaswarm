@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A diaswarm pool member, as a launchd USER agent (macOS).
+
+    cp nz.diaswarm.peer.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/nz.diaswarm.peer.plist
+    tail -f ~/Library/Logs/diaswarm-peer.log
+
+  A LaunchAgent, not a LaunchDaemon: it needs no privilege and holds only a
+  directory under your own home. It runs while you are logged in — a Mac that
+  should carry around the clock wants to be set to not sleep, since a sleeping
+  Mac is a phone with a bigger screen as far as the pool is concerned.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>nz.diaswarm.peer</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/diaswarm-peer</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/diaswarm-peer.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/diaswarm-peer.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
