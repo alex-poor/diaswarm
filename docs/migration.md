@@ -2350,3 +2350,65 @@ failure direction is not a detail.
 the same each time: cumulative metrics describe a session, and the question
 being asked is about an operation. It was believed twice because nothing
 asserted the one thing that cannot be true.
+
+### ⚠️ …and a third time, which is the actual finding
+
+The previous entry claimed `live <= received` was now structural. It was not.
+`count_live` returned a **delta**, and its "the session started over" branch
+returned the whole cumulative value — so a baseline going missing mid-flight
+added hundreds in a single event. Tying the increment to the store branch
+bounded *when* it happened, not *how much*. The phone, on the build carrying
+that fix:
+
+```
+sync: counts received=3322 live=5245
+sync: counts received=4737 live=6685
+```
+
+**Four versions of one counter, each wrong differently, all wrong the same
+way.** Every one tried to reconstruct a per-operation fact from a counter that
+describes a session, which means guessing where a session began — and every
+guess had a case where it added a running total at once.
+
+There was never a delta to compute. p2panda bumps
+`received_live_operations` by exactly one immediately before emitting the
+event, so the counter *changing* is the whole signal and its magnitude is
+noise. `is_live` returns a **boolean**. One event is one operation, at most one
+increment, and `live <= received` holds by construction instead of by argument.
+
+| version | rule | reported |
+|---|---|---|
+| 1 | `received_live > 0` | 1,052 live of 1,059 |
+| 2 | delta, keyed on `session_id` | 17,128 of 8,103 |
+| 3 | delta, keyed on `(topic, peer, session)` | 5,245 of 3,322 |
+| 4 | **boolean: did the counter change?** | — |
+
+The lesson is not about p2panda. It is that a diagnostic whose failure mode is
+over-reporting will be believed, and this one was believed three times.
+
+### ⚠️ De-duplication means a push can be invisible, and that is fine
+
+A laptop peer carrying phone B's publisher recorded `received=488, live=0`
+while that publisher reported `pushed 1` on every pass. Not a failure of the
+push: p2panda drops a live operation whose hash is already in the session's
+dedup buffer, so an operation a catch-up sync has already delivered never
+reaches the live counter. With sessions re-syncing every few seconds on a quiet
+LAN, catch-up keeps winning the race.
+
+So `live` measures *pushes that beat catch-up*, not pushes sent. The publishing
+side's `pushed=` is the honest measure of the send half; `live` is the measure
+of whether pushing is buying anything.
+
+### ⚠️ The keys vault has no pool redundancy
+
+`keysCarryAll` carries a phone's **own** subject and the ones it **follows**,
+and nothing else — `keysCarry`, the single-subject entry point, is in the JNI
+guard's known-dead list as superseded.
+
+So D15's promise — any holder serves identical bytes, so a subject whose phone
+is asleep is still readable — holds for the core vault and **not** for the
+vault this migration is cutting over to. Pool adoption announces and carries
+core-vault subjects; the keys logs of a stranger are never carried by anyone.
+
+Not a defect in the live-push work, and not fixed here: it is a decision about
+what the cutover means, and it belongs to whoever is making it.

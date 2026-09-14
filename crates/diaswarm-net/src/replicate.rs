@@ -176,11 +176,11 @@ pub struct Replicator<A: Extensions + Send + 'static> {
     /// delivered everything, and live mode delivered nothing, and one total
     /// cannot tell those apart.
     ///
-    /// See [`count_live`] for how the two are told apart, and for the wrong
+    /// See [`is_live`] for how the two are told apart, and for the wrong
     /// rule that shipped first and reported 1,052 live arrivals on a phone
     /// whose only peer had pushed exactly one.
     live: Arc<Mutex<usize>>,
-    /// The last `received_live_operations` seen on each session, for [`count_live`].
+    /// The last `received_live_operations` seen on each session, for [`is_live`].
     live_seen: Arc<Mutex<std::collections::HashMap<Session, u32>>>,
     /// Every sync event, in order.
     ///
@@ -338,7 +338,7 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
                     Ok(FromSync { event, remote, session_id, .. }) => match event {
                         TopicLogSyncEvent::OperationReceived { operation, metrics } => {
                             *last_event.lock().unwrap() = std::time::Instant::now();
-                            let pushed = count_live(
+                            let pushed = is_live(
                                 &mut live_seen.lock().unwrap(),
                                 (topic_bytes, *remote.as_bytes(), session_id),
                                 metrics.received_live_operations,
@@ -375,7 +375,9 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
                                     // reason from. Tying it to the same branch
                                     // makes the invariant structural rather
                                     // than something to remember.
-                                    *live.lock().unwrap() += pushed;
+                                    if pushed {
+                                        *live.lock().unwrap() += 1;
+                                    }
                                 }
                                 Err(e) => {
                                     remember(&log, format!("could not store: {e}"))
@@ -553,46 +555,46 @@ fn remember(log: &Mutex<Vec<String>>, line: String) {
     }
 }
 
-/// How many of this event's operations arrived pushed rather than fetched.
+/// Did *this* operation arrive pushed rather than fetched?
 ///
-/// **THE OBVIOUS RULE IS WRONG, AND IT SHIPPED FIRST.** `Metrics` is cumulative
-/// over a *session*, so `received_live_operations > 0` means "this session has
-/// received a live operation at some point", not "this operation is live". A
-/// session that takes one push and then re-syncs — which is ordinary, and which
-/// the event log shows happening as `SyncFinished, LiveModeStarted,
-/// SyncFinished, LiveModeStarted` against one peer — makes every catch-up
-/// operation after that point look pushed.
+/// **A BOOLEAN, BECAUSE ONE EVENT IS ONE OPERATION.** Three earlier versions of
+/// this returned a count derived from `Metrics::received_live_operations`, and
+/// all three over-reported, twice impossibly — 1,052 live of 1,059 received,
+/// then 17,128 of 8,103, then 5,245 of 3,322. The cause was the same every
+/// time and it was structural: `Metrics` is cumulative over a session, this
+/// question is about a single operation, and reconstructing one from the other
+/// means guessing where a session began. Every version guessed differently and
+/// every guess had a case where it added a session's whole running total at
+/// once.
 ///
-/// Measured on a phone within minutes of shipping it: a follower reported 1,052
-/// live arrivals out of 1,059 while the only peer that could have pushed to it
-/// reported `pushed 1`. The true figure was one. A counter that exists to
-/// detect a broken transport is worth nothing if it reports success by
-/// accident, so this counts the *increase* instead, per session.
+/// There is no delta to compute. p2panda bumps the counter by exactly one
+/// immediately before emitting the event, so the counter *changing* is the
+/// signal and its magnitude is noise. Returning at most one per event makes
+/// `live <= received` true by construction rather than by argument — and an
+/// impossible number is one nobody can reason from, which is how two of those
+/// three were believed.
 ///
-/// A drop means a new session reusing the id, so the new value is the count.
-fn count_live(
+/// * zero — this session has taken no live operation, so this is catch-up;
+/// * unchanged — the session took one earlier, but not this one;
+/// * changed, or first seen non-zero — this one.
+fn is_live(
     seen: &mut std::collections::HashMap<Session, u32>,
     session: Session,
     received_live: u32,
-) -> usize {
+) -> bool {
+    // Unambiguous: the live counter cannot have been bumped for this operation.
+    if received_live == 0 {
+        return false;
+    }
     // **FAIL TOWARDS UNDERCOUNTING.** Sessions are forgotten when they end, so
     // this cap should never be reached; if it is, something is already wrong.
-    // Refusing a new baseline reports fewer pushes than happened, which causes
-    // an investigation. Clearing the map instead would report the next
-    // session's whole running total as new — over-reporting, which HIDES a
-    // broken transport. That is the mistake this counter has already made
-    // twice, and it is the one that costs a day.
+    // Reporting fewer pushes than happened sends somebody to look. Inventing
+    // them HIDES a broken transport, which is the mistake this has already
+    // made three times.
     if !seen.contains_key(&session) && seen.len() >= KEEP_SESSIONS {
-        return 0;
+        return false;
     }
-    let previous = seen.insert(session, received_live).unwrap_or(0);
-    if received_live >= previous {
-        (received_live - previous) as usize
-    } else {
-        // The counter went backwards, so this is a different session wearing a
-        // recycled id: everything it reports is new.
-        received_live as usize
-    }
+    seen.insert(session, received_live) != Some(received_live)
 }
 
 /// A subject is named by its hex public key; log sync wants the key itself.
@@ -608,59 +610,54 @@ fn subject_key(subject: &str) -> Result<VerifyingKey> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_live, Session, KEEP_SESSIONS};
+    use super::{is_live, Session, KEEP_SESSIONS};
     use std::collections::HashMap;
 
     fn session(topic: u8, peer: u8, id: u64) -> Session {
         ([topic; 32], [peer; 32], id)
     }
 
-    /// A LIVE COUNT THAT COUNTS CATCH-UP IS WORSE THAN NO LIVE COUNT.
+    /// CATCH-UP AFTER A PUSH IS NOT A PUSH.
     ///
-    /// **THIS IS THE RULE THAT WAS WRONG ON A PHONE.** The first version asked
-    /// `received_live_operations > 0`, which is a fact about the *session*, not
-    /// about the operation in hand. A follower reported 1,052 live arrivals out
-    /// of 1,059 while its only peer had pushed one — so the number that exists
-    /// to prove the transport works was proving it by accident, which is the
-    /// same failure shape as the defect it was added to detect.
+    /// **THE FIRST WRONG VERSION.** It asked `received_live_operations > 0`,
+    /// which is a fact about the *session*, not about the operation in hand, so
+    /// once a session had taken one push every later catch-up operation on it
+    /// looked pushed too. A follower reported 1,052 live of 1,059 received
+    /// while its only peer had pushed one.
     #[test]
     fn catch_up_after_a_push_is_not_a_push() {
         let mut seen = HashMap::new();
         let s = session(1, 1, 7);
         for _ in 0..1_000 {
-            assert_eq!(count_live(&mut seen, s, 0), 0);
+            assert!(!is_live(&mut seen, s, 0), "catch-up before any push counted");
         }
-        assert_eq!(count_live(&mut seen, s, 1), 1);
+        assert!(is_live(&mut seen, s, 1));
         // The session re-syncs and delivers fifty more by catch-up. The
-        // cumulative metric still says 1, and none of these are live.
+        // cumulative metric still reads 1, and none of these are live.
         for _ in 0..50 {
-            assert_eq!(count_live(&mut seen, s, 1), 0, "catch-up counted as a push");
+            assert!(!is_live(&mut seen, s, 1), "catch-up after a push counted");
         }
-        assert_eq!(count_live(&mut seen, s, 2), 1);
+        assert!(is_live(&mut seen, s, 2));
     }
 
     /// TWO TOPICS DO NOT RE-COUNT EACH OTHER'S TOTALS.
     ///
     /// **THE SECOND WRONG VERSION, AND THE PHONE SAID SO IN ARITHMETIC.** Keyed
-    /// on `session_id` alone this reported 17,128 live arrivals out of 8,103
-    /// operations received — not merely wrong but impossible. A replicator
-    /// streams a topic per subject and each manager numbers its own sessions,
-    /// so two topics run sessions numbered alike; interleaved, every switch
-    /// reads as a session starting over and counts the whole running total
-    /// again.
+    /// on `session_id` alone it reported 17,128 live of 8,103 received — not
+    /// merely wrong but impossible. A replicator streams a topic per subject
+    /// and each manager numbers its own sessions, so two topics run sessions
+    /// numbered alike.
     #[test]
     fn sessions_numbered_alike_on_different_topics_are_different_sessions() {
         let mut seen = HashMap::new();
         let (a, b) = (session(1, 9, 4), session(2, 9, 4));
-        assert_eq!(count_live(&mut seen, a, 1), 1);
-        assert_eq!(count_live(&mut seen, b, 1), 1, "the second topic started at its own zero");
-        // Interleaved, each only counts its own increase.
-        for n in 2..20u32 {
-            assert_eq!(count_live(&mut seen, a, n), 1);
-            assert_eq!(count_live(&mut seen, b, n), 1);
+        for n in 1..20u32 {
+            assert!(is_live(&mut seen, a, n), "topic a lost a push at {n}");
+            assert!(is_live(&mut seen, b, n), "topic b lost a push at {n}");
         }
-        let total: u32 = 19 + 19;
-        assert_eq!(total, 38, "two topics, nineteen pushes each");
+        // And interleaving does not make either of them count twice.
+        assert!(!is_live(&mut seen, a, 19));
+        assert!(!is_live(&mut seen, b, 19));
     }
 
     /// AND NEITHER DO TWO PEERS ON ONE TOPIC.
@@ -670,46 +667,56 @@ mod tests {
     fn peers_do_not_borrow_each_others_counts() {
         let mut seen = HashMap::new();
         let (a, b) = (session(3, 1, 2), session(3, 2, 2));
-        assert_eq!(count_live(&mut seen, a, 1), 1);
-        assert_eq!(count_live(&mut seen, b, 1), 1);
-        assert_eq!(count_live(&mut seen, a, 2), 1);
-        assert_eq!(count_live(&mut seen, b, 2), 1);
+        assert!(is_live(&mut seen, a, 1));
+        assert!(is_live(&mut seen, b, 1));
+        assert!(!is_live(&mut seen, a, 1));
+        assert!(is_live(&mut seen, a, 2));
     }
 
-    /// A RESTARTED SESSION DOES NOT LOSE ITS PUSHES.
+    /// ONE EVENT NEVER COUNTS AS MORE THAN ONE OPERATION.
     ///
-    /// A counter that went backwards is a session starting over, not a negative
-    /// number of operations. Saturating to zero would undercount silently for
-    /// the life of the new session.
+    /// **THE THIRD WRONG VERSION, AND THE REASON THIS RETURNS A BOOLEAN.** It
+    /// returned the delta, and its "the session started over" branch returned
+    /// the whole cumulative value — so a baseline going missing mid-flight
+    /// added hundreds at once. On a phone: 5,245 live of 3,322 received.
+    ///
+    /// p2panda bumps the counter by exactly one immediately before emitting the
+    /// event, so its magnitude carries no information this needs. Refusing to
+    /// return more than one per event is what makes `live <= received` true by
+    /// construction instead of by argument.
     #[test]
-    fn a_session_id_that_starts_over_starts_over() {
+    fn a_session_that_reappears_with_a_high_count_adds_one_not_hundreds() {
         let mut seen = HashMap::new();
         let s = session(4, 4, 3);
-        assert_eq!(count_live(&mut seen, s, 9), 9);
-        assert_eq!(count_live(&mut seen, s, 2), 2, "a restarted session lost its pushes");
-        assert_eq!(count_live(&mut seen, s, 3), 1);
+        assert!(is_live(&mut seen, s, 9));
+        // Its baseline is dropped — the session ended, or was never seen.
+        seen.remove(&s);
+        // A cumulative counter of 500 is still one operation arriving.
+        assert!(is_live(&mut seen, s, 500));
+        assert_eq!(seen.get(&s), Some(&500));
+        // And a restart that runs the counter backwards is also one operation.
+        assert!(is_live(&mut seen, s, 2));
+        assert!(!is_live(&mut seen, s, 2));
     }
 
     /// THE BASELINE MAP IS BOUNDED, AND OVERFLOWS TOWARDS SILENCE.
     ///
     /// **THE DIRECTION MATTERS MORE THAN THE CAP.** Refusing new baselines
-    /// reports fewer pushes than happened, which causes somebody to go and
-    /// look. Clearing the map instead would report the next session's whole
-    /// running total as new — over-reporting, which HIDES a broken transport.
-    /// This counter has already over-reported twice; it must not be able to a
-    /// third time.
+    /// reports fewer pushes than happened, which sends somebody to look.
+    /// Inventing them would report a broken transport as a working one — the
+    /// mistake this has already made three times.
     #[test]
     fn a_full_baseline_map_undercounts_rather_than_inventing() {
         let mut seen = HashMap::new();
         for i in 0..KEEP_SESSIONS as u64 {
-            assert_eq!(count_live(&mut seen, session(0, 0, i), 1), 1);
+            assert!(is_live(&mut seen, session(0, 0, i), 1));
         }
         assert_eq!(seen.len(), KEEP_SESSIONS);
-        // A session beyond the cap is not counted, and does not evict anybody.
-        assert_eq!(count_live(&mut seen, session(0, 0, 9_999), 500), 0);
+        // A session beyond the cap is not counted, and evicts nobody.
+        assert!(!is_live(&mut seen, session(0, 0, 9_999), 500));
         assert_eq!(seen.len(), KEEP_SESSIONS, "the cap evicted a live session's baseline");
-        // And a session already known still counts, cap or no cap.
-        assert_eq!(count_live(&mut seen, session(0, 0, 0), 2), 1);
+        // A session already known still counts, cap or no cap.
+        assert!(is_live(&mut seen, session(0, 0, 0), 2));
     }
 
     /// THE EVENT LOG DOES NOT GROW FOR EVER.
