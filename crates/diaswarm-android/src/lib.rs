@@ -2151,6 +2151,29 @@ fn newest_profile(body: &str) -> Option<String> {
     newest_of_kind(body, "profile")
 }
 
+/// Who in the pool has announced holding this subject, one node id per line.
+///
+/// **THE POOL'S WHOLE POINT, AND UNREADABLE UNTIL NOW.** D15 says any holder
+/// serves identical bytes, so a follower whose subject is asleep should be able
+/// to read from somebody else — and whether anybody else is there has never
+/// been visible from a phone. When a follower sat in a pool of one all morning,
+/// this is the call that would have said so in a line.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmHoldersHeard<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    subject_hex: JString<'a>,
+) -> JString<'a> {
+    if handle == 0 {
+        return to_jstring(env, String::new());
+    }
+    let Ok(subject) = env.get_string(&subject_hex) else { return to_jstring(env, String::new()) };
+    let subject = String::from(subject).to_ascii_lowercase();
+    let pooled = unsafe { &*(handle as *const Pooled) };
+    to_jstring(env, pooled.swarm.holders_heard(&subject).join("\n"))
+}
+
 /// The last `limit` sync events, newest last, one per line.
 ///
 /// **THE REPLICATOR HAS KEPT THESE ALL ALONG AND NOTHING COULD READ THEM.** Its
@@ -3584,6 +3607,85 @@ mod shadow_tests {
             held = fields["held"].parse().unwrap();
         }
         assert_eq!(held, 72, "the day did not accumulate across flushes");
+    }
+
+    /// A DIAGNOSTIC NOTHING CAN READ IS NOT A DIAGNOSTIC.
+    ///
+    /// **THE MOST EXPENSIVE LESSON OF 2026-09-14.** The replicator recorded
+    /// every sync event from the day it was written, with a comment saying why
+    /// — "nothing replicated" has several very different causes — and no JNI
+    /// ever exposed it. So a replication problem on a phone could only be
+    /// reasoned about from the outside, and one afternoon produced three
+    /// contradictory diagnoses from four samples each before anyone thought to
+    /// look at what the code already knew. `verify_control_chain` and
+    /// `swarmTick` were the same pattern in other layers.
+    ///
+    /// A function whose name promises to report state, and which no app can
+    /// reach, is a question that cannot be asked at the only moment it matters.
+    /// So they are listed, and a new one has to be either wired up or written
+    /// down here with the reason it is unreachable.
+    ///
+    /// This is a naming heuristic and it will miss things. It is still better
+    /// than the alternative, which today was noticing on the fourth guess.
+    #[test]
+    fn diagnostics_can_be_read_from_a_phone() {
+        // Unreachable on purpose, with the reason.
+        const NOT_WIRED: &[(&str, &str)] = &[
+            ("verify", "the inner helper; verify_own_chain is what the JNI calls"),
+            ("verify_chain", "same — reached through verify_own_chain"),
+            ("verifying", "an Identity accessor, not a report"),
+            ("message", "a Grant accessor, not a report"),
+        ];
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut names: Vec<String> = Vec::new();
+        for krate in ["../diaswarm-net/src", "../diaswarm-keys/src", "../diaswarm-core/src"] {
+            let Ok(entries) = std::fs::read_dir(root.join(krate)) else { continue };
+            for e in entries.filter_map(|e| e.ok()) {
+                let Ok(text) = std::fs::read_to_string(e.path()) else { continue };
+                for line in text.lines() {
+                    let t = line.trim();
+                    let Some(rest) = t
+                        .strip_prefix("pub fn ")
+                        .or_else(|| t.strip_prefix("pub async fn "))
+                    else {
+                        continue;
+                    };
+                    let name: String =
+                        rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                    if !name.is_empty() {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+
+        // Names that promise to report something a person would want at 3am.
+        const REPORTS: &[&str] = &[
+            "report", "status", "events", "stats", "metrics", "health", "verify", "heard", "seen",
+        ];
+        let jni = std::fs::read_to_string(root.join("src/lib.rs")).expect("lib.rs");
+
+        let mut unreachable: Vec<String> = names
+            .into_iter()
+            .filter(|n| REPORTS.iter().any(|r| n.contains(r)))
+            .filter(|n| !NOT_WIRED.iter().any(|(d, _)| d == n))
+            // BOTH CALL SHAPES. The first version matched only `.name(` and
+            // reported `verify_control_chain` as unreachable when the JNI calls
+            // it as a free function, `auth::verify_control_chain(...)`. A guard
+            // that cries wolf gets an entry added to NOT_WIRED to shut it up,
+            // which is how a guard stops guarding.
+            .filter(|n| !jni.contains(&format!(".{n}(")) && !jni.contains(&format!("::{n}(")))
+            .collect();
+        unreachable.sort();
+        unreachable.dedup();
+
+        assert!(
+            unreachable.is_empty(),
+            "these report state and no app can read them: {unreachable:?}\n\
+             A diagnostic nothing can reach is a question that cannot be asked at \n\
+             the only moment it matters. Wire it up, or add it to NOT_WIRED with a reason."
+        );
     }
 
     /// EVERY JNI DECLARATION IS EITHER CALLED, OR ON THE LIST OF ONES THAT ARE NOT.

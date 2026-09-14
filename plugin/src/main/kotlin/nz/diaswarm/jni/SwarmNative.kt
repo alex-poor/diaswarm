@@ -628,6 +628,15 @@ object SwarmNative {
      * read them — so every diagnosis of replication on a phone has been
      * guesswork from outside. Answers when a sync happened and what came of it.
      */
+    /**
+     * Who in the pool has announced holding this subject, one per line.
+     *
+     * D15's promise is that any holder serves identical bytes, so a subject
+     * whose phone is asleep can still be read from somebody else. Whether
+     * anybody else is there has never been visible from a phone.
+     */
+    external fun swarmHoldersHeard(handle: Long, subject: String): String
+
     external fun keysSyncEvents(handle: Long, limit: Long): String
 
     external fun keysRestreamIfQuiet(handle: Long, quietSeconds: Long): Long

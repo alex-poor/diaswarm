@@ -2022,3 +2022,39 @@ different fixes and the logs so far cannot separate them.
 the gossip mesh never forming, a topic mismatch between peers, or connections
 dropping before live can carry anything. Now readable rather than guessable,
 which is the whole difference.
+
+### 🛡️ A diagnostic nothing can read is not a diagnostic
+
+The most expensive lesson of the day, made automatic so it is not left to
+anybody's judgement.
+
+The replicator recorded every sync event from the day it was written, with a
+comment explaining why — "nothing replicated" has several very different
+causes — and no JNI ever exposed it. So replication on a phone could only be
+reasoned about from outside, and one afternoon produced **three contradictory
+diagnoses from four samples each** before anyone looked at what the code already
+knew. `swarmTick` and `verify_control_chain` were the same pattern in other
+layers, found the same way: by accident, expensively.
+
+`diagnostics_can_be_read_from_a_phone` fails if a function whose name promises
+to report state — `report`, `status`, `events`, `metrics`, `health`, `verify`,
+`heard`, `seen` — cannot be reached from the JNI. Anything genuinely internal
+goes on a list with a reason.
+
+It caught two things immediately:
+
+- **`holders_heard`** — who else in the pool has this subject. D15's whole
+  promise is that any holder serves identical bytes, so a subject whose phone is
+  asleep can still be read from somebody else; whether anybody else was there
+  had never been visible. When a follower sat in a pool of one all morning, this
+  is the line that would have said so.
+- **its own blind spot** — it reported `verify_control_chain` unreachable
+  because it only matched `.name(` and the JNI calls it as a free function. A
+  guard that cries wolf gets silenced by an entry on the exemption list, which
+  is how a guard stops guarding, so the check was fixed rather than the list.
+
+Mutation-checked against the defect that motivated it: hiding the sync event log
+makes it fail with `these report state and no app can read them: ["events"]`.
+
+It is a naming heuristic and it will miss things. It is still better than what
+happened today, which was noticing on the fourth guess.
