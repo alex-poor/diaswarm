@@ -2872,3 +2872,61 @@ lines. Gradle had in fact failed — `ANDROID_NDK_HOME is not set`, because
 the APK was still the previous night's, and its manifest still said `dataSync`.
 Checking the *binary* rather than the source is what caught it. A six-hour soak
 would otherwise have run against an unchanged app and reported success.
+
+### 🐛 A desktop peer catches up once and then never again
+
+Found 2026-09-15 by running `diaswarm-peer` on a laptop for longer than the five
+minutes it had ever run before, and asking the obvious question: the loop phone
+seals every minute, so why is the count static?
+
+**What a healthy-looking peer was actually doing:**
+
+```
+pool 4 · carrying 5 (+0) · holding 1739 · pushes not yet · 6.2 MB · STALLED 3 passes
+    sync: SyncFinished { … received_sync_operations: 10, received_live_operations: 0 } from d4dd64f2
+    sync: LiveModeStarted from d4dd64f2
+    sync: SyncFinished { … received_sync_operations: 10, received_live_operations: 0 } from d4dd64f2
+    sync: LiveModeStarted from d4dd64f2      ← identical, every pass
+```
+
+1. **It syncs with exactly one peer, `d4dd64f2` — which is Ayni**, the follower
+   that publishes almost nothing. It never opens a session with `9eeeac47`, the
+   loop phone, which is the only peer producing data.
+2. **The same ten operations arrive every session.** `inbound_sync_bytes: 7215`
+   identical each time — a re-sync loop that never advances.
+3. **`received_live_operations: 0` on every session**, while `LiveModeStarted`
+   fires each time. Live mode starts and delivers nothing.
+
+Its 1,716 operations of the loop phone's log are all from *before* a restart, so
+a session with the publisher does happen at some point and then never recurs.
+
+**This is the receiving-side mirror of the defect that cost two sessions.** The
+original was a publisher that never called `SyncHandle::publish`; this is a
+subscriber that starts live mode and receives nothing from it. Both present as
+healthy totals with no fresh data, which is the shape this project keeps
+producing and keeps failing to notice.
+
+**Why nobody saw it:** the desktop peer had run for five minutes, twice, in
+testing. A peer that catches up on connect looks perfect for five minutes.
+
+#### The diagnostic that was missing, now present
+
+`diaswarm-peer` printed `Replicator::received()` and nothing else. Three changes:
+
+* **`holding` comes from the store**, via `get_log_size` over carried subjects —
+  not from `received()`, which counts *store events* and therefore double-counts
+  while the D31 transition carries each subject at two topics. It read **3,400
+  against 1,729 actually held**, and a number twice the truth looks like health.
+* **`--events N`** prints the sync event log, and a stall prints it unprompted —
+  the diagnostic that took a day to build for the phones and was never wired
+  into the peer.
+* **A stall detector**, because "nothing new is arriving" cannot be seen in a
+  cumulative count and is the only thing that matters.
+
+⚠️ **Also observed and not investigated: 857 MB peak RSS, 537 MB swap** for a
+peer holding 6 MB, over twenty-one minutes (`systemd` accounting). That is its
+own problem and it is not this one.
+
+*Open. Root cause not established.* The next question is why a session with the
+publisher is not re-established, and why `LiveModeStarted` yields no live
+operations on this peer while the same code delivers them to Ayni.

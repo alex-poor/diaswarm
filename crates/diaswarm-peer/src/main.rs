@@ -25,6 +25,9 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use diaswarm_net::replicate::KeysReplicator;
 use diaswarm_net::swarm::Swarm;
+use p2panda_core::{Hash, VerifyingKey};
+use p2panda_store::logs::LogStore;
+use p2panda_store::SqliteStore;
 
 /// How often a pass runs.
 ///
@@ -76,6 +79,59 @@ struct Args {
     /// One JSON object per pass instead of a human-readable line.
     #[arg(long)]
     json: bool,
+
+    /// Print the last N sync events each pass.
+    ///
+    /// **THE DIAGNOSTIC THAT TOOK A DAY TO BUILD FOR THE PHONES AND WAS NOT
+    /// HERE.** "Nothing replicated" has several very different causes — no peer
+    /// found, a session that started and failed, a session that finished having
+    /// transferred nothing, live mode never starting — and they are
+    /// indistinguishable from a count that does not move. This peer stalled at
+    /// 1,716 operations while the publisher sealed every minute, and none of
+    /// the numbers printed said which of those it was.
+    #[arg(long, default_value_t = 0, value_name = "N")]
+    events: usize,
+}
+
+/// Operations actually in the store for the subjects this peer carries.
+///
+/// **NOT `Replicator::received()`, AND THE DIFFERENCE IS THE POINT.** That
+/// counter increments once per *store event*, so an operation arriving on two
+/// topics — which is exactly what the D31 transition does while it carries both
+/// the subject topic and the old bucket topic — counts twice. On this machine
+/// it read 3,400 against 1,729 actually held. A count that is roughly double
+/// the truth looks like health, which is the failure mode this project has been
+/// bitten by four times. Ask the store.
+async fn held(store: &SqliteStore, subjects: &[String]) -> u64 {
+    let mut total = 0u64;
+    for hex in subjects {
+        let Some(key) = decode_key(hex) else { continue };
+        for log_id in diaswarm_keys::wire::LOG_IDS {
+            let size = <SqliteStore as LogStore<
+                diaswarm_keys::wire::KeysOperation,
+                VerifyingKey,
+                u32,
+                u32,
+                Hash,
+            >>::get_log_size(store, &key, &log_id, None, None)
+            .await
+            .unwrap_or(None);
+            total += size.map(|(ops, _bytes)| ops as u64).unwrap_or(0);
+        }
+    }
+    total
+}
+
+/// A 64-character hex subject as a key.
+fn decode_key(s: &str) -> Option<VerifyingKey> {
+    if s.len() != 64 {
+        return None;
+    }
+    let mut b = [0u8; 32];
+    for (i, out) in b.iter_mut().enumerate() {
+        *out = u8::from_str_radix(s.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    VerifyingKey::from_bytes(&b).ok()
 }
 
 /// Where a peer keeps its state when nobody said.
@@ -168,29 +224,58 @@ async fn main() -> Result<()> {
         println!("  adopting up to {} new subject(s) a pass; it can read none of them", args.adopt);
     }
 
+    // A stall is only visible against what was held last time.
+    let mut was_held = 0u64;
+    let mut stalled_for = 0u32;
+
     loop {
         let tick = swarm.tick().await;
         let share =
             diaswarm_net::share::carry_share(&swarm, &replicator, &dir, &own, args.adopt).await;
         let bytes = disk_bytes(&dir);
+        let stored = held(&store, &replicator.carried()).await;
+        if stored > was_held {
+            stalled_for = 0;
+        } else if stored > 0 {
+            stalled_for += 1;
+        }
+        was_held = stored;
         match (tick, share) {
             (Ok(t), Ok(s)) => {
                 let pushed = replicator.live_received() > 0;
                 if args.json {
                     println!(
-                        r#"{{"pool":{},"buckets":{},"carrying":{},"adopted":{},"stored":{},"pushed":{},"bytes":{}}}"#,
-                        t.pool, t.buckets, s.carrying, s.adopted, replicator.received(), pushed, bytes
+                        r#"{{"pool":{},"buckets":{},"carrying":{},"adopted":{},"held":{},"store_events":{},"pushed":{},"bytes":{},"stalled_passes":{}}}"#,
+                        t.pool, t.buckets, s.carrying, s.adopted, stored,
+                        replicator.received(), pushed, bytes, stalled_for
                     );
                 } else {
                     println!(
-                        "pool {} · carrying {} (+{}) · {} operations · pushes {} · {}",
+                        "pool {} · carrying {} (+{}) · holding {} · pushes {} · {}{}",
                         t.pool,
                         s.carrying,
                         s.adopted,
-                        replicator.received(),
+                        stored,
                         if pushed { "yes" } else { "not yet" },
                         human(bytes),
+                        if stalled_for >= 3 {
+                            format!(" · STALLED {stalled_for} passes — nothing new is arriving")
+                        } else {
+                            String::new()
+                        },
                     );
+                }
+                // The events, when asked for, or unprompted once a stall is
+                // undeniable — because that is the moment somebody needs them.
+                if args.events > 0 || stalled_for == 3 {
+                    let all = replicator.events();
+                    let n = if args.events > 0 { args.events } else { 8 };
+                    for line in all.iter().rev().take(n).rev() {
+                        println!("    sync: {line}");
+                    }
+                    if all.is_empty() {
+                        println!("    sync: no session events recorded at all");
+                    }
                 }
             }
             // **SAY WHICH HALF FAILED.** A pass that could not reach the pool

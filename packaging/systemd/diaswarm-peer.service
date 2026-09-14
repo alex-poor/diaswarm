@@ -28,6 +28,13 @@ ExecStart=%h/.local/bin/diaswarm-peer
 Restart=on-failure
 RestartSec=30s
 
+# THE SAME DIRECTORY THE BINARY USES WHEN RUN BY HAND. An earlier version of
+# this file pointed the service at `%S` (~/.local/state) while
+# `diaswarm-peer` with no arguments defaults to ~/.local/share — so running it
+# both ways would have built two stores with two node identities, and the pool
+# would have seen two peers where there is one machine. Say the path once.
+Environment=XDG_DATA_HOME=%h/.local/share
+
 # IT CARRIES STRANGERS' CIPHERTEXT, SO GIVE IT AS LITTLE AS POSSIBLE. None of
 # this is required for it to work; all of it is cheap. If a line here ever
 # stops the peer starting, delete that line rather than the sandbox.
@@ -35,9 +42,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-# The one place it may write.
-ReadWritePaths=%S/diaswarm
-Environment=XDG_DATA_HOME=%S
+# The one place it may write. Must exist before the service starts.
+ReadWritePaths=%h/.local/share/diaswarm
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

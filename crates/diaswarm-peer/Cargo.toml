@@ -21,6 +21,8 @@ path = "src/main.rs"
 diaswarm-net = { path = "../diaswarm-net" }
 diaswarm-keys = { path = "../diaswarm-keys" }
 p2panda-core = "=0.7.1"
+# For asking the store what it actually holds, rather than trusting a counter.
+p2panda-store = { version = "=0.7.1", features = ["macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 anyhow = "1"
 # ARGUMENT PARSING IS NOT A THING TO HAND-ROLL. The first version of this had

@@ -937,6 +937,7 @@ dependencies = [
  "diaswarm-keys",
  "diaswarm-net",
  "p2panda-core",
+ "p2panda-store",
  "tokio",
 ]
 
