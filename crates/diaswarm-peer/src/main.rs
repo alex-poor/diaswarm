@@ -56,11 +56,12 @@ struct Args {
     /// (D30: if you read it, you carry it), and subjects you follow are always
     /// carried. What `0` switches off is generosity.
     ///
-    /// Think twice before using it. A carrier announces what it holds, so
-    /// carrying for strangers is what keeps "P holds Y" ambiguous between
-    /// following Y and merely holding it. A pool where everyone passed `0`
-    /// would publish who reads whom. `0` is for a research gateway, which must
-    /// not hold history it was never granted (D5).
+    /// Think twice before using it. Not for secrecy of the data — that is
+    /// encryption's job, and a carrier can open none of what it holds — but
+    /// because carrying for strangers is what keeps "P holds Y" ambiguous
+    /// between following Y and merely holding it. A pool where everyone passed
+    /// `0` would publish who reads whom. `0` is for a research gateway, which
+    /// must not hold history it was never granted (D5).
     #[arg(long, default_value_t = 4, value_name = "N")]
     adopt: usize,
 

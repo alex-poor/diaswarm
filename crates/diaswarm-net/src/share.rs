@@ -50,11 +50,16 @@ pub struct Share {
 /// policy: a reader reads from its own store, and `carry` is what puts anything
 /// there. You cannot read a log you do not hold.
 ///
-/// Generosity is the *privacy* mechanism for that rule, which is the part that
-/// is easy to miss. A carrier announces what it holds, so a reader that must
-/// carry is a reader that must announce — and "P holds Y" only stays ambiguous
-/// between following Y and merely carrying it while somebody is doing the
-/// latter. A pool where everyone passed `0` would publish its own social graph.
+/// Generosity is also what keeps the *interest* leak bounded, which is easy to
+/// miss. A carrier announces what it holds, so a reader that must carry is a
+/// reader that must announce — and "P holds Y" only stays ambiguous between
+/// following Y and merely carrying it while somebody is doing the latter. A
+/// pool where everyone passed `0` would publish its own social graph.
+///
+/// **None of that is about reading.** The data is public ciphertext by design
+/// (D1) and holding is not reading: anyone may carry a subject and open none of
+/// it. What is at stake here is who is *interested* in whom, which D19 already
+/// accepted as visible.
 ///
 /// **`max_adopt` IS THE CALLER'S, AND `0` IS A REAL ANSWER** — it means "serve
 /// what I already hold and take on nothing new". A peer passing zero is still a

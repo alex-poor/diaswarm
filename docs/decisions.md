@@ -797,11 +797,10 @@ record. The thing the TODOs are about is the thing this decision removes.
 per record somewhere, which would mean the separation is less clean than both
 the API and those TODOs suggest.
 
-### D31 · The rendezvous is p2panda's job, and we took it back — two defects and a tension
+### D31 · A rendezvous that depends on a number nobody agrees on
 
 **Open, recorded 2026-09-14, not yet fixed.** Found by asking what happens with
-a million subjects and two million carriers. Nothing here bites at four peers,
-which is why none of it has been seen.
+a million subjects and two million carriers — and then observed at three.
 
 #### 1. The bug: a rendezvous that depends on a locally-guessed number
 
@@ -824,39 +823,46 @@ Two places in the tree already know:
   irrelevant to the *topics*, which include the depth and so share nothing. **The
   name overclaims a property the system does not have.**
 
-#### 2. The defect underneath it: p2panda topics are secrets, and ours are public
+#### 2. A deliberate divergence from p2panda's topic model, which should be written down
 
-From `p2panda-discovery`'s own documentation:
+⚠️ **An earlier version of this entry called this a "defect" and claimed the
+social-graph leak was "self-inflicted". That was wrong and is corrected here.**
+The correction, in the user's words: *"encrypted data is publicly accessible,
+anyone can hold it. in fact we are trying to encourage people to. confidentiality
+is that only specified people can actually DEcrypt data with a relevant grant."*
 
-> *"A topic in p2panda is a **secret, randomly-generated hash** that plays a
+That is [D1](#d1--records-are-public-ciphertext-not-private-and-pull-only), and
+it is right. Public topics cost this design **nothing** in data confidentiality:
+holding is not reading, a topic anyone can compute is exactly how a volunteer
+knows what to carry, and [D30](#d30--if-you-read-it-you-carry-it--ayni-as-an-invariant)
+wants as many holders as possible.
+
+**What is still worth recording is that we diverge from upstream's model, and
+why** — because nobody had, and the next person to read `p2panda-discovery` will
+hit the same surprise:
+
+> *"A topic in p2panda is a **secret**, randomly-generated hash that plays a
 > similar role to a shared symmetric key … a topic should never be leaked to
 > people outside of the intended group."* Discovery uses Private Set
-> Intersection so that *"nodes will only ever exchange data when both parties
-> have proven their knowledge of the same topic."*
+> Intersection so nodes *"only ever exchange data when both parties have proven
+> their knowledge of the same topic."*
 
-**Every diaswarm topic is derived from public data.** `bucket_of(subject_hex,
-depth)` where the subject key is in every invite; the presence topic is a
-constant. So anyone who can name a subject can compute its topic, join it, and
-watch — and the PSI machinery protecting topic confidentiality protects nothing,
-because the secret is guessable by construction.
+p2panda's model suits a private document shared by a known group, where
+**interest is the secret**. Diaswarm's topics are derived from public subject
+keys, so PSI runs and buys nothing. That is a deliberate consequence of D1 and
+not an accident — but it means:
 
-**This is a large part of the leak [D18](#d18--peers-tell-each-other-who-holds-what-and-that-publishes-the-follower-set)
-was retired over and [D28](#d28--the-pool-carries-keys-logs-too-and-announcing-them-is-only-safe-because-it-does)
-and [D30](#d30--if-you-read-it-you-carry-it--ayni-as-an-invariant) accepted as a
-cost — and it may be self-inflicted rather than inherent.** Upstream offers
-confidential topic discovery; this project opted out of it without deciding to.
-
-#### 3. The tension that makes it non-trivial, stated so nobody solves two thirds of it
-
-| want | needs a topic that is |
-|---|---|
-| **generosity** — strangers carry your ciphertext | **public**, or a volunteer cannot compute what to hold |
-| **confidentiality** — who reads whom stays private | **secret**, which is p2panda's whole model |
-| **reciprocity** ([D30](#d30--if-you-read-it-you-carry-it--ayni-as-an-invariant)) — readers must carry | readers present in the topic either way |
-
-**One topic cannot be both public and secret, so one topic cannot serve all
-three.** Every previous discussion of this leak treated it as the price of a
-swarm; it is more precisely the price of using *one* topic for two jobs.
+* **the PSI machinery is inert here**, and should not be counted as protection
+  in any threat model or README claim;
+* **the residual cost is interest privacy** — who reads whom — which is
+  [D19](#d19--the-pool-is-the-only-way-peers-find-each-other)'s accepted leak,
+  already partially mitigated by generosity keeping "P holds Y" ambiguous
+  ([D28](#d28--the-pool-carries-keys-logs-too-and-announcing-them-is-only-safe-because-it-does)).
+  It is a cost already booked, not a new one;
+* **if interest privacy is ever wanted**, it cannot come from p2panda's secret
+  topics without excluding the volunteers generosity depends on — so it would
+  need a different mechanism, and that is a real open question rather than a
+  defect to fix.
 
 #### What the fix looks like, and it is less bespoke rather than more
 
@@ -868,13 +874,14 @@ direction the standing preference points at:
   subject is exactly p2panda's idiomatic model — an identifier for a set of
   data — and has no pool-size parameter to disagree about. It deletes the depth
   bug rather than working around it.
-* **Make that topic a secret if it can be.** [D13](#d13--the-grant-log-names-nobody)
-  already derives an unlinkable tag from the subject/reader shared secret so the
-  grant log names nobody. The same construction would give subject and readers a
-  topic nobody else can compute, and PSI would then do what it was built for.
-  **The open question is whether strangers can still carry it** — under D30 that
-  is what keeps holding ambiguous, and a secret topic excludes exactly the
-  volunteers generosity depends on.
+* **And it stays public, deliberately.** An earlier draft suggested deriving it
+  from the subject/reader shared secret the way [D13](#d13--the-grant-log-names-nobody)
+  derives grant tags. That would be a mistake here: a topic only the granted can
+  compute is a topic no volunteer can carry, which trades
+  [D30](#d30--if-you-read-it-you-carry-it--ayni-as-an-invariant)'s generosity —
+  and with it the redundancy the whole design is for — for interest privacy that
+  [D19](#d19--the-pool-is-the-only-way-peers-find-each-other) already decided not
+  to buy. Public ciphertext wants public rendezvous.
 * **Buckets keep the job [D21](#d21--replication-is-p2panda-log-sync-over-the-pools-own-topics)
   justified them for** — dividing unknown subjects among volunteers — and stop
   being how a reader finds somebody it already knows.
