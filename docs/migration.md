@@ -1890,3 +1890,43 @@ sitting on the publisher all along.
 subscription object exists, not that bytes are moving — which is precisely the
 distinction this project keeps being caught by. The honest signal is the same
 one as everywhere else: did a record actually arrive.
+
+### 🔭 And the signal that would have caught it a minute in
+
+The stall was found by somebody glancing at a phone. Nothing in the app noticed,
+because nothing in the app was measuring the right thing — `keys carrying 2
+log(s)` reports that a subscription object exists, and printed faithfully
+throughout.
+
+So the pass asks the question the hero card asks, once a pass:
+
+```
+keys newest for 552f688a: 188s old
+keys newest for 552f688a: 134s old
+```
+
+Falling, so replication is healthy. Rising past ten minutes is a stall — a CGM
+produces a reading a minute, so ten minutes of silence is not a slow network —
+and the remedy is already known, because a force-stop fixed it in one pass.
+`Endpoint.restart` does the same without the user being involved.
+
+Two judgement calls worth stating:
+
+- **Ten minutes** before calling it. Being wrong costs a reconnect; being eager
+  costs one every pass.
+- **Fifteen minutes minimum between reconnects**, persisted across process
+  restarts, because a rate limit that forgets itself on restart is not a rate
+  limit. A subject whose phone is simply off produces *identical* silence, and
+  reconnecting every two minutes for somebody asleep would be this app making
+  its own weather.
+
+⚠️ **The trigger has not fired in anger.** Detection is proven and the remedy is
+proven; the condition joining them has not yet been met, because nothing has
+been stale for ten minutes since it was written. Manufacturing a stall means
+toggling the network on the phone that drives a pump, which is not worth it —
+the next real one will exercise it, and now it is visible either way.
+
+**Fourth time today a proxy lied and the outcome measure told the truth:** the
+socket count wrong twice, `relay=connected(1)` with no socket, `keys carrying 2`
+for eleven silent minutes. The only signal that has never misled is whether a
+record actually arrived.
