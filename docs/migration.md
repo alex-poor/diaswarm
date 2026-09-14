@@ -3021,3 +3021,33 @@ the binary without the change.
 **Nothing in points 1–3 depends on that experiment.** They are read from
 upstream source and stand on their own; the view sizing remains a plausible
 contributor and an unproven one.
+
+### ✅ CLOSED — the keys vault delivers off-LAN, 2026-09-15 10:02
+
+Listed as open in the handover: *"Nothing is measured off-LAN on the fixed
+build. The relay path was proven on 2026-09-14 for the **core** vault; the keys
+vault's live push has only ever been seen on one wifi."*
+
+The loop phone's wifi was switched off at 10:01:57. The laptop peer, on home
+wifi, carrying that subject explicitly:
+
+```
+10:01:57  holding 1833   ← wifi off
+10:02:57  holding 1834
+10:04:57  holding 1835
+10:05:57  holding 1836     pushes yes throughout, no STALLED
+```
+
+Unchanged rate, roughly one operation a minute, matching the publisher's seal
+cadence. The operations that grew are `b6b573c6…`, the loop phone's own keys
+subject — not another peer's.
+
+**And it is a cleaner test than it was meant to be.** The loop phone dropped off
+adb over USB during the window, so there was no local channel left that could be
+mistaken for the relay: phone on mobile data, laptop on home wifi, no shared
+network, no mDNS, data still arriving.
+
+⚠️ **One thing not independently verified:** the phone's own network state, for
+the same reason — adb was gone. The evidence is the user switching wifi off, the
+delivery continuing at an unchanged rate, and the arriving operations belonging
+to that phone's subject.
