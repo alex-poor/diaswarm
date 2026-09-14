@@ -1,0 +1,35 @@
+[package]
+name = "diaswarm-peer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "An always-on diaswarm pool member for a machine that does not sleep"
+license = "AGPL-3.0-only"
+
+# ITS OWN CRATE, AND THE REASON IS THE VERSION NUMBER. This used to be a bin
+# inside `diaswarm-net` alongside `keyspeer`, `keyswatch` and `poolpeer`, which
+# are test instruments — they run for N seconds, print JSON for a test to read,
+# and exit. This is the one that is meant to be downloaded and left running, so
+# it needs a version somebody can quote in a bug report, and a release artifact
+# has to come from something with a version of its own.
+
+[[bin]]
+name = "diaswarm-peer"
+path = "src/main.rs"
+
+[dependencies]
+diaswarm-net = { path = "../diaswarm-net" }
+diaswarm-keys = { path = "../diaswarm-keys" }
+p2panda-core = "=0.7.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+anyhow = "1"
+# ARGUMENT PARSING IS NOT A THING TO HAND-ROLL. The first version of this had
+# its own `fn arg(args, name)` and no `--help` and no `--version`, which is
+# three bespoke things where one dependency does the job — and the standing
+# preference in this project is explicit about that trade.
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

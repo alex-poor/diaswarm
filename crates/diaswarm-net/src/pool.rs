@@ -250,11 +250,36 @@ mod tests {
     /// A coarser peer is a superset of a finer one, so disagreeing about pool
     /// size costs storage rather than losing a subject.
     #[test]
-    fn a_bucket_is_a_prefix_so_depth_disagreement_is_survivable() {
+    fn a_bucket_is_a_prefix_of_the_next_depth_down() {
         for s in subjects(100) {
             let coarse = bucket_of(&s, 6);
             let fine = bucket_of(&s, 7);
             assert_eq!(fine >> 1, coarse, "depth 7 is not a refinement of depth 6");
+        }
+    }
+
+    /// AND THE PREFIX PROPERTY BUYS NOTHING AT THE RENDEZVOUS.
+    ///
+    /// **THIS TEST EXISTS BECAUSE THE ONE ABOVE USED TO BE CALLED
+    /// `a_bucket_is_a_prefix_so_depth_disagreement_is_survivable`**, which
+    /// claimed a property the system does not have. Bucket *numbers* refine
+    /// cleanly; bucket *topics* hash the depth in, so two peers that disagree
+    /// about pool size by one derive unrelated 32-byte values and never meet.
+    /// At four peers everyone guesses the same depth and it has never shown.
+    /// See [D31](../../docs/decisions.md) — a granted reader that guesses wrong
+    /// cannot find its subject at all.
+    ///
+    /// Asserting the disagreement rather than the hope, so the next person to
+    /// read this file is not reassured by a name.
+    #[test]
+    fn neighbouring_depths_are_unrelated_topics_which_is_the_problem() {
+        for s in subjects(20) {
+            let a = bucket_topic(6, bucket_of(&s, 6));
+            let b = bucket_topic(7, bucket_of(&s, 7));
+            assert_ne!(
+                a, b,
+                "if these were equal the depth would not matter and D31 would not exist"
+            );
         }
     }
 

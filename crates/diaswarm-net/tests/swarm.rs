@@ -165,8 +165,23 @@ async fn a_follower_survives_the_subject_leaving_without_a_second_address() {
             break;
         }
     }
+    // D31 PROBE: did the three peers agree what depth the pool is at? A bucket
+    // topic hashes the depth in, so peers that disagree are in unrelated topics
+    // and no announcement crosses. Printed either way, so a pass is evidence too.
+    let (dp, dr, df) = (
+        publisher.tick().await.map(|t| (t.pool, t.depth)).unwrap_or((0, 99)),
+        relay.tick().await.map(|t| (t.pool, t.depth)).unwrap_or((0, 99)),
+        follower.tick().await.map(|t| (t.pool, t.depth)).unwrap_or((0, 99)),
+    );
+    println!("  D31 probe — publisher {dp:?}  relay {dr:?}  follower {df:?}  (pool, depth)");
     assert!(relay_holds, "the relay never took a copy, so there is nothing to fall back to");
-    assert!(heard_relay, "the follower never heard that the relay holds {}", &subject_hex[..16]);
+    assert!(
+        heard_relay,
+        "the follower never heard that the relay holds {}. Depths seen: publisher {:?}, \
+         relay {:?}, follower {:?} — if those differ, see D31: the bucket topic hashes \
+         the depth, so peers that disagree about pool size never share a topic",
+        &subject_hex[..16], dp, dr, df
+    );
 
     // --- the subject's phone goes away ---
     drop(publisher);

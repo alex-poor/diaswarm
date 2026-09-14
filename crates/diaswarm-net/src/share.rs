@@ -42,6 +42,20 @@ pub struct Share {
 
 /// Carry this peer's share: its own subject, what it follows, and strangers.
 ///
+/// **RECIPROCITY IS THE MANDATORY PART, AND IT IS NOT THE BUDGET.**
+/// [D30](../../docs/decisions.md): if you read it, you carry it. Follows are
+/// added here *unconditionally* — `max_adopt` gates only the generous half,
+/// carrying for strangers. A reader that serves what it consumes is the rule
+/// the project is named after, and on this vault it is not even enforceable
+/// policy: a reader reads from its own store, and `carry` is what puts anything
+/// there. You cannot read a log you do not hold.
+///
+/// Generosity is the *privacy* mechanism for that rule, which is the part that
+/// is easy to miss. A carrier announces what it holds, so a reader that must
+/// carry is a reader that must announce — and "P holds Y" only stays ambiguous
+/// between following Y and merely carrying it while somebody is doing the
+/// latter. A pool where everyone passed `0` would publish its own social graph.
+///
 /// **`max_adopt` IS THE CALLER'S, AND `0` IS A REAL ANSWER** — it means "serve
 /// what I already hold and take on nothing new". A peer passing zero is still a
 /// full member: it announces and serves, so somebody it follows still gains a

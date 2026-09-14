@@ -797,6 +797,193 @@ record. The thing the TODOs are about is the thing this decision removes.
 per record somewhere, which would mean the separation is less clean than both
 the API and those TODOs suggest.
 
+### D31 · The rendezvous is p2panda's job, and we took it back — two defects and a tension
+
+**Open, recorded 2026-09-14, not yet fixed.** Found by asking what happens with
+a million subjects and two million carriers. Nothing here bites at four peers,
+which is why none of it has been seen.
+
+#### 1. The bug: a rendezvous that depends on a locally-guessed number
+
+`pool::bucket_topic` hashes `depth` into the topic, and `depth` comes from
+`depth_for(pool_members().len())` — **each peer's own estimate of how big the
+pool is.** Today everybody sees about three peers and computes 2, so everybody
+agrees by accident. At two million peers a node that has so far discovered ten
+computes 4 while the rest compute 21, and `bucket_topic(4, …)` and
+`bucket_topic(21, …)` are unrelated 32-byte values. **It joins a topic nobody
+else is in and never finds the subject it was granted.** The data exists, the
+key fits, and the reader cannot see it.
+
+Two places in the tree already know:
+
+* `bin/keyspeer.rs` carries its subject at **depths 0..=3**, commented as
+  removing *"it was listening to the wrong bucket"* from tests. A test-only
+  workaround for a production problem.
+* `pool.rs`'s test is named **`a_bucket_is_a_prefix_so_depth_disagreement_is_survivable`**
+  and proves `bucket_of(s,7) >> 1 == bucket_of(s,6)`. True of the *numbers* and
+  irrelevant to the *topics*, which include the depth and so share nothing. **The
+  name overclaims a property the system does not have.**
+
+#### 2. The defect underneath it: p2panda topics are secrets, and ours are public
+
+From `p2panda-discovery`'s own documentation:
+
+> *"A topic in p2panda is a **secret, randomly-generated hash** that plays a
+> similar role to a shared symmetric key … a topic should never be leaked to
+> people outside of the intended group."* Discovery uses Private Set
+> Intersection so that *"nodes will only ever exchange data when both parties
+> have proven their knowledge of the same topic."*
+
+**Every diaswarm topic is derived from public data.** `bucket_of(subject_hex,
+depth)` where the subject key is in every invite; the presence topic is a
+constant. So anyone who can name a subject can compute its topic, join it, and
+watch — and the PSI machinery protecting topic confidentiality protects nothing,
+because the secret is guessable by construction.
+
+**This is a large part of the leak [D18](#d18--peers-tell-each-other-who-holds-what-and-that-publishes-the-follower-set)
+was retired over and [D28](#d28--the-pool-carries-keys-logs-too-and-announcing-them-is-only-safe-because-it-does)
+and [D30](#d30--if-you-read-it-you-carry-it--ayni-as-an-invariant) accepted as a
+cost — and it may be self-inflicted rather than inherent.** Upstream offers
+confidential topic discovery; this project opted out of it without deciding to.
+
+#### 3. The tension that makes it non-trivial, stated so nobody solves two thirds of it
+
+| want | needs a topic that is |
+|---|---|
+| **generosity** — strangers carry your ciphertext | **public**, or a volunteer cannot compute what to hold |
+| **confidentiality** — who reads whom stays private | **secret**, which is p2panda's whole model |
+| **reciprocity** ([D30](#d30--if-you-read-it-you-carry-it--ayni-as-an-invariant)) — readers must carry | readers present in the topic either way |
+
+**One topic cannot be both public and secret, so one topic cannot serve all
+three.** Every previous discussion of this leak treated it as the price of a
+swarm; it is more precisely the price of using *one* topic for two jobs.
+
+#### What the fix looks like, and it is less bespoke rather than more
+
+Not decided, and deliberately not built in the session that found it. The
+direction the standing preference points at:
+
+* **Known subjects need a rendezvous, not a shard.** Sharding exists to divide
+  *unknown* work; a subject you were granted is known by key. A topic per
+  subject is exactly p2panda's idiomatic model — an identifier for a set of
+  data — and has no pool-size parameter to disagree about. It deletes the depth
+  bug rather than working around it.
+* **Make that topic a secret if it can be.** [D13](#d13--the-grant-log-names-nobody)
+  already derives an unlinkable tag from the subject/reader shared secret so the
+  grant log names nobody. The same construction would give subject and readers a
+  topic nobody else can compute, and PSI would then do what it was built for.
+  **The open question is whether strangers can still carry it** — under D30 that
+  is what keeps holding ambiguous, and a secret topic excludes exactly the
+  volunteers generosity depends on.
+* **Buckets keep the job [D21](#d21--replication-is-p2panda-log-sync-over-the-pools-own-topics)
+  justified them for** — dividing unknown subjects among volunteers — and stop
+  being how a reader finds somebody it already knows.
+* **Interim, compatible, cheap:** carry followed subjects at a *band* of depths,
+  which is what `keyspeer` does. It does not fix the model and it does stop a
+  reader silently failing to find its subject.
+
+#### ⚠️ And it is not a scaling concern — it is happening now, masked by retries
+
+Written above as "nothing here bites at four peers". **That was wrong, and a
+probe in `tests/swarm.rs` caught it on the first run:**
+
+```
+D31 probe — publisher (2, 1)   relay (2, 1)   follower (3, 2)   (pool, depth)
+```
+
+The publisher and relay had discovered two peers and computed depth 1. The
+follower had discovered three and computed depth 2. **At that instant they were
+in unrelated bucket topics**, so no `Holding` announcement could cross between
+them. The test passed anyway, because its loop retries until they converge.
+
+`a_follower_survives_the_subject_leaving_without_a_second_address` fails
+intermittently with *"the follower never heard that the relay holds …"*, which
+is what it looks like when they do not converge inside the loop's budget. That
+has presumably been read as ordinary flakiness.
+
+**So the depth disagreement is live at three peers, self-healing by luck, and
+the healing gets less likely as the pool grows** — because agreement requires
+every peer's estimate to land in the same bucket of `depth_for`, and there are
+more ways to disagree at 21 bits than at 1. The test's assertion now prints all
+three depths on failure, so the next occurrence names its own cause.
+
+*Blocks:* honest claims about pool behaviour above a handful of peers, and it is
+a live intermittent defect below that.
+
+### D30 · If you read it, you carry it — *ayni*, as an invariant
+
+**Settled 2026-09-14, and it is the principle the project is named after.** The
+user's words: *"if you READ data in any capacity/form/shape then you implicitly
+have to opt in to carry it as well."*
+
+`follower/src/main/res/values/strings.xml` has said so since the app was named:
+*Ayni* is Quechua for reciprocity — "your phone carries other people's sealed
+records so that yours are carried when your phone is off, and neither side can
+read what it holds." This entry promotes that from the app's name to a rule that
+holds for **every** reader, including institutional ones.
+
+**IT IS ALREADY STRUCTURAL ON THE VAULT BEING CUT OVER TO, WHICH IS THE WHOLE
+ARGUMENT.** A `diaswarm-keys` reader reads from its own local store
+(`keysGlucose` → `&v.store`), and the only thing that puts an operation there is
+`carry(topic, subject)` replicating it. **You cannot read a log you do not
+hold.** Reciprocity is not a policy bolted onto the transport; it is what log
+sync does.
+
+The vault being replaced is the opposite: `netRefresh` dials the subject and
+pulls on demand, so a `diaswarm-core` reader takes without giving and always
+could. **So the cutover converts reciprocity from an aspiration into a property**
+— which is an argument for [D26](#d26--drop-to-p2panda-encryption-and-keep-segments)
+that nobody had made.
+
+#### Two strengths, and only one of them is mandatory
+
+| | rule | status |
+|---|---|---|
+| **Reciprocity** | read a subject ⇒ carry **that subject** | **mandatory, and structural.** `carry_share` always includes follows, whatever the adopt budget |
+| **Generosity** | carry strangers too, a share of the pool | default (`--adopt 4`, plugin `2`), sizeable, may be `0` |
+
+**And the mandatory half has a property worth naming: popularity creates
+durability.** A subject with five readers has five holders of its log, without
+anybody arranging it. The people most likely to be read are the people whose
+availability matters most, and they get it automatically. Most systems degrade
+as readers arrive, because readers are load; here every reader is capacity.
+
+#### It resolves the gateway tension rather than creating one
+
+[D29](#d29--the-desktop-is-two-products-and-only-one-of-them-is-blocked) worried
+that a research gateway which carries would violate [D5](#d5--the-commons-is-a-gateway-not-a-bigger-phone)'s
+*"must not become … a holder of history it was never granted."* Under the two
+strengths above there is no conflict: **a gateway runs with generosity `0`.** It
+carries exactly the subjects it was granted — reciprocity satisfied, because it
+serves what it consumes — and holds nothing it was never granted. D5 stands
+unamended.
+
+#### The cost, which is the same fact as the benefit
+
+A carrier announces what it holds ([D28](#d28--the-pool-carries-keys-logs-too-and-announcing-them-is-only-safe-because-it-does)).
+So a reader that must carry is a reader that must announce, and **who reads whom
+becomes partly visible** — which is the social-graph leak
+[D18](#d18--peers-tell-each-other-who-holds-what-and-that-publishes-the-follower-set)
+was retired over, arriving through the front door this time.
+
+It cuts both ways and both should be said:
+
+* it is a **weak recovery of the audit [D3](#d3--audit-is-given-up-deliberately)
+  gave up** — a reader cannot read without appearing in a bucket, which is more
+  than "reads are invisible";
+* it is **exactly the leak**, and the only thing bounding it is that generosity
+  makes "P holds Y" ambiguous between following Y and merely carrying it. A
+  deployment with generosity `0` everywhere would make holding equal following,
+  and the graph would be plain. **So generosity is not decoration: it is the
+  privacy mechanism for reciprocity.** That is the sharpest consequence of this
+  decision and the reason `--adopt 0` should stay unusual rather than becoming a
+  default anyone reaches for.
+
+*Reopens if:* an institution turns out to be legally unable to hold even
+unreadable third-party health data, in which case reciprocity for that class
+needs a different form — bandwidth, relay capacity, or an endowment — rather
+than an exemption.
+
 ### D29 · The desktop is two products, and only one of them is blocked
 
 **Settled 2026-09-14.** "A desktop app" has been standing in for two things with
