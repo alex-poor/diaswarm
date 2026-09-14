@@ -128,42 +128,98 @@ scale:
   process, not push latency. Nor does it establish that every push lands, or
   anything off-LAN, or anything overnight.
 
-## What this session found and did not fix
+## The counter, and what replaced it
 
-**The live counter is wrong a fifth time, in its units.** Version 5 is right to
-report p2panda's number and derive nothing. But `live_received()` sums
-`received_live_operations`, which `migration.md` already records as advancing
-**two per event**, while `received` is one per stored operation — and they are
-printed on one line under one word:
+**The live counter was wrong a fifth time — in its units, not its arithmetic.**
+`live_received()` sums `Metrics::received_live_operations`, which does not
+advance once per operation (`n=2` per event on one build, `n=1` on another, so
+the multiplier is not even constant), while `received` is one per stored
+operation. Printed side by side they produced `received=20401 live=21622` on a
+phone: more pushed arrivals than arrivals, the shape versions 2 and 3 were
+rejected for, reached this time by honestly reporting a number that is not the
+same quantity.
+
+**Renamed, not fixed:** `counts stored=N live_raw=M (not comparable)`. Four
+attempts to *derive* the right number were each wrong and dividing by an
+unmeasured multiplier would be a fifth. `live_raw > 0` means pushes are
+arriving; its magnitude means nothing.
+
+**What to use instead**, and this is the part that matters: the per-arrival
+`live op from <peer>` lines, and the freshness series below. Both name a thing
+that happened rather than summarising things that happened.
+
+## Freshness: measured, and the transport is the smallest term
+
+The question every counter was a proxy for. It needed **no new code** —
+`SyncWorker` already logged `keys newest for <subject>: Ns old`.
+
+Raw series on phone B, settled window, 13 samples over 22 minutes: min 23s,
+median 24s, max 107s, all under the 120s poll interval.
+
+**But the raw age is not transport latency**, and separating them is the actual
+result. With the loop phone's `sealed epoch` times beside it:
 
 ```
-sync: counts received=15632 live=15531        # phone B, 16:32, Ayni 0.1.5
+sensor 60s cadence  +  drain ~0.1s  +  transport ≤1 seal cycle, usually ~11s
 ```
 
-Read naively that says 99% of arrivals were pushed. It does not say that and
-cannot. It also disagrees with the negative control recorded earlier the same
-day (`received=4 live=0`, called "the right answer") and nobody has established
-which reading is the surprising one. Left alone deliberately: four attempts to
-be clever about this counter were wrong, and a fifth made in passing while
-changing something else would be the same mistake. `docs/migration.md` has the
-detail.
+* the **drain** adds 74–228 ms — it seals on the reading;
+* the **60s cadence is the Libre 3 itself** (59.6–60.8s inter-arrival measured);
+* a 171s "seal stall" was a **183s sensor gap** — no reading arrived at all,
+  then five backfilled at once. The publisher had nothing to seal;
+* the **bimodal 23/83s split** is exactly one seal cycle: the follower is either
+  current or one seal behind.
 
-## Still open, from before
+**The transport was the entire subject of two sessions and is now the smallest
+and least variable term.** What a follower shows is dominated by the sensor,
+including its multi-minute gaps, which nothing in this repository can shorten.
 
-1. **Ayni has not been rebuilt**, so the installed 0.1.5 still carries nothing
-   for strangers and reports no `keys holders for <subject>: N`. Each app
-   bundles its own `.so`, so 0.1.5 is not broken by the signature change — it
-   simply does not have any of this. Rebuilding it is what makes the pool
-   bigger than one carrier:
+The consequence is for wording rather than code: a follower showing "3 minutes
+ago" during a sensor gap is telling the truth, and showing the age is what lets
+a person tell an old reading from a broken network.
 
-   ```sh
-   ./follower/build-apk.sh --install     # phone B first
-   ```
-2. **De-duplication makes pushes invisible when catch-up wins.**
-3. **No overnight soak** — hours, never a night.
-4. **`event` record kind is emitted and nothing reads it.**
-5. **The pool has only ever been three phones.** Disjoint shares and a stranger
-   adopting unasked are tested on a laptop and unproven on hardware.
+## Running right now: the overnight doze soak
+
+Phone B is **unplugged, screen off**, on battery, reachable only over adb-wifi
+(`192.168.88.213:5555` — the USB transport went with the cable). A persistent
+monitor samples every 5 minutes into
+`scratchpad/doze-soak.log` and speaks only on a doze transition, on Ayni
+becoming network-restricted, or on a reading older than 600s.
+
+Baseline at 17:40: `deep=INACTIVE`, `effective=NONE`, `StayAwake` foreground
+service `isForeground=true`, newest reading 29s old.
+
+**This is the first time the overnight claim has been tested under known
+conditions.** Both previous attempts were invalidated — one by the phone being
+on charge (a charging phone never dozes), one by `force-idle`, which lies.
+Natural deep IDLE takes ~7 minutes here and `motion_inactive_to=30s`, so the
+phone must not be picked up.
+
+## Still open
+
+1. **The overnight soak is running and unanswered.** That is the headline open
+   item and it resolves itself by morning. Read
+   `scratchpad/doze-soak.log`; the evidence format that worked before is
+   "N minutes in deep IDLE, M of M samples fresh, effective=NONE throughout".
+2. **The pool has only ever been three phones.** Peers carrying genuinely
+   disjoint shares, and a stranger adopting unasked, are proven in
+   `tests/keys_pool.rs` on a laptop and **not** on hardware — that needs four or
+   more devices. [D28](decisions.md) works on two phones, which demonstrates the
+   mechanism and not the redundancy.
+3. **The relabelled `counts` line is committed but not installed** on either
+   phone, deliberately: reinstalling resets the soak. It rides along with
+   whatever is next built.
+4. **`live_raw` may not deserve to exist.** Now that `live op from <peer>` and
+   the freshness budget answer the real questions, a counter that has misled
+   five times and needs a disclaimer inside its own label is a candidate for
+   deletion rather than maintenance. A decision, not a bug.
+5. **Nothing is measured off-LAN on the fixed build.** The relay path was proven
+   on 2026-09-14 for the *core* vault; the keys vault's live push has only ever
+   been seen on one wifi.
+6. **`event` record kind is emitted and nothing reads it.**
+7. **The publisher's own freshness is now the dominant term**, and it is the
+   sensor's. Nothing in this repository can shorten a 183-second Libre 3 gap;
+   what it can do is never imply the number is fresher than it is.
 
 ## Constraints that still apply
 
