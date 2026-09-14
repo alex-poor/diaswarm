@@ -963,10 +963,29 @@ simply never meet. The live pool is a phone driving an insulin pump and a
 follower somebody reads, so the new build joins both. The block is marked for
 deletion once no peer remains on the old topic.
 
-⚠️ **While both are carried, `pushed` reads 2 rather than 1.**
-`Replicator::broadcast` returns the number of *topics* it published on, so
-`shadow agrees — … pushed 2` is one operation sent to two rendezvous, not two
-sends. It returns to 1 when the legacy block goes.
+⚠️ **`pushed` counts topics, and it was already 2 before this change.**
+`Replicator::broadcast` publishes on every topic `carry` has recorded for a
+subject, and `associated` accumulates — so a peer whose depth estimate *changes*
+ends up carrying its own subject at two different bucket topics and fanning out
+to both.
+
+The live loop phone, on the pre-fix build, 2026-09-14 21:21:
+
+```
+swarm: shadow agrees — given 2, … pushed 2
+swarm: pool 3 peers, 4 buckets, …            (it had reported 2 peers earlier)
+```
+
+**That is the depth instability showing up as a single peer disagreeing with
+itself over time**, not two peers disagreeing with each other — and it has been
+sitting in the logs of a phone driving an insulin pump, read as a push count.
+Stronger evidence for this entry than the test that provoked it, and nobody had
+noticed because a bigger number looked like more delivery.
+
+So `pushed` is not a count of sends and never was. It will read 3 or so while
+the legacy topic is carried alongside the subject topic, and settles once the
+legacy block is deleted — at which point it becomes 1, meaningfully, for the
+first time.
 
 *Still open:* the divergence in §2 is recorded, not resolved — PSI remains inert
 here and must not be counted as protection.
