@@ -1,0 +1,100 @@
+# Test the Rust crates — all of them, on main and on anything that touches them.
+#
+# WHY THIS EXISTS, AND WHAT IT WOULD HAVE CAUGHT. Until now the only workflow
+# was `ayni.yml`, which runs `cargo test` in `crates/diaswarm-core` alone and
+# only on a tag or a follower-touching PR. `diaswarm-net` — the transport — had
+# never run in CI at all, so "all tests green" meant "somebody ran cargo test
+# locally, on some subset, at some point". The transport defect fixed in
+# 634acaf shipped in every build this project ever made while that sentence was
+# being written down repeatedly.
+#
+# ONE JOB, ONE TARGET DIRECTORY, AND THAT IS THE WHOLE COST CONTROL. There is
+# no cargo workspace here: every crate has its own `target/`, so a job per
+# crate would compile p2panda, iroh and tokio four separate times. Pointing all
+# four at one `CARGO_TARGET_DIR` compiles the shared dependency tree once and
+# then does four cheap link-and-run passes.
+
+name: crates
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/crates.yml"
+  pull_request:
+    paths:
+      - "crates/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/crates.yml"
+  workflow_dispatch:
+
+# Pushing twice in a minute should not pay for two full runs. The in-flight run
+# for the same ref is cancelled and the newer commit is the one that gets an
+# answer.
+concurrency:
+  group: crates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # The networked suites are genuinely slow — `peer.rs` alone is a minute, and
+    # the whole of `diaswarm-net` is about four. This is a ceiling against a
+    # hang, not a target.
+    timeout-minutes: 45
+
+    env:
+      # THE ONE THING THAT MAKES THIS AFFORDABLE. See the header.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-ci
+      CARGO_TERM_COLOR: always
+      # A backtrace costs nothing until something fails, and when something
+      # fails in a spawned tokio task the line number is the whole message.
+      RUST_BACKTRACE: 1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the channel, so there is deliberately no
+      # version named here — one pin, in the file every local build reads too.
+      - name: Rust
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustc --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target-ci
+          key: crates-${{ runner.os }}-${{ hashFiles('crates/*/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: crates-${{ runner.os }}-
+
+      # Sequential and named, so a failure says which crate without anyone
+      # opening the log. `--no-fail-fast` inside a crate; the shell stops at the
+      # first crate that fails, because a broken core makes the rest noise.
+      - name: diaswarm-core
+        working-directory: crates/diaswarm-core
+        run: cargo test --no-fail-fast
+
+      - name: diaswarm-keys
+        working-directory: crates/diaswarm-keys
+        run: cargo test --no-fail-fast
+
+      - name: diaswarm-spaces
+        working-directory: crates/diaswarm-spaces
+        run: cargo test --no-fail-fast
+
+      - name: diaswarm-android
+        working-directory: crates/diaswarm-android
+        run: cargo test --no-fail-fast
+
+      # LAST, AND THE REASON THE FILE EXISTS. Real iroh endpoints, real QUIC,
+      # mDNS between peers inside the runner. If this one turns out to be flaky
+      # on a hosted runner it must be made reliable or made explicit — not
+      # quietly dropped back out, which is the state it is being rescued from.
+      - name: diaswarm-net
+        working-directory: crates/diaswarm-net
+        run: cargo test --no-fail-fast
