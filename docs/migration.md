@@ -3047,7 +3047,5 @@ adb over USB during the window, so there was no local channel left that could be
 mistaken for the relay: phone on mobile data, laptop on home wifi, no shared
 network, no mDNS, data still arriving.
 
-⚠️ **One thing not independently verified:** the phone's own network state, for
-the same reason — adb was gone. The evidence is the user switching wifi off, the
-delivery continuing at an unchanged rate, and the arriving operations belonging
-to that phone's subject.
+The phone's wifi state is the user's report — adb was gone, so it could not be
+read off the device. They confirmed it directly: *"it's definitely off."*
