@@ -2177,3 +2177,29 @@ business deciding what "quiet" means.
 ⚠️ **Still open, and now precisely stated:** live mode has started 69 times and
 delivered nothing, and all 29 connection failures are with a single peer. Those
 are the two things worth chasing, and both are now visible from a phone.
+
+### ✅ The connection failures are the test rig, not the product
+
+`b8e0c9ba` turned out to be **phone B's own AAPS** — full id in its own log,
+`in the pool as b8e0c9badf6b3be3…`. So every sync failure was Ayni trying to
+reach the AAPS instance on the same handset. Counted by peer:
+
+| peer | SyncFinished | Failed |
+|---|---|---|
+| `9eeeac47` — loop phone, **different device** | **62** | **0** |
+| `b8e0c9ba` — AAPS on the **same handset** | 15 | **70** |
+
+**Cross-device syncing never failed once.** Same-device peering fails four times
+out of five — two apps on one phone, each with its own iroh endpoint, trying to
+reach each other through the wifi interface.
+
+That is a property of this two-app test rig and not of the product: a follower
+and a publisher do not normally share a handset. It is worth knowing because
+those failures had been read, by me, as evidence of general connection
+instability, and they are nothing of the sort.
+
+⚠️ **Which leaves exactly one open question**, now clean of that noise: live mode
+has started 69 times against a peer it syncs with perfectly and delivered
+`received_live_operations: 0` every time. Catch-up works; gossip-borne live
+delivery does not. That is the last unexplained thing, and it is the one that
+would take the follower from minutes-behind to seconds-behind.
