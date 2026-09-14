@@ -2716,3 +2716,46 @@ adb before they could be collected. Left unattributed rather than guessed at.
 **What this still does not measure:** anything overnight, anything in doze,
 anything off-LAN, and the tail. Twelve minutes of a plugged-in phone on wifi is
 the easiest case there is.
+
+### 🐛 A test was asserting the mistake it was written to catch
+
+Found while extracting `share::carry_share` for the desktop peer
+([D29](decisions.md)). `two_process.rs` had:
+
+```rust
+assert!(got <= sent, "the follower counted {got} pushed arrivals from a
+                      publisher that pushed {sent}")
+```
+
+added deliberately to catch a transport diagnostic that over-reports — the
+defect four versions of the live counter had. **It is not an invariant.** `sent`
+is what `broadcast` returned, which is the number of *topics* published on;
+`got` is p2panda's `received_live_operations`, measured at one increment per
+event on one build and two on another. Neither counts operations, so neither
+bounds the other. It failed about **one run in two**, only when the whole file
+ran, which reads exactly like load flakiness — and it was already there before
+any of today's work.
+
+**Two further attempts failed for the same underlying reason**, which is the
+part worth keeping:
+
+| attempt | why it was wrong |
+|---|---|
+| `live <= sent` | different units, as above |
+| `received <= ops`, ops read at first push | compared a late follower reading against an early publisher one |
+| `received <= ops`, both late | `received` counts *store events* and counts one operation twice if it arrives on two sessions |
+
+> **Every counter in this replicator counts events, not things.** `received`
+> per store, `live` per p2panda increment, `sent` per topic. That is fine for
+> "is anything happening" and useless for "how many", and three assertions in a
+> row were built on the assumption that one of them could bound another.
+
+**The fix asks the store.** `keyspeer` now reports `segments` via
+`get_log_size`, and the ceiling is that a follower cannot *hold* more operations
+of a subject than its publisher created — distinct things on both sides. **3/3
+stable**, against 1-in-2 before.
+
+⚠️ **And it would have started failing on `main`.** The crates CI added earlier
+the same day runs `diaswarm-net`; a 50% flake there is worse than no test,
+because it teaches everyone to re-run rather than read. It passed its first two
+CI runs by luck.
