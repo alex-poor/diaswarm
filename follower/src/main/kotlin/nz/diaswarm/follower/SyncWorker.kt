@@ -191,9 +191,27 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
             Log.w(TAG, "keys stalled (${worst / 1000}s) — waiting, last reconnect ${since / 1000}s ago")
             return
         }
-        Log.e(TAG, "keys stalled for ${worst / 1000}s with a live subscription — reconnecting")
+        // **RE-SUBSCRIBE FIRST, RESTART ONLY IF THAT FAILS.** The root cause is
+        // a one-shot subscription: the stream catches up once and then waits
+        // for gossip, and when that link dies nothing re-establishes it.
+        // Re-streaming the topic fixes exactly that and costs one reconnection;
+        // restarting the endpoint also works and drops every other connection
+        // this phone has with it.
         Prefs.setLastEndpointRestart(context, System.currentTimeMillis())
-        Endpoint.restart(context)
+        val handle = SwarmKeys.open(context)
+        val restreamed = if (handle == 0L) -1L else try {
+            SwarmNative.keysRestreamIfQuiet(Endpoint.handle, STALE_AFTER / 1000)
+        } catch (e: Throwable) {
+            Log.w(TAG, "restream threw: $e"); -1L
+        } finally {
+            SwarmNative.keysClose(handle)
+        }
+        if (restreamed > 0) {
+            Log.e(TAG, "keys stalled for ${worst / 1000}s — re-subscribed $restreamed topic(s)")
+        } else {
+            Log.e(TAG, "keys stalled for ${worst / 1000}s and re-subscribing gave $restreamed — reconnecting")
+            Endpoint.restart(context)
+        }
     }
 
     private fun verifyChains(context: Context, keysToo: Boolean) {

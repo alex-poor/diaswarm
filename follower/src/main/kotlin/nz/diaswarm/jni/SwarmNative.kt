@@ -610,6 +610,19 @@ object SwarmNative {
      */
     external fun vaultVerifyChain(storePath: String, subject: String): String
 
+    /**
+     * Re-subscribe the keys topics if nothing has arrived for `quietSeconds`.
+     *
+     * **BECAUSE SUBSCRIBING ONCE IS SUBSCRIBING FOREVER.** The stream catches up
+     * and then waits for gossip to push; when that link dies the follower goes
+     * silent and nothing re-establishes it, while [keysCarryAll] keeps
+     * returning the cached count. Restarting the endpoint also works and drops
+     * every other connection with it.
+     *
+     * Returns how many topics were re-streamed — 0 is the ordinary answer.
+     */
+    external fun keysRestreamIfQuiet(handle: Long, quietSeconds: Long): Long
+
     external fun keysVerifyControl(handle: Long, subjectKeys: String): String
 
     external fun netTempTarget(

@@ -1930,3 +1930,34 @@ the next real one will exercise it, and now it is visible either way.
 socket count wrong twice, `relay=connected(1)` with no socket, `keys carrying 2`
 for eleven silent minutes. The only signal that has never misled is whether a
 record actually arrived.
+
+### ⚠️ Three diagnoses in an hour, each from four samples
+
+Worth recording as a process failure, because the code is fine and the method
+was not.
+
+| reading | evidence | verdict |
+|---|---|---|
+| "subscription wedged permanently" | 11 min stale, restart fixed it | **wrong** — it recovers on its own |
+| "healthy sawtooth" | 188 → 134 → 185 | **wrong** — the next sample was 305 |
+| "intermittent, gaps to 7 min" | 305 → 426 → 426 → 126 → 246 | plausible, still only five samples |
+
+The first one produced a real fix (`restream_if_quiet`, a targeted re-subscribe
+instead of restarting the whole endpoint) and a real threshold (ten minutes)
+chosen on the assumption that a stall is permanent. If gaps of seven minutes are
+*normal*, that threshold is one bad minute away from reconnecting needlessly for
+ever.
+
+The honest position: **the publisher seals every minute and the follower sees
+data in bursts several minutes apart, and I do not yet know why.** It could be
+gossip batching, a sync session triggered by something periodic, or the pass
+cadence interacting with the stream. Each implies a different fix.
+
+So: `agewatch.sh` records every distinct freshness reading to `age.csv`, and the
+threshold gets chosen from the distribution of real gaps rather than from the
+largest number seen in a five-minute window. `restream_if_quiet` is built and
+tested and deliberately **not installed** — installing restarts the app, which
+resets exactly the measurement being taken.
+
+The freshness probe earned its place regardless: none of this was visible at all
+until the pass started asking whether a record had actually arrived.

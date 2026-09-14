@@ -95,6 +95,26 @@ pub struct Replicator<A: Extensions + Send + 'static> {
     log_of: fn(&A) -> u32,
     /// Topics already streamed, so a repeated pass does not subscribe twice.
     streaming: Arc<Mutex<HashSet<[u8; 32]>>>,
+    /// The task consuming each topic's events, so a dead one can be replaced.
+    ///
+    /// **BECAUSE SUBSCRIBING ONCE IS SUBSCRIBING FOREVER, AND THAT IS THE BUG.**
+    /// `stream` catches up and then relies on gossip to push. When the gossip
+    /// link dies — the other phone changed network — the stream goes quiet and
+    /// nothing notices: `carry` returns early on every later pass because the
+    /// topic is already in `streaming`, and the app reports "carrying 2 logs"
+    /// from a cached set while no bytes move. Measured: eleven minutes, then a
+    /// recurrence five minutes after a restart.
+    ///
+    /// Aborting the task drops the handle it holds, which unsubscribes, which
+    /// is what makes re-streaming possible at all.
+    tasks: Arc<Mutex<std::collections::HashMap<[u8; 32], tokio::task::JoinHandle<()>>>>,
+    /// When an operation last arrived on any topic.
+    ///
+    /// One clock rather than per topic: the two logs of one subject are
+    /// associated together and go quiet together, and a follower with several
+    /// subjects would rather re-stream one topic too many than miss the one
+    /// that matters.
+    last_event: Arc<Mutex<std::time::Instant>>,
     /// `(topic, subject)` pairs already associated.
     associated: Arc<Mutex<HashSet<([u8; 32], String)>>>,
     /// Operations seen arriving, for tests and for reporting progress.
@@ -153,6 +173,8 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
             logs: logs.to_vec(),
             log_of,
             streaming: Arc::new(Mutex::new(HashSet::new())),
+            tasks: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            last_event: Arc::new(Mutex::new(std::time::Instant::now())),
             associated: Arc::new(Mutex::new(HashSet::new())),
             received: Arc::new(Mutex::new(0)),
             events: Arc::new(Mutex::new(Vec::new())),
@@ -209,13 +231,15 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         let store = self.store.clone();
         let log_of = self.log_of;
 
+        let last_event = Arc::clone(&self.last_event);
         // The handle has to outlive this function: dropping it unsubscribes.
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             let _keep = handle;
             while let Some(next) = events.next().await {
                 match next {
                     Ok(FromSync { event, remote, .. }) => match event {
                         TopicLogSyncEvent::OperationReceived { operation, .. } => {
+                            *last_event.lock().unwrap() = std::time::Instant::now();
                             // STORED, OR THIS PEER CARRIES NOTHING.
                             //
                             // And stored in the log its own header says it
@@ -252,7 +276,47 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
                 }
             }
         });
+        self.tasks.lock().unwrap().insert(topic_bytes, task);
         Ok(())
+    }
+
+    /// Re-subscribe to every topic if nothing has arrived for a while.
+    ///
+    /// **THE ONE-SHOT SUBSCRIPTION IS THE DEFECT.** `stream` catches up once and
+    /// then waits for gossip to push. When that link dies — the other phone
+    /// moved network — the stream goes quiet and nothing re-establishes it:
+    /// `carry` returns early for ever because the topic is already in
+    /// `streaming`, and the app goes on reporting that it carries two logs
+    /// while no bytes move. Found on hardware as a follower eleven minutes
+    /// stale with every internal signal claiming health, and again five minutes
+    /// after a restart appeared to fix it.
+    ///
+    /// Aborting the task drops the sync handle, which unsubscribes; clearing
+    /// `streaming` is what lets `stream` do its work a second time. The catch-up
+    /// on re-subscribe is what actually recovers the gap.
+    ///
+    /// Returns how many topics were re-streamed, so a caller can say so rather
+    /// than guess. `quiet_for` is the caller's judgement: this cannot know how
+    /// often the subject publishes.
+    pub async fn restream_if_quiet(&self, quiet_for: std::time::Duration) -> Result<usize> {
+        if self.last_event.lock().unwrap().elapsed() < quiet_for {
+            return Ok(0);
+        }
+        let topics: Vec<[u8; 32]> = self.streaming.lock().unwrap().iter().copied().collect();
+        for topic in &topics {
+            if let Some(task) = self.tasks.lock().unwrap().remove(topic) {
+                task.abort();
+            }
+            self.streaming.lock().unwrap().remove(topic);
+        }
+        // Stamped before re-streaming, not after: without this a topic that is
+        // legitimately quiet — the subject's phone is off — would be
+        // re-subscribed on every single pass for as long as the silence lasts.
+        *self.last_event.lock().unwrap() = std::time::Instant::now();
+        for topic in &topics {
+            self.stream(*topic).await?;
+        }
+        Ok(topics.len())
     }
 
     /// How many operations have arrived from other peers.
