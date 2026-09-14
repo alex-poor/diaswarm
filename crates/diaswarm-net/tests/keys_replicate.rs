@@ -98,7 +98,17 @@ async fn a_follower_gets_its_grant_and_its_days_from_a_stranger() {
         .unwrap();
 
     // ---- the carrier: a stranger holding a bucket -------------------------
-    let carrier_store = SqliteStoreBuilder::memory().build().await.unwrap();
+    // File-backed on purpose (the subject store above can stay in memory): once
+    // replication is done we reopen this exact database to assert the
+    // encryption-state tables never gained a row — see the tail of this test.
+    // An in-memory store gives no second handle to probe.
+    let carrier_db = tmp("car-store").join("keys.sqlite");
+    let carrier_store = SqliteStoreBuilder::new()
+        .database_url(&format!("sqlite://{}", carrier_db.display()))
+        .create_database(true)
+        .build()
+        .await
+        .unwrap();
     let carrier = Swarm::join_network(tmp("car-pool"), SigningKey::generate(), net).await.unwrap();
     let (car_endpoint, car_gossip) = carrier.parts();
     let carrying = KeysReplicator::keys(carrier_store.clone(), car_endpoint, car_gossip)
@@ -194,4 +204,31 @@ async fn a_follower_gets_its_grant_and_its_days_from_a_stranger() {
             "the carrier opened a segment it was granted nothing for"
         );
     }
+
+    // ---- and the carried log holds no key material at all ------------------
+    //
+    // D1's promise is that a carrier keeps ciphertext it cannot open. The above
+    // proves it cannot *open* a segment; this proves the store it replicates is
+    // a bare log of sealed operations — group and key secrets live in each
+    // member's `Vault`, never in the database that crosses the network. The
+    // security review (docs/security-review.md) checked a real carrier's
+    // keys.sqlite and found these four p2panda-encryption tables empty; here we
+    // hold that line. If a refactor ever moved encryption state into the
+    // SqliteStore (e.g. adopting p2panda-encryption's own persistence), those
+    // secrets would replicate straight to every carrier, and this fails first.
+    let probe = sqlx::SqlitePool::connect(&format!("sqlite://{}", carrier_db.display()))
+        .await
+        .unwrap();
+    for table in ["groups_v1", "key_secrets_v1", "key_registry_v1", "spaces_v1"] {
+        let rows: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(&probe)
+            .await
+            .unwrap();
+        assert_eq!(
+            rows, 0,
+            "the carrier's replicated store holds {rows} row(s) in {table} — \
+             encryption state has leaked into the carried log"
+        );
+    }
+    probe.close().await;
 }
