@@ -2654,11 +2654,46 @@ usually within about eleven seconds.** The raw age is that lag plus whatever the
 publisher's own cadence adds, and on this hardware the publisher's cadence is
 the larger and more variable term.
 
-⚠️ **Which relocates the remaining freshness work.** Reducing what a person sees
-on the follower now means looking at **why AAPS's drain seals at 60s and
-sometimes stalls for three minutes**, not at the transport. That is a different
-component and a different question, and nothing in this document has measured
-it.
+✅ **And that remaining question was measured too, ten minutes later — it is
+the sensor, and there is nothing left to optimise.**
+
+The entry above ended by relocating the work onto "why AAPS's drain seals at 60s
+and sometimes stalls for three minutes". Both halves of that sentence turned out
+to be wrong, in the same direction: the drain does neither.
+
+**The drain adds 74–228 milliseconds.** It seals on the reading:
+
+| CGM inserted | sealed | latency |
+|---|---|---|
+| 17:13:23.346 | 17:13:23.461 | 115 ms |
+| 17:15:23.048 | 17:15:23.276 | 228 ms |
+| 17:19:23.968 | 17:19:24.073 | 105 ms |
+| 17:22:26.870 | 17:22:26.993 | 123 ms |
+
+**The 60-second cadence is the Libre 3.** Inter-arrival on the loop phone:
+60.1, 59.6, 60.0, 60.4, 59.6, 60.8 seconds. The publisher is not on a timer; it
+seals what arrives, when it arrives.
+
+**And the 171-second seal gap was a 183-second SENSOR gap** — 17:19:23 → 17:22:26
+with no reading inserted at all, followed by a backfill burst of five readings at
+17:22:28. The publisher had nothing to seal. Nothing stalled.
+
+**So the whole chain is now accounted for**, and the budget is:
+
+```
+sensor 60s cadence  +  drain ~0.1s  +  transport ≤1 seal cycle, usually ~11s
+```
+
+The transport was the entire subject of two sessions and is now the *smallest and
+least variable* term. What a follower shows is dominated by the sensor's own
+delivery — including its multi-minute gaps, which no work in this repository can
+shorten. A median follower age of ~24s against a 60s sensor is close to the floor.
+
+**The useful consequence is for wording, not for code.** A follower showing "3
+minutes ago" during a sensor gap is displaying the truth, and the age on the hero
+card is the right design precisely because of this: the number is old because the
+*reading* is old, not because the network is broken, and only showing the age
+lets a person tell those apart.
 
 ⚠️ **One excursion, unattributed: 202s → 322s → 345s across 16:51–16:54.** It
 climbs at exactly the rate of elapsed time, which means no reading arrived at
