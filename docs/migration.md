@@ -2536,3 +2536,55 @@ operations arrived by push" is answerable only if the doubling is divided out,
 and whether it is exactly two every time is an upstream fact nobody has measured
 rather than inferred. Until then the two numbers should at least not share a
 label.
+
+### ✅ CLOSED — the loop phone's publisher reaches Ayni, 2026-09-14 16:47
+
+The open item both handovers led with. The loop phone was updated at 16:44 and
+Ayni rebuilt and installed at 16:45, and the two ends agree without either being
+asked to agree with the other:
+
+| time | peer | line |
+|---|---|---|
+| 16:44:23 | loop phone, **pre-fix** build | `shadow agrees — … failures 0` — no `pushed` field exists |
+| 16:45:27 | loop phone, fixed | `shadow agrees — … failures 0, **pushed 1**` |
+| 16:46:41 | loop phone, fixed | `shadow agrees — … failures 0, **pushed 2**` |
+| 16:47:47 | Ayni, phone B | `sync: **live op from 9eeeac47** n=1` |
+
+`9eeeac47` is the loop phone. **That is a push from the phone driving the pump,
+delivered to the follower app** — the path that has never worked in any build
+this project shipped, and the one every other measurement was a proxy for.
+
+The follower process started at 16:45:46 and recorded the arrival at 16:47:47,
+which is discovery time on a fresh process rather than push latency. Nothing here
+measures freshness yet.
+
+**The evidence is two independent sources.** The publisher's `pushed=` is its own
+count of `SyncHandle::publish` returning; the follower's is p2panda's per-arrival
+attribution, naming the peer. Neither is derived from the other, which is the
+property the four wrong counters lacked.
+
+### 🔍 And `n=1`, which refines the units problem rather than settling it
+
+The entry above this one says the raw counter advances two per event. This
+arrival reported `n=1`. So the doubling is **not constant** — the plausible
+reading is that it counts once per topic-session observing the operation, and a
+follower carrying two logs of a subject sees it twice, but that is a hypothesis
+and nobody has measured it upstream.
+
+Which makes the practical rule sharper, not looser: **the magnitude of `live` is
+not interpretable and should not be compared to `received`.** What is
+interpretable is `live op from <peer>` — one line per arrival, naming who sent
+it. That is what closed this item, and it is what a freshness measurement should
+be built on.
+
+### ✅ D28 on hardware, the same pass
+
+```
+keys holders for 552f688a: 1 (9eeeac47)
+```
+
+A follower learning from bucket gossip that another phone holds a subject's
+**keys** logs. That line was `none` by construction until today — nothing
+announced keys subjects and nothing adopted them. Two phones, so this is the
+mechanism working, not the redundancy being proven: that still needs four or
+more devices and disjoint shares.

@@ -93,37 +93,40 @@ scale:
   nothing for anybody, because they all ask whether a call happens and this
   defect lived in an argument.
 
-### 4 · The loop phone — HALF DONE, and the half that matters is not
+### 4 · The loop phone — DONE, and the push is delivered
 
 * ✅ Built from `fc3fb75`, installed on **phone B**, signer verified matching.
   Healthy: native library loads, `swarm: keys carrying 1 log(s)` — which is the
   live proof that `keysCarryAll` returns through its **changed 4-argument JNI
   signature**, the failure that would otherwise appear at load time.
-* ❌ **The loop phone is still on the 11:18 pre-fix build.** Three attempts to
-  install were refused by this environment's auto-mode permission classifier —
-  including a read-only `apksigner` invocation — while the *identical* command
-  for phone B went through minutes earlier. Inconsistent rather than principled,
-  and not worked around. It needs a person to run:
+* ✅ **The loop phone was updated at 16:44** — signer matched, pump key
+  survived, rollback saved, and the loop kept running throughout (a Libre 3
+  reading of 182 landed at 16:45:27, drained, sealed and pushed). The install
+  needed a permission rule the user added mid-session; three earlier attempts,
+  including a read-only `apksigner`, were refused by the auto-mode classifier
+  while the identical command for phone B went through.
 
-```sh
-ANDROID_SERIAL=2A281FDH2006AC ./plugin/build-apk.sh --install
-```
+* ✅ **Ayni rebuilt and installed on phone B at 16:45**, carrying D28 and the
+  new adoption budget.
 
-  The script verifies the signer against the device before installing — that
-  check is what protects the pump pairing — and saves a rollback APK. Phone B
-  has been running this exact build since 16:30 without incident.
+* ✅ **THE MEASUREMENT IS MADE.** Both handovers led with this item.
 
-* ❌ **The measurement is therefore not made.** It is the same open item the
-  first session handed over, and it is still the only way to prove the path that
-  matters. After the install, the evidence is two lines:
+  | time | peer | line |
+  |---|---|---|
+  | 16:44:23 | loop phone, pre-fix | `shadow agrees — … failures 0` — no `pushed` field |
+  | 16:45:27 | loop phone, fixed | `… failures 0, **pushed 1**` |
+  | 16:46:41 | loop phone, fixed | `… failures 0, **pushed 2**` |
+  | 16:47:47 | Ayni, phone B | `sync: **live op from 9eeeac47** n=1` |
 
-```sh
-adb -s 2A281FDH2006AC logcat -d | grep -E 'swarm: (sealed|keys|pool)|pushed'
-adb -s 2C011FDH200MYL logcat -d | grep -E 'sync: counts|holders for'
-```
+  `9eeeac47` is the loop phone. Two independent sources — the publisher's own
+  count of `publish` returning, and p2panda's per-arrival peer attribution on
+  the follower. And `keys holders for 552f688a: 1 (9eeeac47)` on the same pass,
+  which is D28 working on hardware.
 
-  The publisher's `pushed=N` is the honest measure of the send half. `live` is
-  not — see below.
+  **What this does not establish:** freshness. The 16:47:47 arrival is two
+  minutes after the follower process started, which is discovery on a cold
+  process, not push latency. Nor does it establish that every push lands, or
+  anything off-LAN, or anything overnight.
 
 ## What this session found and did not fix
 
