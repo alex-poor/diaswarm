@@ -2835,3 +2835,40 @@ process left holding a foreground service — not a cause, and not the failure t
 
 **Do not pick one from this list without measuring it for more than six hours.**
 That is the whole lesson of this entry.
+
+### 📏 How long the blackout lasted: 220 minutes, and only because somebody intervened
+
+The watch left running after the kill closed at 07:18 with `RECOVERED … after
+220m down`. **That number is a lower bound and an artefact.**
+
+Ayni came back because the app was rebuilt, reinstalled and launched at 07:13.
+Android's documentation is explicit that *"the timer resets when the user brings
+the app to the foreground"* — and nothing else was going to do that at four in
+the morning. Every automatic restart in between was refused. Left alone, the
+blackout would have run until somebody opened the app, or until the six hours
+aged out of the rolling twenty-four-hour window: **on the order of half a day,
+not three hours.**
+
+Which is the shape of the failure that matters. Not "the follower is briefly
+stale" but "the follower is gone, it will not come back, and the only thing that
+revives it is the person who was asleep."
+
+### ✅ The fix, and what it has and has not proven
+
+`specialUse` is declared, verified in the binary (`0x40000000`, was
+`0x00000001`) and live on the device
+(`isForeground=true types=0x40000000`). `onTimeout` is implemented as a clean
+stop in case a limit is ever applied to this type too.
+
+⚠️ **Nothing is proven yet.** A soak started 07:13 and has to pass **372
+minutes** — where `dataSync` died — before this is more than a plausible change.
+`scratchpad/fgs-soak.log` records a line every ten minutes; the monitor reports
+the process dying, a restart, any `onTimeout`, and the 6h and 12h marks.
+
+**And the thing that nearly invalidated it before it began:** the first build of
+this fix was declared done on the strength of a grep that found no `error:`
+lines. Gradle had in fact failed — `ANDROID_NDK_HOME is not set`, because
+`./gradlew` was invoked directly instead of through `follower/build-apk.sh` —
+the APK was still the previous night's, and its manifest still said `dataSync`.
+Checking the *binary* rather than the source is what caught it. A six-hour soak
+would otherwise have run against an unchanged app and reported success.
