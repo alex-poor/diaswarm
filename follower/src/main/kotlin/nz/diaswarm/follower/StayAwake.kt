@@ -50,7 +50,18 @@ class StayAwake : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startForeground(NOTIFICATION_ID, notification())
+        // **NAME THE TYPE AT THE CALL, NOT ONLY IN THE MANIFEST.** The
+        // manifest says `specialUse`; passing it here too means a mismatch is a
+        // refusal at the call site rather than a surprise six hours later.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification(),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification())
+        }
         if (!running) {
             running = true
             Thread({ loop() }, "diaswarm-stayawake").start()
@@ -58,6 +69,36 @@ class StayAwake : Service() {
         // STICKY: if Android kills this for memory, the user asked for it to be
         // running and should get it back without opening the app.
         return START_STICKY
+    }
+
+    /**
+     * Android says time is up: stop, rather than be killed.
+     *
+     * **THIS IS WHAT HAPPENED ON 2026-09-15 AND WHY THE TYPE CHANGED.** The
+     * service was declared `dataSync`, which Android 15 limits to about six
+     * hours in twenty-four. There was no `onTimeout` to call, so the system
+     * threw `ForegroundServiceDidNotStopInTimeException`, killed the process,
+     * and then refused every restart — `Time limit already exhausted` — because
+     * the quota was spent. Started 21:25, dead 03:37:54, still dead at 07:05.
+     *
+     * `specialUse` carries no such limit, so this should never fire. It exists
+     * because "should never fire" is exactly what was believed about the old
+     * arrangement, and a service that stops when told is strictly better than
+     * one whose process is killed mid-write. If it ever does fire, the log line
+     * is the one that says the type is wrong again.
+     */
+    @androidx.annotation.RequiresApi(35)
+    override fun onTimeout(startId: Int) {
+        Log.w(SyncWorker.TAG, "stay-awake: Android called onTimeout — stopping cleanly")
+        running = false
+        stopSelf()
+    }
+
+    @androidx.annotation.RequiresApi(36)
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(SyncWorker.TAG, "stay-awake: onTimeout for type $fgsType — stopping cleanly")
+        running = false
+        stopSelf()
     }
 
     override fun onDestroy() {

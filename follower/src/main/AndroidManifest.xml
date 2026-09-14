@@ -27,7 +27,7 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <!--
-      FOREGROUND_SERVICE (+ DATA_SYNC) and POST_NOTIFICATIONS — so that
+      FOREGROUND_SERVICE (+ SPECIAL_USE) and POST_NOTIFICATIONS — so that
       "keep up to date while asleep" can actually do it.
 
       **THE PHONE NAMED THESE.** `dumpsys netpolicy` reports a sleeping app as
@@ -44,7 +44,15 @@
       Android allows in between.
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- NOT `FOREGROUND_SERVICE_DATA_SYNC`, AND THE REASON COST A NIGHT.
+         Android 15 time-limits a `dataSync` foreground service to about six
+         hours in any twenty-four: at the limit the system kills the process,
+         and every restart after that is refused until somebody opens the app.
+         Measured on 2026-09-15 — started 21:25, killed 03:37:54, still dead at
+         07:05. For an app whose whole job is to be watching while nobody is
+         looking, that is the use case failing silently every night.
+         `specialUse` carries no such limit. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Scanning an invite. Optional: an invite can be pasted as text. -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -79,7 +87,8 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Follower">
-        <!-- Declared `dataSync`: this fetches somebody's readings. Exported
+        <!-- Declared `specialUse`, not `dataSync`, because `dataSync` is
+             time-limited to six hours and this must survive a night. Exported
              false — nothing outside this app has any business starting it. -->
         <!-- Puts the service back after a reboot or an update. Without this,
              "keep up to date while asleep" silently stops meaning anything the
@@ -97,7 +106,15 @@
         <service
             android:name=".StayAwake"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse">
+            <!-- Reviewed by Google Play for apps shipped through it; ayni is
+                 not. The text is here because it is true and because somebody
+                 reading the manifest deserves to know what the service is for,
+                 not because a store asked. -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains a peer-to-peer connection so a glucose reading arrives while the screen is off. There is no server to poll: readings are pushed by the phone that produced them, so the connection has to be held rather than re-established on a timer." />
+        </service>
 
         <activity
             android:name=".MainActivity"
