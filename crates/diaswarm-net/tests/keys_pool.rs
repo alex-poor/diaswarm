@@ -102,8 +102,11 @@ async fn a_stranger_carries_a_keys_subject_it_was_never_introduced_to() {
 
     // ---- the carrier: a stranger, granted nothing, told nothing ----------
     let carrier_store = SqliteStoreBuilder::memory().build().await.unwrap();
+    let carrier_dir = tmp("carrier-pool");
+    let carrier_key = SigningKey::generate();
+    let carrier_own = carrier_key.verifying_key().to_hex();
     let carrier_swarm =
-        Swarm::join_network(tmp("carrier-pool"), SigningKey::generate(), net).await.unwrap();
+        Swarm::join_network(carrier_dir.clone(), carrier_key, net).await.unwrap();
     let (ce, cg) = carrier_swarm.parts();
     let carrying = KeysReplicator::keys(carrier_store.clone(), ce, cg).await.unwrap();
 
@@ -115,14 +118,23 @@ async fn a_stranger_carries_a_keys_subject_it_was_never_introduced_to() {
     let mut held = 0u32;
     for _ in 0..60 {
         let _ = subject_swarm.tick().await;
-        if let Ok(report) = carrier_swarm.tick().await {
-            for (subject, _holders) in &report.wanted_keys {
-                let topic = pool::bucket_topic(report.depth, pool::bucket_of(subject, report.depth));
-                if carrying.carry(topic, subject).await.is_ok() {
-                    adopted.push(subject.clone());
-                }
+        let _ = carrier_swarm.tick().await;
+        // THE SHIPPED PATH, NOT A COPY OF IT. This used to hand-roll the carry
+        // loop, which meant the test proved a re-implementation while both apps
+        // ran `share::carry_share`. Calling the real function is what makes a
+        // regression in it fail here.
+        if let Ok(share) = diaswarm_net::share::carry_share(
+            &carrier_swarm,
+            &carrying,
+            &carrier_dir,
+            &carrier_own,
+            4,
+        )
+        .await
+        {
+            if share.carrying > 1 {
+                adopted = carrying.carried();
             }
-            carrier_swarm.set_keys_held(carrying.carried());
         }
         held = segments_held(&carrier_store, &author).await;
         if held as i64 >= days {

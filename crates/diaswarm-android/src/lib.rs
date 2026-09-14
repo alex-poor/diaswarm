@@ -2470,69 +2470,25 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarryAll<'a>(
     let pooled = unsafe { &*(pool as *const Pooled) };
     let Some(replicator) = pooled.keys_replicator.as_ref() else { return -3 };
 
-    let members = pooled
-        .runtime
-        .block_on(pooled.swarm.pool_members())
-        .map(|m| m.len())
-        .unwrap_or(2)
-        .max(2);
-    let depth = diaswarm_net::pool::depth_for(members);
-
-    let mut wanted: Vec<String> = Vec::new();
-    // Ours: the same Ed25519 key `keysOpen` signs the logs with.
-    wanted.push(
-        p2panda_core::SigningKey::from_bytes(&identity.signing.to_bytes())
-            .verifying_key()
-            .to_hex(),
-    );
-    for follow in diaswarm_net::peer::load_follows(&store).unwrap_or_default() {
-        let Some(keys) = follow.keys.as_deref() else { continue };
-        let Ok(id) = diaswarm_keys::decode_identity(keys) else { continue };
-        wanted.push(id.signer.to_hex());
+    // THE DECISION LIVES IN `diaswarm-net`, NOT HERE. Working out what a peer
+    // should hold is a property of being a peer; a desktop daemon needs exactly
+    // the same rule ([D29](../../docs/decisions.md)), and two copies of it would
+    // be two copies of what a peer owes the pool. What stays on this side is
+    // what is genuinely Android's: raw handles, JStrings, and negative codes
+    // instead of exceptions.
+    let own = p2panda_core::SigningKey::from_bytes(&identity.signing.to_bytes())
+        .verifying_key()
+        .to_hex();
+    match pooled.runtime.block_on(diaswarm_net::share::carry_share(
+        &pooled.swarm,
+        replicator,
+        &store,
+        &own,
+        max_adopt.max(0) as usize,
+    )) {
+        Ok(share) => share.carried as jlong,
+        Err(_) => -4,
     }
-
-    // Strangers heard about on the bucket topics this phone holds. `tick` is
-    // what fills that table, and the plugin and the follower both call it every
-    // pass — see `every_app_that_joins_the_pool_also_ticks_it`.
-    //
-    // **THE BUDGET IS THE CALLER'S, AND `0` IS A REAL ANSWER.** `swarmTick`
-    // already takes one for the core vault and Ayni passes zero to it,
-    // deliberately: "whether a follower's phone should start holding
-    // strangers' ciphertext is a separate decision and does not get to ride in
-    // on a bug fix". Adopting here on a fixed internal budget would make that
-    // decision for a released app from underneath, which is the same mistake
-    // with a different function's name on it. So the two budgets match, and a
-    // follower that carries nothing for strangers still announces and serves
-    // what it does hold.
-    //
-    // Bounded for the reason `tick_and_adopt` is bounded: a phone that has just
-    // joined a large pool must not try to pull its entire share in one worker,
-    // over mobile data, against a deadline. It catches up over passes.
-    if max_adopt > 0 {
-        let heard: Vec<String> = pooled
-            .runtime
-            .block_on(pooled.swarm.keys_wanted())
-            .map(|w| w.into_iter().map(|(s, _)| s).take(max_adopt as usize).collect())
-            .unwrap_or_default();
-        wanted.extend(heard);
-    }
-
-    let mut carried = 0i64;
-    for subject in wanted {
-        let topic = diaswarm_net::pool::bucket_topic(
-            depth,
-            diaswarm_net::pool::bucket_of(&subject, depth),
-        );
-        if pooled.runtime.block_on(replicator.carry(topic, &subject)).is_ok() {
-            carried += 1;
-        }
-    }
-
-    // SAY WHAT WE NOW HOLD, OR NOBODY ELSE CAN FIND IT. A peer that fetches and
-    // stays quiet is a dead end: the subject's own phone stays the only address
-    // anyone can learn, which is the state this whole function is fixing.
-    pooled.swarm.set_keys_held(replicator.carried());
-    carried
 }
 
 /// This vault's identity as text, for putting in an invite. Empty on failure.

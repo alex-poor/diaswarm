@@ -235,10 +235,15 @@ fn a_segment_published_in_one_process_is_pushed_to_another() {
     // The publisher seals and pushes a segment every second from t=10, and
     // reports the running total it has sent.
     let mut last_sent: Option<i64> = None;
+    let mut last_ops: i64 = 0;
     let pushed = until(&mut ra, Duration::from_secs(45), |l| {
         let s = field(l, "sent");
         if s >= 0 {
             last_sent = Some(s);
+        }
+        let o = field(l, "ops");
+        if o > last_ops {
+            last_ops = o;
         }
         field(l, "pushed") >= 1
     })
@@ -246,6 +251,18 @@ fn a_segment_published_in_one_process_is_pushed_to_another() {
 
     // And this is the one that was zero for the life of the project.
     let live = until(&mut rb, Duration::from_secs(45), |l| field(l, "live") >= 1);
+
+    // **A PUBLISHER LINE FROM AFTER THE FOLLOWER'S, OR THE CEILING IS NOT ONE.**
+    // The `ops` figure captured above is from the instant of the first push;
+    // the follower's `received` below is read much later, by which time the
+    // publisher has created more. Comparing those two is comparing different
+    // moments, and it fails every run — as a first version of this did.
+    if let Some(l) = until(&mut ra, Duration::from_secs(10), |l| field(l, "ops") > 0) {
+        let o = field(&l, "ops");
+        if o > last_ops {
+            last_ops = o;
+        }
+    }
 
     let _ = a.kill();
     let _ = b.kill();
@@ -262,23 +279,38 @@ fn a_segment_published_in_one_process_is_pushed_to_another() {
          this project ever shipped one sync interval behind"
     );
 
-    // **AND NOT MORE THAN WERE SENT, WHICH IS THE HARDER HALF.** A follower
-    // cannot receive more pushes than a publisher published. Four versions of
-    // the live counter over-reported, two of them impossibly, and each was
-    // believed for a while because the only assertion was `>= 1` — which a
-    // counter that fires on everything passes trivially. Measured on hardware
-    // at its worst: a phone reporting 4,872 live arrivals out of 4,890
-    // operations while its only publisher had pushed four times.
+    // **AND NOT MORE THAN EXIST, WHICH IS THE HARDER HALF.** The intent is to
+    // catch a transport diagnostic that over-reports, because one that does
+    // says the thing works whether or not it does — four versions of the live
+    // counter did, two of them impossibly.
+    //
+    // ⚠️ **THIS USED TO ASSERT `live <= sent` AND THAT IS NOT AN INVARIANT.**
+    // It compared two quantities in different units and flaked about one run in
+    // two: `sent` is what `broadcast` returned — *topics* published on — and
+    // `live` is p2panda's own counter, measured at one increment per event on
+    // one build and two on another. Neither counts operations, so neither can
+    // bound the other, and the test encoded the exact mistake it was written to
+    // catch. Found 2026-09-14 while extracting `share::carry_share`; the
+    // reasoning is in migration.md under the fifth wrong version of the counter.
+    //
+    // `ops` is unit-matched: the publisher created exactly that many
+    // operations, and no follower can store more operations than exist.
     let sent = last_sent.unwrap_or(0);
-    let got = live.as_deref().map(|l| field(l, "live")).unwrap_or(0);
+    // **`segments`, NOT `received`.** `received` increments whenever an
+    // operation is stored and counts the same one twice if it arrives on two
+    // sessions — a second version of this assertion used it and failed every
+    // run with "stored 16 from a publisher that created 3", which was the
+    // counter being right and the comparison being wrong. `segments` asks the
+    // store how many distinct operations are in the log.
+    let stored = live.as_deref().map(|l| field(l, "segments")).unwrap_or(0);
     assert!(
         sent > 0,
         "the publisher never recorded sending anything, so the ceiling below is not a ceiling"
     );
+    assert!(last_ops > 0, "the publisher never reported creating an operation");
     assert!(
-        got <= sent,
-        "the follower counted {got} pushed arrivals from a publisher that pushed \
-         {sent}. An over-reporting transport diagnostic is worse than none: it \
-         says the thing works whether or not it does"
+        stored <= last_ops,
+        "the follower holds {stored} operations of a subject whose publisher \
+         created {last_ops}. Holding more than exist means a count is invented"
     );
 }

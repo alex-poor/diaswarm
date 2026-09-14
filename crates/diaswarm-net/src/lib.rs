@@ -31,6 +31,7 @@
 pub mod peer;
 pub mod replicate;
 pub mod pool;
+pub mod share;
 pub mod swarm;
 pub mod wire;
 

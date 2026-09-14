@@ -27,9 +27,27 @@ use diaswarm_keys::Vault;
 use diaswarm_net::pool;
 use diaswarm_net::replicate::KeysReplicator;
 use diaswarm_net::swarm::{network_id, Swarm};
-use p2panda_core::SigningKey;
+use p2panda_core::{Hash, SigningKey, VerifyingKey};
 use diaswarm_keys::Rng;
-use p2panda_store::SqliteStoreBuilder;
+use diaswarm_keys::wire::KeysOperation;
+use p2panda_store::logs::LogStore;
+use p2panda_store::{SqliteStore, SqliteStoreBuilder};
+
+mod hex {
+    use p2panda_core::VerifyingKey;
+    /// A 64-character hex subject as a key, or `None`. Not a parser worth
+    /// sharing — `keyswatch` inlines the same three lines.
+    pub fn decode_key(s: &str) -> Option<VerifyingKey> {
+        if s.len() != 64 {
+            return None;
+        }
+        let mut b = [0u8; 32];
+        for (i, out) in b.iter_mut().enumerate() {
+            *out = u8::from_str_radix(s.get(i * 2..i * 2 + 2)?, 16).ok()?;
+        }
+        VerifyingKey::from_bytes(&b).ok()
+    }
+}
 
 const OFFSET: i64 = 12 * 3_600_000;
 
@@ -40,6 +58,22 @@ fn day(epoch: i64, mgdl: f64) -> Vec<Record> {
                 .set("mgdl", Some((mgdl + i as f64).into()))
         })
         .collect()
+}
+
+/// Distinct operations actually in a log, from the store.
+///
+/// **THE ONLY COUNT HERE THAT COUNTS THINGS.** `received` increments when an
+/// operation is stored and will count the same operation twice if it arrives
+/// on two sessions; `live` is p2panda's own and increments more than once per
+/// event; `sent` counts topics published on. None of them bounds another, and
+/// a test that assumed one did flaked for a day. This asks the store.
+async fn held(store: &SqliteStore, author: &VerifyingKey, log_id: u32) -> u32 {
+    let size = <SqliteStore as LogStore<KeysOperation, VerifyingKey, u32, u32, Hash>>::get_log_size(
+        store, author, &log_id, None, None,
+    )
+    .await
+    .unwrap_or(None);
+    size.map(|(ops, _bytes)| ops).unwrap_or(0)
 }
 
 #[tokio::main]
@@ -108,6 +142,13 @@ async fn main() -> Result<()> {
     // the follower says it received pushed. A follower reporting more live
     // arrivals than the publisher ever pushed is the defect this measures.
     let mut pushed_total = 0usize;
+    // **OPERATIONS, WHICH IS THE ONLY THING A FOLLOWER'S STORE IS COMPARABLE
+    // TO.** `sent` above counts what `broadcast` returned — topics published
+    // on — and `live` counts p2panda's own increments, measured at one per
+    // event on one build and two on another. Neither is a count of operations,
+    // so neither can bound the other. This one is: the publisher created
+    // exactly this many, and no follower can store more than exist.
+    let mut ops_total = 1usize; // the create control message, published above
     for t in 0..seconds {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let pool_size = swarm.pool_members().await.map(|m| m.len()).unwrap_or(0);
@@ -122,13 +163,20 @@ async fn main() -> Result<()> {
                 let op = wire::publish(&store, &signing, &segment).await?;
                 pushed = replicator.broadcast(&subject_hex, op);
                 pushed_total += pushed;
+                ops_total += 1;
                 epoch += 1;
             }
         }
 
         let (received, live) = (replicator.received(), replicator.live_received());
+        // The subject THIS process is about — its own when publishing,
+        // somebody else's when following.
+        let segments = match hex::decode_key(&carried) {
+            Some(k) => held(&store, &k, wire::LOG_ID).await,
+            None => 0,
+        };
         println!(
-            "{{\"t\":{t},\"pool\":{pool_size},\"received\":{received},\"live\":{live},\"pushed\":{pushed},\"sent\":{pushed_total}}}"
+            "{{\"t\":{t},\"pool\":{pool_size},\"received\":{received},\"live\":{live},\"pushed\":{pushed},\"sent\":{pushed_total},\"ops\":{ops_total},\"segments\":{segments}}}"
         );
     }
     for e in replicator.events() {
