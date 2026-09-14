@@ -150,6 +150,27 @@ object Follower {
         return byTime.values.toList()
     }
 
+    /**
+     * How old the newest reading in the keys vault is, or null if there is none.
+     *
+     * **BECAUSE "CARRYING 2 LOGS" IS NOT EVIDENCE OF ANYTHING.** That line
+     * printed on every pass for eleven minutes while nothing arrived: it
+     * reports that a subscription object exists, not that bytes are moving.
+     * A follower went stale, then staler, and the only thing that noticed was
+     * a person looking at the screen.
+     *
+     * This is the honest signal — did a record actually turn up, and when. It
+     * is the same question the hero card answers for the user, asked once a
+     * pass so the app can answer it too.
+     */
+    fun keysNewestAgeMs(context: Context, subject: Subject): Long? {
+        // A day's window: enough to see a stall of any interesting length
+        // without reading the whole history every pass.
+        val since = System.currentTimeMillis() - 24 * 3_600_000L
+        val newest = keysReadings(context, subject, since).maxByOrNull { it.at } ?: return null
+        return System.currentTimeMillis() - newest.at
+    }
+
     /** What the keys vault can open, or empty. Never throws at the caller. */
     private fun keysReadings(context: Context, subject: Subject, since: Long): List<Reading> {
         if (!Prefs.keysVault(context) || subject.keys.isEmpty()) return emptyList()

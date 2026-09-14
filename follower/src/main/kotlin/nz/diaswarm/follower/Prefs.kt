@@ -22,6 +22,7 @@ object Prefs {
     private const val HANDED_OVER_AT = "handed_over_at_"
     private const val KEYS_ONLY = "keys_only"
     private const val STAY_REACHABLE = "stay_reachable"
+    private const val LAST_RESTART = "last_endpoint_restart"
 
     private fun p(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -118,6 +119,17 @@ object Prefs {
     fun stayReachable(c: Context): Boolean = p(c).getBoolean(STAY_REACHABLE, false)
     fun setStayReachable(c: Context, v: Boolean) =
         p(c).edit().putBoolean(STAY_REACHABLE, v).apply()
+
+    /**
+     * When the endpoint was last re-established because replication stalled.
+     *
+     * Persisted rather than held in memory: the process restarts, and a
+     * reconnect rate limit that forgets itself on every restart is not a rate
+     * limit.
+     */
+    fun lastEndpointRestart(c: Context): Long = p(c).getLong(LAST_RESTART, 0L)
+    fun setLastEndpointRestart(c: Context, at: Long) =
+        p(c).edit().putLong(LAST_RESTART, at).apply()
 
     fun keysVault(c: Context): Boolean = p(c).getBoolean(KEYS_VAULT, false)
     fun setKeysVault(c: Context, v: Boolean) = p(c).edit().putBoolean(KEYS_VAULT, v).apply()

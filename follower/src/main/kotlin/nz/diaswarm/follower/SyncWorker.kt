@@ -90,6 +90,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                 )
                 Log.i(TAG, if (carried < 0) "keys carry unavailable ($carried)" else "keys carrying $carried log(s)")
                 verifyChains(applicationContext, keysToo = carried > 0)
+                if (carried > 0) watchForAStall(applicationContext)
 
                 // **OFFER OUR KEYS IDENTITY TO PEOPLE WHO ALREADY GRANTED US.**
                 // They granted this phone on the old vault, possibly months
@@ -153,6 +154,48 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
      * a broken chain is something a person has to look at, not something an
      * app should act on by itself.
      */
+    /**
+     * Notice when the keys vault has stopped receiving, and re-establish.
+     *
+     * **A SUBSCRIPTION THAT EXISTS IS NOT A SUBSCRIPTION THAT WORKS.** After the
+     * subject's phone changed network, log sync wedged and never recovered:
+     * eleven minutes with no segment arriving, the row count sliding backwards
+     * as the window moved on, and `keys carrying 2 log(s)` printed on every
+     * single pass throughout. Force-stopping the app fixed it in one pass. So
+     * the remedy is known and cheap — what was missing was anything noticing.
+     *
+     * `STALE_AFTER` is generous on purpose. A CGM produces a reading a minute,
+     * so ten minutes of silence is not a slow network, it is a stall. Being
+     * wrong here costs a reconnect; being too eager costs one every pass.
+     *
+     * `MIN_BETWEEN_RESTARTS` is the guard that matters. A subject whose phone
+     * is genuinely off produces exactly the same silence, and restarting the
+     * endpoint every two minutes for somebody who is asleep would be this app
+     * making its own weather. Once a quarter of an hour heals a stall promptly
+     * and costs nothing measurable when the quiet is real.
+     */
+    private fun watchForAStall(context: Context) {
+        val stale = Follower.following(context)
+            .filter { it.keys.isNotEmpty() }
+            .mapNotNull { s -> Follower.keysNewestAgeMs(context, s)?.let { s to it } }
+        if (stale.isEmpty()) return
+
+        for ((subject, age) in stale) {
+            Log.i(TAG, "keys newest for ${subject.short}: ${age / 1000}s old")
+        }
+        val worst = stale.maxOf { it.second }
+        if (worst < STALE_AFTER) return
+
+        val since = System.currentTimeMillis() - Prefs.lastEndpointRestart(context)
+        if (since < MIN_BETWEEN_RESTARTS) {
+            Log.w(TAG, "keys stalled (${worst / 1000}s) — waiting, last reconnect ${since / 1000}s ago")
+            return
+        }
+        Log.e(TAG, "keys stalled for ${worst / 1000}s with a live subscription — reconnecting")
+        Prefs.setLastEndpointRestart(context, System.currentTimeMillis())
+        Endpoint.restart(context)
+    }
+
     private fun verifyChains(context: Context, keysToo: Boolean) {
         val handle = if (keysToo) SwarmKeys.open(context) else 0L
         try {
@@ -198,6 +241,12 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
 
         /** How long to leave a subject alone between keys-identity offers. */
         private const val HANDOVER_RETRY_MS = 30 * 60 * 1000L
+
+        /** Silence longer than this is a stall, not a slow network. */
+        private const val STALE_AFTER = 10 * 60 * 1000L
+
+        /** And never reconnect more often than this, however quiet it gets. */
+        private const val MIN_BETWEEN_RESTARTS = 15 * 60 * 1000L
         const val UNIQUE = "diaswarm-sync"
 
         /**
