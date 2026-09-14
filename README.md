@@ -81,6 +81,13 @@ next key.
 
 ## How it works
 
+Follow one reading — 5.7 mmol/L, taken at 07:32 — from the phone that recorded it
+to the phone that draws it. The padlock is on it for the whole of the middle:
+
+![Where one glucose reading goes: a swimlane diagram in three lanes. Your phone records the reading in plain form, seals it into a segment, and wraps the segment key to one chosen reader. The sealed segment and the wraps publish to three strangers' phones, which hold them and cannot open them. Mum's phone fetches the ciphertext — from a peer or straight from you — and opens it with a private key that never left her device.](docs/img/journey.png)
+
+The same path, as text:
+
 ```
 records ──▶ epochs ──▶ segments ──▶ sealed ──▶ served to anyone
                           │                          │
@@ -105,6 +112,14 @@ records ──▶ epochs ──▶ segments ──▶ sealed ──▶ served to
 Revocation is the absence of a file. Nobody is told; the departing reader is simply
 not wrapped for the next segment. What they already downloaded stays readable, and
 nothing here pretends otherwise.
+
+That is the same picture again, one day later, with one box changed:
+
+![Where tomorrow's reading goes, after you withdraw: the same three lanes. The phone records, seals and publishes exactly as before, but no key is wrapped for the withdrawn reader — the box where the wrap would be is empty. The pool still holds the ciphertext and still serves it to her; her fetch still succeeds and nothing refuses her. She cannot open anything sealed after the cut, and every segment she downloaded before it stays readable permanently.](docs/img/revocation.png)
+
+Nothing on the network was asked to stop, because nothing on the network could be.
+Both diagrams are generated from [`docs/img/src/`](docs/img/src) — edit the HTML and
+re-export rather than editing the PNG.
 
 ## The pool
 
