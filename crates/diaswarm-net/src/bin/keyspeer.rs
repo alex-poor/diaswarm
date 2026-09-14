@@ -104,6 +104,10 @@ async fn main() -> Result<()> {
     );
 
     let mut epoch = 25_000i64;
+    // Cumulative, so a test can compare what the publisher SENT against what
+    // the follower says it received pushed. A follower reporting more live
+    // arrivals than the publisher ever pushed is the defect this measures.
+    let mut pushed_total = 0usize;
     for t in 0..seconds {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let pool_size = swarm.pool_members().await.map(|m| m.len()).unwrap_or(0);
@@ -117,16 +121,14 @@ async fn main() -> Result<()> {
                 let segment = v.seal(epoch, &day(epoch, 100.0))?;
                 let op = wire::publish(&store, &signing, &segment).await?;
                 pushed = replicator.broadcast(&subject_hex, op);
+                pushed_total += pushed;
                 epoch += 1;
             }
         }
 
         let (received, live) = (replicator.received(), replicator.live_received());
-        // An impossible number is one nobody can reason from, and this counter
-        // has reported two. Say so here rather than letting a test read it.
-        assert!(live <= received, "live {live} exceeds received {received}");
         println!(
-            "{{\"t\":{t},\"pool\":{pool_size},\"received\":{received},\"live\":{live},\"pushed\":{pushed}}}"
+            "{{\"t\":{t},\"pool\":{pool_size},\"received\":{received},\"live\":{live},\"pushed\":{pushed},\"sent\":{pushed_total}}}"
         );
     }
     for e in replicator.events() {

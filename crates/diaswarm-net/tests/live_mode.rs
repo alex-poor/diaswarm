@@ -162,16 +162,13 @@ async fn a_segment_published_now_is_pushed_now() {
         "the pushed segment was received but not stored: {held} segments held, \
          {history} before the push"
     );
-    // **AN IMPOSSIBLE NUMBER IS ONE NOBODY CAN REASON FROM.** Two versions of
-    // this counter reported more pushed arrivals than arrivals — 1,052 of
-    // 1,059, then 17,128 of 8,103. Both were believed for a while because
-    // nothing asserted the one thing that cannot be true.
-    assert!(
-        carrying.live_received() <= carrying.received(),
-        "live {} exceeds received {}",
-        carrying.live_received(),
-        carrying.received()
-    );
+    // **NO `live <= received` ASSERTION HERE, AND THE REASON MATTERS.** They
+    // measure different things now: `live` is p2panda's own count of live
+    // arrivals per session, summed, and `received` is how many operations this
+    // peer stored. A duplicate delivered live on two sessions is two arrivals
+    // and one stored operation. The check that does hold is against the
+    // publisher's own count, and it lives in `tests/two_process.rs` where both
+    // sides can be seen at once.
 }
 
 /// AND A GRANT DOES TOO, WHICH IS THE ONE THAT STRANDS A NEW READER.

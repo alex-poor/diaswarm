@@ -169,18 +169,23 @@ pub struct Replicator<A: Extensions + Send + 'static> {
     associated: Arc<Mutex<HashSet<([u8; 32], String)>>>,
     /// Operations seen arriving, for tests and for reporting progress.
     received: Arc<Mutex<usize>>,
-    /// Of those, the ones that arrived *pushed* rather than fetched.
+    /// Live arrivals from sessions that have since ended.
     ///
-    /// **THE NUMBER THAT WOULD HAVE CAUGHT THE MISSING SEND HALF ON DAY ONE.**
-    /// `received` counts both phases and so was always healthy: catch-up syncs
-    /// delivered everything, and live mode delivered nothing, and one total
-    /// cannot tell those apart.
+    /// **NOT DERIVED ANY MORE — THIS IS p2panda's OWN NUMBER.** Four versions
+    /// tried to reconstruct "was *this* operation pushed?" from
+    /// `Metrics::received_live_operations`, which is cumulative over a session,
+    /// and all four over-reported: 1,052 live of 1,059; then 17,128 of 8,103;
+    /// then 5,245 of 3,322; then 4,872 of 4,890 against a publisher that had
+    /// pushed four times. The last failed even as a per-event boolean, because
+    /// the counter advances two at a time per event this stream observes —
+    /// measured on a laptop as `n=2,4,6,8,…`.
     ///
-    /// See [`is_live`] for how the two are told apart, and for the wrong
-    /// rule that shipped first and reported 1,052 live arrivals on a phone
-    /// whose only peer had pushed exactly one.
-    live: Arc<Mutex<usize>>,
-    /// The last `received_live_operations` seen on each session, for [`is_live`].
+    /// So nothing is reconstructed. `live_seen` holds each open session's own
+    /// counter exactly as p2panda last reported it, this holds the total from
+    /// sessions that have ended, and [`Replicator::live_received`] adds them.
+    /// There is no rule left to get wrong.
+    live_retired: Arc<Mutex<usize>>,
+    /// Each open session's `received_live_operations`, as p2panda last said it.
     live_seen: Arc<Mutex<std::collections::HashMap<Session, u32>>>,
     /// Every sync event, in order.
     ///
@@ -210,7 +215,7 @@ impl<A: Extensions + Send + 'static> Clone for Replicator<A> {
             last_event: Arc::clone(&self.last_event),
             associated: Arc::clone(&self.associated),
             received: Arc::clone(&self.received),
-            live: Arc::clone(&self.live),
+            live_retired: Arc::clone(&self.live_retired),
             live_seen: Arc::clone(&self.live_seen),
             events: Arc::clone(&self.events),
         }
@@ -267,7 +272,7 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
             last_event: Arc::new(Mutex::new(std::time::Instant::now())),
             associated: Arc::new(Mutex::new(HashSet::new())),
             received: Arc::new(Mutex::new(0)),
-            live: Arc::new(Mutex::new(0)),
+            live_retired: Arc::new(Mutex::new(0)),
             live_seen: Arc::new(Mutex::new(std::collections::HashMap::new())),
             events: Arc::new(Mutex::new(Vec::new())),
         })
@@ -319,7 +324,7 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         let handle = self.sync.stream(topic, true).await.context("streaming a topic")?;
         let mut events = handle.subscribe().await.context("subscribing to a topic")?;
         let received = Arc::clone(&self.received);
-        let live = Arc::clone(&self.live);
+        let live_retired = Arc::clone(&self.live_retired);
         let live_seen = Arc::clone(&self.live_seen);
         let log = Arc::clone(&self.events);
         let store = self.store.clone();
@@ -338,11 +343,33 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
                     Ok(FromSync { event, remote, session_id, .. }) => match event {
                         TopicLogSyncEvent::OperationReceived { operation, metrics } => {
                             *last_event.lock().unwrap() = std::time::Instant::now();
-                            let pushed = is_live(
-                                &mut live_seen.lock().unwrap(),
-                                (topic_bytes, *remote.as_bytes(), session_id),
-                                metrics.received_live_operations,
-                            );
+                            // RECORDED, NOT JUDGED. Whatever p2panda says this
+                            // session has received live is what gets reported.
+                            let session = (topic_bytes, *remote.as_bytes(), session_id);
+                            let n = metrics.received_live_operations;
+                            let grew = {
+                                let mut seen = live_seen.lock().unwrap();
+                                // Bounded: sessions are dropped when they end, so
+                                // reaching the cap means an end event never came.
+                                if seen.contains_key(&session) || seen.len() < KEEP_SESSIONS {
+                                    seen.insert(session, n) != Some(n)
+                                } else {
+                                    false
+                                }
+                            };
+                            if grew && n > 0 {
+                                // **NAMED, BECAUSE A TOTAL CANNOT BE CHECKED
+                                // AGAINST ANYTHING.** A phone reported 4,872
+                                // pushed arrivals while its only publisher had
+                                // pushed four times, and nothing could say which
+                                // peer they came from. A publisher's own count is
+                                // this number's only external check, and it is
+                                // per peer.
+                                remember(
+                                    &log,
+                                    format!("live op from {} n={n}", &remote.to_hex()[..8]),
+                                );
+                            }
                             // STORED, OR THIS PEER CARRIES NOTHING.
                             //
                             // And stored in the log its own header says it
@@ -364,21 +391,7 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
                             }
                             .await;
                             match out {
-                                Ok(()) => {
-                                    *received.lock().unwrap() += 1;
-                                    // **COUNTED ONLY IF IT WAS ALSO KEPT**, so
-                                    // `live` can never exceed `received`. The
-                                    // first two versions of this counter both
-                                    // reported numbers that were not merely
-                                    // wrong but arithmetically impossible, and
-                                    // an impossible number is one nobody can
-                                    // reason from. Tying it to the same branch
-                                    // makes the invariant structural rather
-                                    // than something to remember.
-                                    if pushed {
-                                        *live.lock().unwrap() += 1;
-                                    }
-                                }
+                                Ok(()) => *received.lock().unwrap() += 1,
                                 Err(e) => {
                                     remember(&log, format!("could not store: {e}"))
                                 }
@@ -393,10 +406,17 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
                                 TopicLogSyncEvent::SessionFinished { .. }
                                     | TopicLogSyncEvent::Failed { .. }
                             ) {
-                                live_seen
+                                // ITS COUNT IS KEPT, NOT DISCARDED. Dropping the
+                                // entry is what bounds the map; adding it to the
+                                // retired total is what stops the reported figure
+                                // going backwards when a session closes.
+                                if let Some(n) = live_seen
                                     .lock()
                                     .unwrap()
-                                    .remove(&(topic_bytes, *remote.as_bytes(), session_id));
+                                    .remove(&(topic_bytes, *remote.as_bytes(), session_id))
+                                {
+                                    *live_retired.lock().unwrap() += n as usize;
+                                }
                             }
                             remember(&log, format!("{other:?} from {}", &remote.to_hex()[..8]))
                         }
@@ -510,13 +530,22 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         *self.received.lock().unwrap()
     }
 
-    /// How many of those were pushed to us in live mode rather than fetched.
+    /// How many operations peers have pushed to us in live mode.
     ///
-    /// Zero while `received` climbs means catch-up is carrying everything and
-    /// the push half is not working — the state this project was in for its
-    /// whole life, unnoticed, because nothing counted the two separately.
+    /// **p2panda's OWN COUNT, SUMMED OVER SESSIONS — NOT A RECONSTRUCTION.**
+    /// Zero while [`Replicator::received`] climbs means catch-up is carrying
+    /// everything and the push half is not working, which is the state this
+    /// project shipped in unnoticed for its whole life.
+    ///
+    /// It counts per session, so an operation delivered live on two sessions
+    /// counts twice. That is what "live operations received" means here, and it
+    /// beats the alternative: four earlier versions tried to turn these counters
+    /// into a per-operation answer and every one over-reported. The
+    /// `live op from …` lines in [`Replicator::events`] name the peer, so the
+    /// figure can be checked against a publisher's own count.
     pub fn live_received(&self) -> usize {
-        *self.live.lock().unwrap()
+        let open: usize = self.live_seen.lock().unwrap().values().map(|n| *n as usize).sum();
+        *self.live_retired.lock().unwrap() + open
     }
 
     /// Every non-operation sync event so far.
@@ -555,48 +584,6 @@ fn remember(log: &Mutex<Vec<String>>, line: String) {
     }
 }
 
-/// Did *this* operation arrive pushed rather than fetched?
-///
-/// **A BOOLEAN, BECAUSE ONE EVENT IS ONE OPERATION.** Three earlier versions of
-/// this returned a count derived from `Metrics::received_live_operations`, and
-/// all three over-reported, twice impossibly — 1,052 live of 1,059 received,
-/// then 17,128 of 8,103, then 5,245 of 3,322. The cause was the same every
-/// time and it was structural: `Metrics` is cumulative over a session, this
-/// question is about a single operation, and reconstructing one from the other
-/// means guessing where a session began. Every version guessed differently and
-/// every guess had a case where it added a session's whole running total at
-/// once.
-///
-/// There is no delta to compute. p2panda bumps the counter by exactly one
-/// immediately before emitting the event, so the counter *changing* is the
-/// signal and its magnitude is noise. Returning at most one per event makes
-/// `live <= received` true by construction rather than by argument — and an
-/// impossible number is one nobody can reason from, which is how two of those
-/// three were believed.
-///
-/// * zero — this session has taken no live operation, so this is catch-up;
-/// * unchanged — the session took one earlier, but not this one;
-/// * changed, or first seen non-zero — this one.
-fn is_live(
-    seen: &mut std::collections::HashMap<Session, u32>,
-    session: Session,
-    received_live: u32,
-) -> bool {
-    // Unambiguous: the live counter cannot have been bumped for this operation.
-    if received_live == 0 {
-        return false;
-    }
-    // **FAIL TOWARDS UNDERCOUNTING.** Sessions are forgotten when they end, so
-    // this cap should never be reached; if it is, something is already wrong.
-    // Reporting fewer pushes than happened sends somebody to look. Inventing
-    // them HIDES a broken transport, which is the mistake this has already
-    // made three times.
-    if !seen.contains_key(&session) && seen.len() >= KEEP_SESSIONS {
-        return false;
-    }
-    seen.insert(session, received_live) != Some(received_live)
-}
-
 /// A subject is named by its hex public key; log sync wants the key itself.
 fn subject_key(subject: &str) -> Result<VerifyingKey> {
     let bytes = (0..subject.len())
@@ -610,115 +597,6 @@ fn subject_key(subject: &str) -> Result<VerifyingKey> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_live, Session, KEEP_SESSIONS};
-    use std::collections::HashMap;
-
-    fn session(topic: u8, peer: u8, id: u64) -> Session {
-        ([topic; 32], [peer; 32], id)
-    }
-
-    /// CATCH-UP AFTER A PUSH IS NOT A PUSH.
-    ///
-    /// **THE FIRST WRONG VERSION.** It asked `received_live_operations > 0`,
-    /// which is a fact about the *session*, not about the operation in hand, so
-    /// once a session had taken one push every later catch-up operation on it
-    /// looked pushed too. A follower reported 1,052 live of 1,059 received
-    /// while its only peer had pushed one.
-    #[test]
-    fn catch_up_after_a_push_is_not_a_push() {
-        let mut seen = HashMap::new();
-        let s = session(1, 1, 7);
-        for _ in 0..1_000 {
-            assert!(!is_live(&mut seen, s, 0), "catch-up before any push counted");
-        }
-        assert!(is_live(&mut seen, s, 1));
-        // The session re-syncs and delivers fifty more by catch-up. The
-        // cumulative metric still reads 1, and none of these are live.
-        for _ in 0..50 {
-            assert!(!is_live(&mut seen, s, 1), "catch-up after a push counted");
-        }
-        assert!(is_live(&mut seen, s, 2));
-    }
-
-    /// TWO TOPICS DO NOT RE-COUNT EACH OTHER'S TOTALS.
-    ///
-    /// **THE SECOND WRONG VERSION, AND THE PHONE SAID SO IN ARITHMETIC.** Keyed
-    /// on `session_id` alone it reported 17,128 live of 8,103 received — not
-    /// merely wrong but impossible. A replicator streams a topic per subject
-    /// and each manager numbers its own sessions, so two topics run sessions
-    /// numbered alike.
-    #[test]
-    fn sessions_numbered_alike_on_different_topics_are_different_sessions() {
-        let mut seen = HashMap::new();
-        let (a, b) = (session(1, 9, 4), session(2, 9, 4));
-        for n in 1..20u32 {
-            assert!(is_live(&mut seen, a, n), "topic a lost a push at {n}");
-            assert!(is_live(&mut seen, b, n), "topic b lost a push at {n}");
-        }
-        // And interleaving does not make either of them count twice.
-        assert!(!is_live(&mut seen, a, 19));
-        assert!(!is_live(&mut seen, b, 19));
-    }
-
-    /// AND NEITHER DO TWO PEERS ON ONE TOPIC.
-    ///
-    /// Two phones and a laptop carrying the same subject is the ordinary case.
-    #[test]
-    fn peers_do_not_borrow_each_others_counts() {
-        let mut seen = HashMap::new();
-        let (a, b) = (session(3, 1, 2), session(3, 2, 2));
-        assert!(is_live(&mut seen, a, 1));
-        assert!(is_live(&mut seen, b, 1));
-        assert!(!is_live(&mut seen, a, 1));
-        assert!(is_live(&mut seen, a, 2));
-    }
-
-    /// ONE EVENT NEVER COUNTS AS MORE THAN ONE OPERATION.
-    ///
-    /// **THE THIRD WRONG VERSION, AND THE REASON THIS RETURNS A BOOLEAN.** It
-    /// returned the delta, and its "the session started over" branch returned
-    /// the whole cumulative value — so a baseline going missing mid-flight
-    /// added hundreds at once. On a phone: 5,245 live of 3,322 received.
-    ///
-    /// p2panda bumps the counter by exactly one immediately before emitting the
-    /// event, so its magnitude carries no information this needs. Refusing to
-    /// return more than one per event is what makes `live <= received` true by
-    /// construction instead of by argument.
-    #[test]
-    fn a_session_that_reappears_with_a_high_count_adds_one_not_hundreds() {
-        let mut seen = HashMap::new();
-        let s = session(4, 4, 3);
-        assert!(is_live(&mut seen, s, 9));
-        // Its baseline is dropped — the session ended, or was never seen.
-        seen.remove(&s);
-        // A cumulative counter of 500 is still one operation arriving.
-        assert!(is_live(&mut seen, s, 500));
-        assert_eq!(seen.get(&s), Some(&500));
-        // And a restart that runs the counter backwards is also one operation.
-        assert!(is_live(&mut seen, s, 2));
-        assert!(!is_live(&mut seen, s, 2));
-    }
-
-    /// THE BASELINE MAP IS BOUNDED, AND OVERFLOWS TOWARDS SILENCE.
-    ///
-    /// **THE DIRECTION MATTERS MORE THAN THE CAP.** Refusing new baselines
-    /// reports fewer pushes than happened, which sends somebody to look.
-    /// Inventing them would report a broken transport as a working one — the
-    /// mistake this has already made three times.
-    #[test]
-    fn a_full_baseline_map_undercounts_rather_than_inventing() {
-        let mut seen = HashMap::new();
-        for i in 0..KEEP_SESSIONS as u64 {
-            assert!(is_live(&mut seen, session(0, 0, i), 1));
-        }
-        assert_eq!(seen.len(), KEEP_SESSIONS);
-        // A session beyond the cap is not counted, and evicts nobody.
-        assert!(!is_live(&mut seen, session(0, 0, 9_999), 500));
-        assert_eq!(seen.len(), KEEP_SESSIONS, "the cap evicted a live session's baseline");
-        // A session already known still counts, cap or no cap.
-        assert!(is_live(&mut seen, session(0, 0, 0), 2));
-    }
-
     /// THE EVENT LOG DOES NOT GROW FOR EVER.
     ///
     /// **IT DID, ON A PHONE THAT DRIVES AN INSULIN PUMP.** Every sync event was

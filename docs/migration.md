@@ -2446,3 +2446,43 @@ This corrects the entry above it: de-duplication makes a push invisible **when
 catch-up has already delivered the operation**, which is what the laptop saw
 first. It does not make pushing useless — the follower on phone B saw the
 pushes arrive.
+
+### ✅ Stop deriving the live count; report p2panda's own
+
+A fourth wrong version, and then the decision to stop having a version at all.
+
+The boolean rule still over-reported: a phone said `live=8894` of
+`received=8915` while its only publisher had pushed four times. The laptop said
+`live=73` while every logged `SyncFinished` from all three peers showed
+`received_live_operations: 0`.
+
+What settled it was making the code name the peer behind every live arrival —
+one line per arrival, capped. Two facts fell out at once:
+
+* **every live arrival came from `b8e0c9ba`**, the one peer running the fix;
+  none from `9eeeac47` (the pre-fix loop phone) or `d4dd64f2` (a follower that
+  publishes nothing). The signal is real and it is attributable;
+* the raw counter advanced **`n=2,4,6,8,10,12,14,16…`** — two per event this
+  stream observes. No per-event rule can be right against that, in either
+  direction.
+
+So there is no longer a rule. `live_seen` holds each open session's counter
+exactly as p2panda last reported it, `live_retired` accumulates sessions that
+have ended, and `live_received()` adds them. It counts per session, so an
+operation delivered live on two sessions counts twice — which is what "live
+operations received" means, and is preferable to a fifth attempt at guessing.
+
+The `live op from <peer> n=<count>` lines make the number checkable against a
+publisher's own `pushed=`, which is the only external check it has ever had.
+
+**Five versions of one diagnostic.** The counter was never the product; it was
+supposed to be the instrument for confirming the product. It cost more than the
+fix did, and the reason is worth keeping: a derived number whose failure mode is
+over-reporting will be believed, because it agrees with what you hoped.
+
+⚠️ The `live <= received` assertions are gone, deliberately. The two now measure
+different things — p2panda's live arrivals per session against operations this
+peer stored — so that assertion would be wrong rather than protective. The check
+that does hold is the follower's live count against the **publisher's** own
+count of what it sent, and it lives in `tests/two_process.rs` where both sides
+are visible at once.
