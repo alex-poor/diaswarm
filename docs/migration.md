@@ -2957,3 +2957,67 @@ disk is the cost.
 
 Not investigated. Recorded because the measurement exists now and will not
 after the process restarts.
+
+### 🔍 Why the peer stalled: what the upstream source says, and what it does not
+
+Chased through `p2panda-net` and `p2panda-sync` 0.7.1 after the desktop peer
+caught up once and then never again.
+
+**1. A sync session is created only from HyParView membership events.**
+`sync/actors/manager.rs::spawn_membership_task` derives a *separate gossip
+overlay per sync topic* and initiates a session on exactly two events:
+
+```rust
+GossipEvent::Joined      { topic, nodes } => InitiateSync
+GossipEvent::NeighbourUp { node,  topic } => InitiateSync
+```
+
+So **the peers you exchange data with are exactly your active view**, per topic.
+There is no other path: `SyncHandle::initiate_session(node_id)` exists, does
+precisely "sync with this peer", and is `#[cfg(test)]` behind a TODO asking
+whether to make it public.
+
+**2. Relay between sessions is same-topic only.** The protocol doc says live
+messages are "forwarded to any concurrently running sync sessions", which reads
+as unconditional. `manager/event_stream.rs` shows it is not:
+
+```rust
+let topic = state.session_topic_map.topic(session_id);
+let keys  = state.session_topic_map.sessions(topic);   // same topic only
+```
+
+Two peers can be connected and never relay, if their sessions are on different
+topics.
+
+**3. Together, these mean topic proliferation dilutes connectivity.** Each topic
+is its own overlay with its own sampling, and relay cannot bridge across topics.
+Finer-grained topics — which feel tidier — make both mechanisms sparser. The
+[D31](decisions.md) transition, which carries every subject at *two* topics
+during the migration, doubles the overlay count and therefore halves the density
+of each.
+
+#### The knobs that were never configured
+
+`Gossip::builder(..).config(GossipConfig)` was never called, so membership ran
+on iroh-gossip's defaults: `active_view_capacity: 5`, `shuffle_interval: 60s`
+— the latter commented **"Wild guess"** upstream. `DIASWARM_ACTIVE_VIEW` and
+`DIASWARM_SHUFFLE_SECS` now expose both.
+
+⚠️ **AND THE EXPERIMENT THAT WOULD HAVE TESTED THEM WAS CONFOUNDED, WHICH IS THE
+POINT OF THIS SECTION.** Raising the active view to 16 appeared to produce a
+peer climbing `+1` per pass with no stall. The log timestamps say otherwise:
+
+```
+09:09:44  pid 1614426  (OLD binary, default config)  holding 1795
+09:11:44  pid 1614426                                holding 1797   ← already +1/pass
+09:12:33  pid 1698373  (NEW, active_view=16)         starting
+```
+
+**The baseline was already healthy.** The stall is intermittent, and measuring a
+fix against a period when the fault was absent proves nothing. A real test needs
+the stall reproducible on demand, or hours of A/B — not two lines that came from
+the binary without the change.
+
+**Nothing in points 1–3 depends on that experiment.** They are read from
+upstream source and stand on their own; the view sizing remains a plausible
+contributor and an unproven one.

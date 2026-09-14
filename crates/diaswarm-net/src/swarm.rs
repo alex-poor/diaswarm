@@ -240,8 +240,37 @@ impl Swarm {
             .context("mdns")?;
         let discovery =
             Discovery::builder(book.clone(), endpoint.clone()).spawn().await.context("discovery")?;
-        let gossip =
-            Gossip::builder(book.clone(), endpoint.clone()).spawn().await.context("gossip")?;
+        // **THE MEMBERSHIP KNOBS, WHICH WERE NEVER CONFIGURED.**
+        // `Gossip::builder(..).config(..)` takes a `GossipConfig` whose
+        // `membership` is iroh-gossip's HyParView config, and passing none gave
+        // us the paper's defaults: `active_view_capacity: 5`,
+        // `shuffle_interval: 60s` — the latter commented "Wild guess" upstream.
+        //
+        // **THIS MATTERS BECAUSE SYNC SESSIONS COME FROM MEMBERSHIP.**
+        // `spawn_membership_task` initiates a session only on a HyParView
+        // `Joined` or `NeighbourUp` event, so the set of peers you exchange
+        // data with is exactly your active view. A peer that is not sampled
+        // into it is a peer you never sync with, and nothing later corrects
+        // that on its own.
+        //
+        // A pool of a handful of phones should fit inside a capacity of five.
+        // It is raised anyway, because the cost is a few more connections in a
+        // network this size and the failure it guards against is a carrier that
+        // silently holds a stale copy. `DIASWARM_ACTIVE_VIEW` and
+        // `DIASWARM_SHUFFLE_SECS` exist so this can be measured rather than
+        // argued about.
+        let mut gossip_config = p2panda_net::gossip::GossipConfig::default();
+        if let Ok(n) = std::env::var("DIASWARM_ACTIVE_VIEW").unwrap_or_default().parse::<usize>() {
+            gossip_config.membership.active_view_capacity = n;
+        }
+        if let Ok(secs) = std::env::var("DIASWARM_SHUFFLE_SECS").unwrap_or_default().parse::<u64>() {
+            gossip_config.membership.shuffle_interval = std::time::Duration::from_secs(secs);
+        }
+        let gossip = Gossip::builder(book.clone(), endpoint.clone())
+            .config(gossip_config)
+            .spawn()
+            .await
+            .context("gossip")?;
 
         // The vault protocol on p2panda's endpoint. Built before it is handed
         // over so the offer window stays reachable from here.
