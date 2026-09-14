@@ -2930,3 +2930,30 @@ own problem and it is not this one.
 *Open. Root cause not established.* The next question is why a session with the
 publisher is not re-established, and why `LiveModeStarted` yields no live
 operations on this peer while the same code delivers them to Ayni.
+
+### 📏 Peer memory: fine at rest, spikes with catch-up
+
+Measured on the laptop peer, 2026-09-15.
+
+| | |
+|---|---|
+| steady state | **119 MB** RSS, 0 swap, 65 threads, 11 MB on disk |
+| during initial catch-up of 3,400 operations | **857 MB peak, 537 MB swap** |
+
+**An earlier note here called that 857 MB "for a peer holding 6 MB", which
+conflated a transient with a resting cost.** At rest the peer is unremarkable.
+The spike belongs to bulk catch-up.
+
+**The ratio is the part worth keeping.** Roughly 250 KB of peak memory per
+operation caught up, against about 7 KB per operation on disk — **35×**. That
+shape suggests the sync path buffers rather than streams.
+
+It does not bite at this size and it is squarely in the way of the thing this
+design is for. A peer adopting a subject with a year of Libre 3 history is
+catching up on the order of **half a million operations**, two orders of
+magnitude beyond what produced the 857 MB. Anyone sizing a volunteer carrier —
+a Pi, a NAS, an old laptop — needs this number before they are told 329 MB of
+disk is the cost.
+
+Not investigated. Recorded because the measurement exists now and will not
+after the process restarts.
