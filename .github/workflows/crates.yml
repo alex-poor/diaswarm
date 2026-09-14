@@ -92,6 +92,10 @@ jobs:
       # mDNS between peers inside the runner. If this one turns out to be flaky
       # on a hosted runner it must be made reliable or made explicit — not
       # quietly dropped back out, which is the state it is being rescued from.
+      - name: diaswarm-peer
+        working-directory: crates/diaswarm-peer
+        run: cargo test --no-fail-fast
+
       - name: diaswarm-net
         working-directory: crates/diaswarm-net
         run: cargo test --no-fail-fast
