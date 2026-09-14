@@ -609,7 +609,14 @@ object SwarmNative {
      * Returns how many topics were re-streamed.
      */
     /**
-     * `counts received=N live=M`, then the last `limit` sync events. A diagnostic.
+     * `counts stored=N live_raw=M (not comparable)`, then the last `limit` sync
+     * events. A diagnostic.
+     *
+     * The two numbers are in different units — `stored` is one per operation
+     * written, `live_raw` is p2panda's own live counter summed over sessions,
+     * which does not advance once per operation. `live_raw > 0` means pushes
+     * are arriving; its magnitude means nothing. Count the per-arrival
+     * `live op from <peer>` lines if a number is wanted.
      *
      * The replicator has kept the events since it was written, and nothing could
      * read them — so every diagnosis of replication on a phone has been

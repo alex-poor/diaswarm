@@ -2074,11 +2074,28 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysHoldersHeard<'a>(
 
 /// A counts line, then the last `limit` sync events, newest last, one per line.
 ///
-/// The first line is always `counts received=N live=M`: every operation that
-/// has arrived from a peer, and how many of those were *pushed* to us in live
-/// mode rather than fetched by a catch-up sync. It is first because it is the
-/// one that distinguishes a working transport from a working poll, and it is
-/// separated from the events because it is a running total and they are a tail.
+/// The first line is always `counts stored=N live_raw=M (not comparable)`:
+/// operations this peer has stored, and p2panda's own live-arrival counter
+/// summed over sessions. It is first because it is what distinguishes a working
+/// transport from a working poll, and separate from the events because it is a
+/// running total and they are a tail.
+///
+/// **THE TWO NUMBERS ARE IN DIFFERENT UNITS AND MUST NOT BE COMPARED**, which
+/// is the fifth way this counter has misled. `stored` is one per operation
+/// written. `live_raw` is `Metrics::received_live_operations` summed across
+/// sessions, and that counter does not advance once per operation — observed at
+/// `n=2` per event on one build and `n=1` on another, so the multiplier is not
+/// even constant. On a phone it duly printed `received=20401 live=21622`: more
+/// pushed arrivals than arrivals, which is the shape versions 2 and 3 were
+/// rejected for, arrived at this time by honest reporting of a number that
+/// simply is not the same quantity.
+///
+/// Renaming is all that is done here, deliberately. Four attempts to *derive*
+/// the right number were each wrong, and dividing by a multiplier nobody has
+/// measured upstream would be a fifth. What the label now says is exactly what
+/// is known: `live_raw > 0` means pushes are arriving, its magnitude means
+/// nothing, and the per-arrival `live op from <peer>` lines below are what to
+/// count if a count is wanted.
 ///
 ///
 /// **THE REPLICATOR HAS KEPT THESE ALL ALONG AND NOTHING COULD READ THEM.** Its
@@ -2112,8 +2129,11 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSyncEvents<'a>(
     // kept arriving and the phone looked healthy, while every one of them came
     // from a catch-up sync and live mode delivered nothing for the life of the
     // app. One number could not have shown that and did not.
+    //
+    // And they are NAMED apart because putting them side by side under one word
+    // invited the comparison the doc comment above explains is meaningless.
     let mut out = format!(
-        "counts received={} live={}",
+        "counts stored={} live_raw={} (not comparable)",
         replicator.received(),
         replicator.live_received()
     );
