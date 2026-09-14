@@ -2206,7 +2206,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSyncEvents<'a>(
     to_jstring(env, tail.join("\n"))
 }
 
-/// Re-subscribe the keys topics if nothing has arrived for `quiet_seconds`.
+/// Re-subscribe every keys topic, now.
 ///
 /// **THE TARGETED REMEDY FOR A ONE-SHOT SUBSCRIPTION.** `stream` catches up once
 /// and then waits for gossip; when that link dies the follower goes quiet and
@@ -2215,23 +2215,26 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSyncEvents<'a>(
 /// it drops every connection this phone has, including the ones that are
 /// working.
 ///
-/// Returns the number of topics re-streamed: 0 when nothing was quiet enough,
-/// which is the ordinary answer and not a failure. -3 if the pool has no keys
+/// **THE CALLER DECIDES WHEN.** This used to take a quiet period and compare it
+/// against the last operation received — which on a phone meant it never fired,
+/// because catch-up syncs kept delivering operations while the newest *record*
+/// aged past a thousand seconds. The app knows how stale the data is; this does
+/// not and cannot.
+///
+/// Returns the number of topics re-streamed. -3 if the pool has no keys
 /// replicator, matching every other keys call.
 #[no_mangle]
-pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRestreamIfQuiet<'a>(
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRestream<'a>(
     _env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
-    quiet_seconds: jlong,
 ) -> jlong {
     if handle == 0 {
         return -1;
     }
     let pooled = unsafe { &*(handle as *const Pooled) };
     let Some(replicator) = pooled.keys_replicator.as_ref() else { return -3 };
-    let quiet = std::time::Duration::from_secs(quiet_seconds.max(1) as u64);
-    match pooled.runtime.block_on(replicator.restream_if_quiet(quiet)) {
+    match pooled.runtime.block_on(replicator.restream()) {
         Ok(n) => n as jlong,
         Err(_) => -4,
     }

@@ -611,7 +611,7 @@ object SwarmNative {
     external fun vaultVerifyChain(storePath: String, subject: String): String
 
     /**
-     * Re-subscribe the keys topics if nothing has arrived for `quietSeconds`.
+     * Re-subscribe every keys topic, now. The caller decides when.
      *
      * **BECAUSE SUBSCRIBING ONCE IS SUBSCRIBING FOREVER.** The stream catches up
      * and then waits for gossip to push; when that link dies the follower goes
@@ -619,7 +619,12 @@ object SwarmNative {
      * returning the cached count. Restarting the endpoint also works and drops
      * every other connection with it.
      *
-     * Returns how many topics were re-streamed — 0 is the ordinary answer.
+     * It used to decide for itself, comparing a quiet period against the last
+     * operation received — and on a phone it never fired once, because catch-up
+     * syncs kept delivering operations while the newest RECORD aged past a
+     * thousand seconds. Staleness of the data is the app's question.
+     *
+     * Returns how many topics were re-streamed.
      */
     /**
      * The last `limit` sync events, newest last. A diagnostic.
@@ -639,7 +644,7 @@ object SwarmNative {
 
     external fun keysSyncEvents(handle: Long, limit: Long): String
 
-    external fun keysRestreamIfQuiet(handle: Long, quietSeconds: Long): Long
+    external fun keysRestream(handle: Long): Long
 
     external fun keysVerifyControl(handle: Long, subjectKeys: String): String
 

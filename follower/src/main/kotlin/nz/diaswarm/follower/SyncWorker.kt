@@ -238,7 +238,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
         Prefs.setLastEndpointRestart(context, System.currentTimeMillis())
         val handle = SwarmKeys.open(context)
         val restreamed = if (handle == 0L) -1L else try {
-            SwarmNative.keysRestreamIfQuiet(Endpoint.handle, STALE_AFTER / 1000)
+            SwarmNative.keysRestream(Endpoint.handle)
         } catch (e: Throwable) {
             Log.w(TAG, "restream threw: $e"); -1L
         } finally {

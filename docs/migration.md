@@ -2121,3 +2121,49 @@ That is worth being exact about rather than claiming the harness solved it. What
 it does do is close a real hole permanently — a regression in gossip or adoption
 logic now fails in twelve seconds instead of surfacing as a stale graph — and it
 narrows the remaining question to something specific and physical.
+
+### ✅ What is actually happening, measured at one instant
+
+After three wrong diagnoses, the numbers taken from both phones at the same
+moment:
+
+```
+publisher segment ops: 929
+follower opened:       924        behind: 5
+```
+
+**Replication works.** The follower tracks about five operations — five
+minutes — behind the publisher, converging: `873 874 878 884 886 893 895 896
+904 911 913 924`. The "BG from 9 minutes ago" was a stall in progress that had
+not yet reached the ten-minute threshold.
+
+The shape of it, now fully evidenced:
+
+| | |
+|---|---|
+| `LiveModeStarted` | **69 times**, `received_live_operations: 0` every time |
+| `SyncFinished` | 54 — every byte the follower has came from these |
+| `Failed` | 29, **all** with one peer, `ConnectionLost(TimedOut)` |
+| steady state | ~5 operations behind, occasional 10–17 min stalls |
+| stalls | self-heal — the detector fires and the endpoint restart recovers |
+
+And **the targeted remedy never fired once**. `restream_if_quiet` compared its
+quiet period against `last_event` — the time since *any* operation arrived — and
+during a stall catch-up syncs keep trickling operations in while the newest
+*record* ages past a thousand seconds. So it returned 0 every time:
+
+```
+keys stalled for 1025s and re-subscribing gave 0 — reconnecting
+keys stalled for  849s and re-subscribing gave -4 — reconnecting
+```
+
+The endpoint restart, the fallback, is what has been doing all the recovering.
+
+Fixed by moving the decision to whoever can make it: `restream()` is
+unconditional now, and the app — which knows how old the newest record is —
+decides when. A component that cannot know how often a subject publishes has no
+business deciding what "quiet" means.
+
+⚠️ **Still open, and now precisely stated:** live mode has started 69 times and
+delivered nothing, and all 29 connection failures are with a single peer. Those
+are the two things worth chasing, and both are now visible from a phone.

@@ -296,12 +296,20 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
     /// on re-subscribe is what actually recovers the gap.
     ///
     /// Returns how many topics were re-streamed, so a caller can say so rather
-    /// than guess. `quiet_for` is the caller's judgement: this cannot know how
-    /// often the subject publishes.
-    pub async fn restream_if_quiet(&self, quiet_for: std::time::Duration) -> Result<usize> {
-        if self.last_event.lock().unwrap().elapsed() < quiet_for {
-            return Ok(0);
-        }
+    /// than guess.
+    ///
+    /// **UNCONDITIONAL, AND THE CONDITION IT USED TO CARRY WAS WRONG.** It took
+    /// a `quiet_for` and compared it against `last_event` — the time since ANY
+    /// operation arrived. Measured on a phone: during a stall the freshness of
+    /// the newest *record* reached 1025 seconds while operations kept trickling
+    /// in from catch-up syncs, so `last_event` stayed recent and this returned
+    /// 0 every time it was asked. It never fired once.
+    ///
+    /// The caller knows the thing that matters — how old the newest record is —
+    /// and the caller is the only one who can know, because this has no idea
+    /// how often the subject publishes. So the decision belongs there and this
+    /// just does the work.
+    pub async fn restream(&self) -> Result<usize> {
         let topics: Vec<[u8; 32]> = self.streaming.lock().unwrap().iter().copied().collect();
         for topic in &topics {
             if let Some(task) = self.tasks.lock().unwrap().remove(topic) {
@@ -309,10 +317,6 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
             }
             self.streaming.lock().unwrap().remove(topic);
         }
-        // Stamped before re-streaming, not after: without this a topic that is
-        // legitimately quiet — the subject's phone is off — would be
-        // re-subscribed on every single pass for as long as the silence lasts.
-        *self.last_event.lock().unwrap() = std::time::Instant::now();
         for topic in &topics {
             self.stream(*topic).await?;
         }
