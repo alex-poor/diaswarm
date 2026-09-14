@@ -2068,14 +2068,24 @@ able to ask:
 holders for 552f688a: none — only the subject can serve this
 ```
 
-**D15's promise is not operational.** "Any holder serves identical bytes" is what
-makes a swarm more than a pair of phones — a follower should be able to read a
-sleeping subject from a peer that is awake. No peer has announced holding this
-subject, so there is no redundancy at all: if the loop phone is unreachable, the
-follower gets nothing.
+**⚠️ AND THAT READING WAS WRONG, corrected the same afternoon.** It was one
+sample, taken seconds after an app restart, before gossip had delivered a single
+announcement. Over a longer window:
 
-That is the structural reason a sleeping subject meant a total blackout, and it
-was invisible until this line existed.
+```
+ 20 x  holders for 552f688a: 2      (9eeeac47, b8e0c9ba)
+  8 x  holders for 552f688a: 1
+  7 x  holders for 552f688a: none
+```
+
+**D15's redundancy is operational.** Two peers hold the subject most of the
+time, and "none" is the state for the first minute after a restart while gossip
+catches up. Declaring a structural failure from the first reading of a brand new
+instrument was the fourth confident wrong answer drawn from a handful of samples
+in one afternoon.
+
+What it did usefully establish is *who*: `b8e0c9ba` is a holder, and it is also
+the peer every one of the 29 `ConnectionLost(TimedOut)` failures is with.
 
 Part of it is a choice made this morning: the follower ticks with `maxAdopt = 0`
 — "the defect is discovery; whether a follower's phone should hold strangers'
