@@ -183,6 +183,29 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
         for ((subject, age) in stale) {
             Log.i(TAG, "keys newest for ${subject.short}: ${age / 1000}s old")
         }
+        // WHAT THE STREAM ACTUALLY DID, not what the age implies it did.
+        // The replicator has recorded these since it was written and nothing
+        // could read them, so every explanation of a stall so far has been
+        // inferred from the outside — and three of them in one hour were wrong.
+        val h = SwarmKeys.open(context)
+        if (h != 0L) {
+            try {
+                val events = SwarmNative.keysSyncEvents(Endpoint.handle, 6)
+                    .lines().filter { it.isNotBlank() }
+                // SAYS SO WHEN THERE ARE NONE. An empty list read as silence is
+                // how the first version of this told me nothing for a pass and
+                // I nearly concluded the call was broken. Empty is a finding:
+                // the replicator records session events and errors but not
+                // arrivals, so none at all means no session has happened and
+                // everything came by gossip push.
+                if (events.isEmpty()) Log.i(TAG, "sync: no session events recorded")
+                else events.forEach { Log.i(TAG, "sync: $it") }
+            } catch (e: Throwable) {
+                Log.w(TAG, "sync events threw: $e")
+            } finally {
+                SwarmNative.keysClose(h)
+            }
+        }
         val worst = stale.maxOf { it.second }
         if (worst < STALE_AFTER) return
 

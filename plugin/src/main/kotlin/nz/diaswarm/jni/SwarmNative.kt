@@ -621,6 +621,15 @@ object SwarmNative {
      *
      * Returns how many topics were re-streamed — 0 is the ordinary answer.
      */
+    /**
+     * The last `limit` sync events, newest last. A diagnostic.
+     *
+     * The replicator has kept these since it was written, and nothing could
+     * read them — so every diagnosis of replication on a phone has been
+     * guesswork from outside. Answers when a sync happened and what came of it.
+     */
+    external fun keysSyncEvents(handle: Long, limit: Long): String
+
     external fun keysRestreamIfQuiet(handle: Long, quietSeconds: Long): Long
 
     external fun keysVerifyControl(handle: Long, subjectKeys: String): String

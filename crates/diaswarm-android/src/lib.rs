@@ -2151,6 +2151,38 @@ fn newest_profile(body: &str) -> Option<String> {
     newest_of_kind(body, "profile")
 }
 
+/// The last `limit` sync events, newest last, one per line.
+///
+/// **THE REPLICATOR HAS KEPT THESE ALL ALONG AND NOTHING COULD READ THEM.** Its
+/// own comment says why they exist — "nothing replicated" has several very
+/// different causes — and then no JNI ever exposed them, so every diagnosis of
+/// replication on a phone has been guesswork from the outside. Three different
+/// explanations of one stall were offered in an hour, each from about four
+/// samples of a symptom, because the mechanism was unreadable.
+///
+/// This is a diagnostic, not a feature: it answers when a sync session happened
+/// and what came of it, which is the difference between fixing a cause and
+/// tuning a threshold.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSyncEvents<'a>(
+    env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    limit: jlong,
+) -> JString<'a> {
+    if handle == 0 {
+        return to_jstring(env, String::new());
+    }
+    let pooled = unsafe { &*(handle as *const Pooled) };
+    let Some(replicator) = pooled.keys_replicator.as_ref() else {
+        return to_jstring(env, "error no-replicator".to_string());
+    };
+    let all = replicator.events();
+    let n = limit.max(1) as usize;
+    let tail = if all.len() > n { &all[all.len() - n..] } else { &all[..] };
+    to_jstring(env, tail.join("\n"))
+}
+
 /// Re-subscribe the keys topics if nothing has arrived for `quiet_seconds`.
 ///
 /// **THE TARGETED REMEDY FOR A ONE-SHOT SUBSCRIPTION.** `stream` catches up once

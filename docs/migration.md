@@ -1961,3 +1961,45 @@ resets exactly the measurement being taken.
 
 The freshness probe earned its place regardless: none of this was visible at all
 until the pass started asking whether a record had actually arrived.
+
+### 🔍 The mechanism, finally readable: live mode delivers nothing
+
+The replicator has recorded sync events since it was written, with a comment
+saying why — "nothing replicated" has several very different causes — and **no
+JNI ever exposed them**. So every explanation of a stall on a phone had been
+inferred from outside, which is how three contradictory diagnoses came out of one
+afternoon. Exposed now, the first read says it plainly:
+
+```
+sync: SyncFinished { received_sync_operations: 6, received_live_operations: 0 } from 9eeeac47
+sync: LiveModeStarted from 9eeeac47
+sync: Failed { error: "...ConnectionLost(TimedOut)" } from b8e0c9ba
+```
+
+**Catch-up sync delivers; live mode delivers nothing.** Six operations in the
+session, zero live. `stream(topic, true)` is documented in this repo as "catch up
+first, then keep receiving over gossip — this is what removes the two-minute
+follower poll". The first half works. The second half has not been observed
+delivering a single operation.
+
+That explains the shape exactly: data arrives in a burst when a session starts
+and nothing in between, so the follower's freshness sawtooths over several
+minutes rather than tracking a CGM that reports every minute.
+
+It also means the earlier readings were all wrong in an interesting way:
+
+| said | actually |
+|---|---|
+| subscription wedged permanently | never wedged; sessions still happen |
+| healthy sawtooth | a sawtooth, but of catch-up sessions, not live delivery |
+| intermittent with ~7 min gaps | the gap IS the interval between sync sessions |
+
+And it makes `restream_if_quiet` a symptom treatment that happens to work —
+re-subscribing forces a fresh catch-up, which is the thing that actually
+delivers. Worth keeping as a safety net, not worth mistaking for the fix.
+
+⚠️ **The real question is why live mode is silent**, and that is not answered
+yet: gossip mesh never forming, the topic not matching between peers, or the
+`ConnectionLost(TimedOut)` above being the normal state rather than an anomaly.
+That is the next thing to look at, and now it can be looked at rather than
+guessed at.
