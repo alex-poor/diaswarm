@@ -2502,3 +2502,37 @@ peer stored — so that assertion would be wrong rather than protective. The che
 that does hold is the follower's live count against the **publisher's** own
 count of what it sent, and it lives in `tests/two_process.rs` where both sides
 are visible at once.
+
+### ⚠️ A fifth way to be wrong about the live counter: the units
+
+Not a new derivation — version 5 is right to report p2panda's number and derive
+nothing. The problem is what it is printed next to.
+
+`live_received()` sums `Metrics::received_live_operations` across sessions, and
+this file already records what that counter does: it advances `n=2,4,6,8,…`,
+**two per event the stream observes**. `received()` is one per operation stored.
+So `live` is roughly twice the live *events* and `received` is once per
+operation — two different units, printed on one line under one word:
+
+```
+sync: counts received=15632 live=15531
+```
+
+Phone B, 2026-09-14 16:32, on released Ayni 0.1.5. Read naively that says 99% of
+arrivals were pushed, which it does not say and cannot. It is not an
+over-report in the sense the four earlier versions were — nothing is being
+reconstructed — but it invites exactly the comparison those four were wrong
+about, and the arithmetic guard `live <= received` that was so hard-won is
+meaningless between quantities in different units.
+
+**It also disagrees with the negative control recorded earlier the same day**
+(`received=4 live=0`, "the right answer"), and nobody has established which of
+the two readings is the surprising one.
+
+Not fixed here, deliberately. Four attempts to be clever about this counter were
+wrong; a fifth made in passing, while changing something else, would be the same
+mistake. What it needs is a decision about what is being asked — "how many
+operations arrived by push" is answerable only if the doubling is divided out,
+and whether it is exactly two every time is an upstream fact nobody has measured
+rather than inferred. Until then the two numbers should at least not share a
+label.

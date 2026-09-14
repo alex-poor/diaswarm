@@ -1,164 +1,161 @@
-# Handover — transport work, 2026-09-14
+# Handover — 2026-09-14, second session
+
+The first session's handover is the commit message of `d052d76` and the entries
+in `docs/migration.md`. This replaces it.
 
 ## What was asked
 
-1. Write network tests covering realistic transport scenarios (doze, LAN→off-LAN
-   switch, restarts, outages) so transport regressions get caught, not rediscovered.
-2. Find and fix why the follower was minutes behind.
+Four things, from a review of the project against its own goals:
 
-## What was found
+1. put every crate in CI;
+2. delete `diaswarm-spaces`;
+3. close the keys vault's pool-redundancy gap;
+4. update the loop phone and measure the publisher reaching Ayni.
 
-**p2panda's live mode has a send half that was never wired.** `LogSync` catches a
-peer up and then switches to live mode, where new operations are pushed over
-gossip via `SyncHandle::publish`. Nothing in this project ever called it:
-`replicate.rs` moved the handle into its spawned task as `let _keep = handle`
-and only ever subscribed. Operations went to SQLite, which is not on the network,
-and reached a follower whenever the next catch-up sync happened to run.
+## What landed
 
-That is why freshness always tracked the sync interval rather than the publish,
-and why doze, a WifiLock, the relay and the subscription lifetime each looked
-like the cause in turn. Measured before the fix: `received_live_operations: 0`
-in all 69 live-mode sessions ever observed.
-
-## State of the work
-
-Commits `634acaf` … `606ba00` on `main`. All tests green:
+`388b48a`, `fc3fb75`, `620b173` on `main`. **Not pushed** — see Constraints.
 
 | crate | result |
 |---|---|
 | diaswarm-core | 58 passed, 0 failed |
 | diaswarm-keys | 27 passed, 0 failed |
 | diaswarm-android | 16 passed, 0 failed |
-| diaswarm-net | 50 passed, 0 failed |
+| diaswarm-net | 45 passed, 0 failed |
 
-### The fix
+From cargo's own exit code, written to a log by the process that ran it. Three
+earlier runs in this session reported success that came from a trailing `echo`,
+from the wrong working directory, or from a run aborted half way — which is the
+same class of error as the counter that caused the first session, so the numbers
+above are the ones that survived being checked.
 
-* `crates/diaswarm-net/src/replicate.rs` — the `SyncHandle` is kept in a
-  `handles` map instead of buried in the task; `broadcast(subject, op)` publishes
-  on every topic `carry` recorded for that subject.
-* `crates/diaswarm-android/src/lib.rs` — `KeysVault` holds a clone of the pool's
-  replicator; every `wire::publish` / `publish_control` site pushes what it wrote.
-* Both apps — `keysSealChecked` reports `pushed=N`; `keysSyncEvents` leads with
-  `counts received=N live=M`; the plugin's pass line carries `pushed`.
+### 1 · CI
 
-### Tests added
+`.github/workflows/crates.yml`. All four crates on push to `main` and on any PR
+touching `crates/**`. **`ayni.yml` ran `cargo test` in `diaswarm-core` alone**,
+on a tag or a follower-touching PR, so the transport crate had never run in CI
+at all.
 
-* `crates/diaswarm-net/tests/live_mode.rs` — 4 tests: a segment published while a
-  peer is listening arrives pushed; so does a grant; broadcasting an uncarried
-  subject is 0; and pushing survives a `restream()`.
-* `crates/diaswarm-net/tests/two_process.rs` — a fourth test crossing a real
-  process boundary, plus a check that the follower cannot report more live
-  arrivals than the publisher sent.
-* `crates/diaswarm-net/src/bin/keyspeer.rs`, `keyswatch.rs` — a publisher/follower
-  pair and a laptop watcher, both usable by hand.
+One job with one `CARGO_TARGET_DIR`, because there is no workspace and a job per
+crate would build p2panda four times. `cancel-in-progress` so a second push
+inside a minute does not pay twice.
 
-All mutation-checked: removing the `publish` call makes them fail with the exact
-hardware symptom (catch-up works, live delivers nothing).
+### 2 · `diaswarm-spaces`, deleted
 
-Pre-existing flake fixed: the two-process tests contended when run in parallel
-(two consecutive runs failed two *different* tests; serial passed 4/4 twice).
-They now take a static lock.
+The crate, its seven `spaces*` JNI entry points, the Kotlin declarations in both
+apps, `tests/replicate.rs`, `bin/twophone.rs`. `p2panda-spaces` and
+`p2panda-auth` have left both APKs' dependency trees.
 
-### Incidental fixes
+Nothing in Kotlin had called it since D26. The JNI guard listed all seven as
+"dead by decision" — a holding pen that reads like a decision — and they shipped
+to two phones in that state. Every property `tests/replicate.rs` asserted is
+asserted by `tests/keys_replicate.rs` on the vault actually being cut over to,
+which is why the test could go with the code rather than before it.
 
-* The sync event log was unbounded — ~300 bytes per `SyncFinished`, several per
-  session, every couple of minutes. Capped at 256. That app has been OOM-killed
-  before, and when it is killed the loop stops.
-* `swarm: keys subject <hex>` now logged at plugin startup. It is a different key
-  from the core vault's and was previously unreadable from a phone.
-* `follower/build-apk.sh` added — the Ayni build recipe was re-derived by hand
-  each time.
+### 3 · The keys vault has a pool now — D28
 
-## Evidence, and its limits
+`BucketMessage::HoldingKeys`, `Swarm::keys_wanted`, and a `keysCarryAll` that
+adopts strangers heard in this phone's share and reports back what it holds so
+the next tick announces it.
 
-Live delivery is confirmed on hardware, from p2panda's own `Metrics` rather than
-from any counter in this repo:
+**The announcing half and the adopting half are one change deliberately.** A
+peer saying "I hold keys-subject Y" while only followers hold Y has published
+the follower set, which is the D18 leak. Strangers carrying it is what makes the
+sentence ambiguous. Do not land one without the other.
 
-| peer | build | sessions | `received_live_operations` |
-|---|---|---|---|
-| `9eeeac47` — loop phone | pre-fix | 175 | `0` in every one |
-| `b8e0c9ba` — phone B's AAPS | fixed | 55 | `0` |
-| `b8e0c9ba` — phone B's AAPS | fixed | 1 | **`7`** |
+Proven by `tests/keys_pool.rs`, mutation-checked both ways: removing the
+announcement reproduces the exact prior symptom, silencing the carrier leaves
+the pool with one findable copy.
 
-Also, with per-arrival peer attribution turned on, **every** live arrival came
-from the peer running the fix; none from the pre-fix loop phone, none from a
-follower that publishes nothing.
+**Two defects in this work were found by reading it, not by a test going red**,
+and both are worth knowing about because neither was reachable at test-rig
+scale:
 
-**Not verified: the loop phone's publisher reaching Ayni.** That needs the loop
-phone updated, which was left to the user. The APK is built and the signer
-verified as matching:
+* `tick` announced only into this peer's own buckets. A phone always carries its
+  own keys log, but its own subject hashes wherever it hashes — usually *not*
+  into its own share once a pool exceeds about four peers. The one peer that
+  certainly has the data would have been the one peer that never said so.
+  Invisible at two peers, where `REPLICAS` (3) exceeds the pool and everybody
+  holds everything. `announce_buckets` is now a pure function with a unit test,
+  because the rule cannot be expressed at the scale the rig runs at.
+
+* the first draft adopted on a fixed internal budget. **Ayni calls
+  `keysCarryAll`**, so every installed copy of a released app would have started
+  holding strangers' ciphertext on update — and Ayni passes `0` to `swarmTick`
+  precisely so that stays a person's decision. `keysCarryAll` now takes the same
+  budget; Ayni passes `0`, the plugin passes `2`. A follower that adopts nothing
+  still announces and serves what it holds, so it is still a full pool member.
+
+### 4 · The loop phone — HALF DONE, and the half that matters is not
+
+* ✅ Built from `fc3fb75`, installed on **phone B**, signer verified matching.
+  Healthy: native library loads, `swarm: keys carrying 1 log(s)` — which is the
+  live proof that `keysCarryAll` returns through its **changed 4-argument JNI
+  signature**, the failure that would otherwise appear at load time.
+* ❌ **The loop phone is still on the 11:18 pre-fix build.** The install was
+  refused by this environment's permission classifier and was not worked around.
+  It needs a person to run:
+
+```sh
+ANDROID_SERIAL=2A281FDH2006AC ./plugin/build-apk.sh --install
+```
+
+  The script verifies the signer against the device before installing — that
+  check is what protects the pump pairing — and saves a rollback APK. Phone B
+  has been running this exact build since 16:30 without incident.
+
+* ❌ **The measurement is therefore not made.** It is the same open item the
+  first session handed over, and it is still the only way to prove the path that
+  matters. After the install, the evidence is two lines:
+
+```sh
+adb -s 2A281FDH2006AC logcat -d | grep -E 'swarm: (sealed|keys|pool)|pushed'
+adb -s 2C011FDH200MYL logcat -d | grep -E 'sync: counts|holders for'
+```
+
+  The publisher's `pushed=N` is the honest measure of the send half. `live` is
+  not — see below.
+
+## What this session found and did not fix
+
+**The live counter is wrong a fifth time, in its units.** Version 5 is right to
+report p2panda's number and derive nothing. But `live_received()` sums
+`received_live_operations`, which `migration.md` already records as advancing
+**two per event**, while `received` is one per stored operation — and they are
+printed on one line under one word:
 
 ```
-adb -s 2A281FDH2006AC install -r \
-  /home/alex/projects/camaps/sdk/aaps-diaswarm/app/build/outputs/apk/full/loop/app-full-loop.apk
+sync: counts received=15632 live=15531        # phone B, 16:32, Ayni 0.1.5
 ```
 
-## Where I wasted the most time, so you don't
+Read naively that says 99% of arrivals were pushed. It does not say that and
+cannot. It also disagrees with the negative control recorded earlier the same
+day (`received=4 live=0`, called "the right answer") and nobody has established
+which reading is the surprising one. Left alone deliberately: four attempts to
+be clever about this counter were wrong, and a fifth made in passing while
+changing something else would be the same mistake. `docs/migration.md` has the
+detail.
 
-I wrote a `live` counter to measure the fix and got it wrong **five times**.
-Every version tried to derive a per-operation fact ("was this one pushed?") from
-`Metrics::received_live_operations`, which is cumulative over a session. Each
-over-reported; two were arithmetically impossible (`live` > `received`):
+## Still open, from before
 
-| version | rule | reported |
-|---|---|---|
-| 1 | `received_live > 0` | 1,052 live of 1,059 |
-| 2 | delta keyed on `session_id` | 17,128 of 8,103 |
-| 3 | delta keyed on `(topic, peer, session)` | 5,245 of 3,322 |
-| 4 | boolean: did the counter change? | 8,894 of 8,915 |
-| 5 | **report p2panda's number, derive nothing** | current |
-
-The decisive measurement was making the code print the peer and raw value behind
-each arrival: the counter advances `n=2,4,6,8,…`, two per event the stream
-observes, so no per-event rule can be right in either direction. `live_seen` now
-holds each open session's counter as p2panda reported it, `live_retired`
-accumulates ended sessions, and `live_received()` adds them.
-
-The lesson, if it's useful: a derived diagnostic whose failure mode is
-over-reporting gets believed, because it agrees with what you hoped. I believed
-three of them. Assert against an independent source — here, the publisher's own
-`pushed=` count — not against plausibility.
-
-## Open items
-
-1. **The loop phone is not updated.** Only way to prove the path that matters.
-2. **The keys vault has no pool redundancy.** `keysCarryAll` carries only the
-   phone's own subject and the ones it follows; `keysCarry` is in the JNI guard's
-   known-dead list as superseded. So D15 — any holder serves identical bytes, so
-   a sleeping subject stays readable — holds for the core vault and **not** for
-   the vault being cut over to. This is a decision about what the cutover means,
-   not a bug in the above.
-3. **De-duplication makes pushes invisible when catch-up wins the race.** p2panda
-   drops a live operation whose hash is already in the session's dedup buffer.
-   On a quiet LAN with sessions re-syncing every few seconds, catch-up often
-   wins. So `live` measures pushes that *beat* catch-up, not pushes sent.
-4. **Real overnight soak not yet run** — only hours, never a night.
-5. **`event` record kind is emitted and nothing reads it** (documented gap).
+1. **Ayni has not been rebuilt** with D28, so no follower reports
+   `keys holders for <subject>: N` yet. Each app bundles its own `.so`, so
+   0.1.5 is not broken by the signature change — it simply does not have the
+   feature.
+2. **De-duplication makes pushes invisible when catch-up wins.**
+3. **No overnight soak** — hours, never a night.
+4. **`event` record kind is emitted and nothing reads it.**
+5. **The pool has only ever been three phones.** Disjoint shares and a stranger
+   adopting unasked are tested on a laptop and unproven on hardware.
 
 ## Constraints that still apply
 
+* **Nothing is pushed.** Three commits sit on local `main`. Pushing runs CI, and
+  the user asked for that to be deliberate rather than incidental.
 * **No tags, releases, or changes to the existing F-Droid MR until the user says
-  so.** `fdroid/nz.diaswarm.ayni.yml` has uncommitted user edits — do not commit.
-* `README.md` has uncommitted user edits — do not commit.
+  so.** `fdroid/nz.diaswarm.ayni.yml` and `README.md` have uncommitted user
+  edits — do not commit them. They were carefully excluded from all three
+  commits above.
 * `2A281FDH2006AC` is the **live loop phone** driving an insulin pump. Test on
-  phone B (`2C011FDH200MYL`) first, always.
-
-## How to run things
-
-```sh
-# tests (per crate — there is no workspace root)
-cd crates/diaswarm-net && cargo test
-
-# build + install
-./plugin/build-apk.sh [--install]      # AAPS publisher plugin
-./follower/build-apk.sh [--install]    # Ayni follower
-
-# watch one subject from a laptop (joins the REAL pool; adopts nothing)
-cd crates/diaswarm-net
-./target/debug/keyswatch <dir> <subject-hex> <seconds>
-
-# the subject hex is now in the plugin's startup log:
-adb logcat -d | grep "swarm: keys subject"
-```
-
-The running record of every finding and correction is `docs/migration.md`.
+  phone B (`2C011FDH200MYL`) first, always. The third adb entry,
+  `192.168.88.213:5555`, is phone B again over wifi — not a third device.
