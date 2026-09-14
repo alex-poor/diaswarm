@@ -936,8 +936,40 @@ every peer's estimate to land in the same bucket of `depth_for`, and there are
 more ways to disagree at 21 bits than at 1. The test's assertion now prints all
 three depths on failure, so the next occurrence names its own cause.
 
-*Blocks:* honest claims about pool behaviour above a handful of peers, and it is
-a live intermittent defect below that.
+#### ✅ FIXED 2026-09-14 — `pool::subject_topic`, and the old topic kept beside it
+
+`carry_share` now carries every subject at `subject_topic(subject)` — a hash of
+the subject key, no depth, nothing to disagree about. Buckets keep the job
+[D21](#d21--replication-is-p2panda-log-sync-over-the-pools-own-topics)
+justified them for: dividing *unknown* subjects among volunteers.
+
+**Proven by mutation, and the failure signature is the part worth keeping.**
+`peers_that_disagree_about_pool_size_still_meet` forces the disagreement rather
+than waiting for it — one peer carries as if the pool were tiny (depth 1), the
+other as if it were large (depth 9). With the subject topic they sync in **3
+seconds**. With it removed:
+
+```
+carrier events: []      — sixty seconds, no sync sessions at all
+```
+
+Not a failed session, not a retry: the peers never discover each other. **In the
+field this bug is silence, not errors**, which is exactly why it has been read
+as flakiness for as long as it has existed.
+
+**The old bucket topic is carried as well, for now.** Moving where a subject
+syncs is not a wire-format change that fails loudly — peers on different topics
+simply never meet. The live pool is a phone driving an insulin pump and a
+follower somebody reads, so the new build joins both. The block is marked for
+deletion once no peer remains on the old topic.
+
+⚠️ **While both are carried, `pushed` reads 2 rather than 1.**
+`Replicator::broadcast` returns the number of *topics* it published on, so
+`shadow agrees — … pushed 2` is one operation sent to two rendezvous, not two
+sends. It returns to 1 when the legacy block goes.
+
+*Still open:* the divergence in §2 is recorded, not resolved — PSI remains inert
+here and must not be counted as protection.
 
 ### D30 · If you read it, you carry it — *ayni*, as an invariant
 

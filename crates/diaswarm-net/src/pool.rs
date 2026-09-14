@@ -131,6 +131,35 @@ fn bucket_score(peer_id: &str, bucket: u64) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// Where a subject's operations are synced: a topic derived from the subject
+/// alone.
+///
+/// **NO DEPTH, NOTHING TO DISAGREE ABOUT — WHICH IS THE ENTIRE POINT.**
+/// [`bucket_topic`] hashes in a `depth` that every peer estimates from its own
+/// view of the pool size, so two peers that have discovered different numbers
+/// of peers derive unrelated topics and never meet. Observed at three peers:
+/// publisher `(2,1)`, relay `(2,1)`, follower `(3,2)`. A granted reader that
+/// guesses wrong cannot find its own subject, which is a hard failure of the
+/// thing the project is for. See [D31](../../docs/decisions.md).
+///
+/// **THIS IS P2PANDA'S TOPIC MODEL USED PLAINLY**: a 32-byte identifier for a
+/// set of data. It takes that half of the model and not the other — upstream
+/// assumes the identifier is a *secret* and protects it with PSI, which suits a
+/// private document shared by a known group. Here the data is public ciphertext
+/// by design (D1), holding is not reading, and a topic anybody can compute is
+/// how a volunteer knows what to carry. Public ciphertext wants public
+/// rendezvous.
+///
+/// Buckets keep the job [D21](../../docs/decisions.md) justified them for:
+/// dividing *unknown* subjects among volunteers. Finding a subject you were
+/// granted is not that job.
+pub fn subject_topic(subject: &str) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"diaswarm-subject-v1");
+    h.update(subject.to_ascii_lowercase().as_bytes());
+    h.finalize().into()
+}
+
 /// The gossip topic for a bucket, as 32 bytes.
 ///
 /// Depth is mixed in so that a bucket at depth 6 and its child at depth 7 are

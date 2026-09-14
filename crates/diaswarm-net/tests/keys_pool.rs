@@ -195,3 +195,77 @@ async fn a_stranger_carries_a_keys_subject_it_was_never_introduced_to() {
          one copy that anyone can find and D15 still does not hold"
     );
 }
+
+/// PEERS THAT DISAGREE ABOUT THE POOL SIZE STILL MEET.
+///
+/// **THE BUG D31 RECORDS, WRITTEN AS A TEST.** `bucket_topic` hashes in a
+/// `depth` that each peer estimates from its own view of how many peers exist.
+/// Two peers that have discovered different numbers derive unrelated topics and
+/// never meet — observed live at three peers: publisher `(2,1)`, relay `(2,1)`,
+/// follower `(3,2)`. A granted reader that guesses wrong cannot find its own
+/// subject, and the symptom is silence.
+///
+/// Here the disagreement is forced rather than waited for: the publisher
+/// carries as if the pool were tiny and the follower as if it were large. On
+/// the bucket topic they would share nothing. On `subject_topic` there is no
+/// depth to disagree about, so they meet.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn peers_that_disagree_about_pool_size_still_meet() {
+    let net = network_id("keys-depth-disagreement");
+    let rng = Rng::default();
+    let days = 2i64;
+
+    let subject_key = SigningKey::generate();
+    let author = subject_key.verifying_key();
+    let subject_hex = author.to_hex();
+    let mut subject = Vault::open(tmp("dd-subject"), OFFSET, &subject_key).unwrap();
+    let (mgr, _bundle) = Vault::key_bundle(&rng).unwrap();
+
+    let subject_store = SqliteStoreBuilder::memory().build().await.unwrap();
+    let create = subject.create(mgr).unwrap();
+    wire::publish_control(&subject_store, &subject_key, &create).await.unwrap();
+    for e in 0..days {
+        let segment = subject.seal(26_000 + e, &day(26_000 + e, 100.0)).unwrap();
+        wire::publish(&subject_store, &subject_key, &segment).await.unwrap();
+    }
+
+    let pub_swarm = Swarm::join_network(tmp("dd-pub"), SigningKey::generate(), net).await.unwrap();
+    let (pe, pg) = pub_swarm.parts();
+    let publishing = KeysReplicator::keys(subject_store.clone(), pe, pg).await.unwrap();
+
+    let car_store = SqliteStoreBuilder::memory().build().await.unwrap();
+    let car_swarm = Swarm::join_network(tmp("dd-car"), SigningKey::generate(), net).await.unwrap();
+    let (ce, cg) = car_swarm.parts();
+    let carrying = KeysReplicator::keys(car_store.clone(), ce, cg).await.unwrap();
+
+    // ---- the disagreement, made explicit -------------------------------
+    //
+    // Depth 1 is "I have seen two peers"; depth 9 is "I have seen hundreds".
+    // These are the topics each side WOULD have used, and they share nothing.
+    let as_if_small = pool::bucket_topic(1, pool::bucket_of(&subject_hex, 1));
+    let as_if_large = pool::bucket_topic(9, pool::bucket_of(&subject_hex, 9));
+    assert_ne!(as_if_small, as_if_large, "the premise of this test is a real disagreement");
+    publishing.carry(as_if_small, &subject_hex).await.unwrap();
+    carrying.carry(as_if_large, &subject_hex).await.unwrap();
+
+    // ---- and the topic that does not care ------------------------------
+    let meeting = pool::subject_topic(&subject_hex);
+    publishing.carry(meeting, &subject_hex).await.unwrap();
+    carrying.carry(meeting, &subject_hex).await.unwrap();
+
+    let mut held = 0u32;
+    for _ in 0..60 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        held = segments_held(&car_store, &author).await;
+        if held as i64 >= days {
+            break;
+        }
+    }
+    assert_eq!(
+        held as i64, days,
+        "two peers that disagreed about the pool size did not meet on the subject \
+         topic either, so the depth is not the only thing keeping them apart \
+         (carrier events: {:?})",
+        carrying.events()
+    );
+}
