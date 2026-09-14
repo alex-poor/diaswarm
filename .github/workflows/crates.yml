@@ -79,6 +79,13 @@ jobs:
         working-directory: crates/diaswarm-core
         run: cargo test --no-fail-fast
 
+      # diaswarm-keys and diaswarm-net each carry the security guard from
+      # docs/security-review.md: a keys store that a carrier replicates must
+      # hold ciphertext operations and NO key material. `store_holds_no_key_
+      # material` here is the fast, non-networked check on a publisher's own
+      # store; `keys_replicate.rs` in the diaswarm-net step below is the same
+      # assertion against a copy pulled over real iroh. Neither is a place to
+      # trim tests from without reading that doc — a green run is the promise.
       - name: diaswarm-keys
         working-directory: crates/diaswarm-keys
         run: cargo test --no-fail-fast

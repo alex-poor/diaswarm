@@ -24,3 +24,7 @@ anyhow = "1"
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 p2panda-encryption = "=0.7.1"
+# Only to reopen a carrier's store and assert its encryption-state tables stay
+# empty (keys_replicate.rs). Same version/features p2panda-store already pulls,
+# so it unifies rather than adding a second sqlx.
+sqlx = { version = "=0.8.6", features = ["runtime-tokio", "sqlite"] }
