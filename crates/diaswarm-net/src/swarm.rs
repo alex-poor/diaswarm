@@ -172,7 +172,41 @@ impl Swarm {
         let store = store.into();
         std::fs::create_dir_all(&store)?;
 
-        let book = AddressBook::builder().spawn().await.context("address book")?;
+        // **GIVE THE ADDRESS BOOK A STORE, WHICH IS WHAT IT IS FOR.**
+        // `AddressBook::builder()` with no store keeps everything in memory, so
+        // `node_infos_v1` and `topics2node_infos_v1` stay empty for ever and a
+        // peer restarts knowing nobody. Measured on a laptop: `pool 4` reported
+        // while the persisted node table held **zero** rows.
+        //
+        // p2panda's own description of what is being thrown away: the address
+        // book "is an important tool to watch for transport information
+        // changes, keep track of stale nodes and identify network partitions
+        // which can be automatically healed". A peer that syncs with one node
+        // and never another is that last sentence exactly.
+        //
+        // **ITS OWN FILE, NOT THE KEYS STORE.** `p2panda-store` builds its pool
+        // with `max_connections(1)` and no busy timeout, so two pools on one
+        // SQLite file is a writer-contention bug rather than an untidiness —
+        // the note on `Pooled` in `diaswarm-android` says so at length. A
+        // separate file costs nothing and shares nothing.
+        //
+        // Done here rather than as a parameter because `Swarm` already owns a
+        // directory and there are 47 call sites that should not have to care.
+        let book_url = format!("sqlite://{}", store.join("addressbook.sqlite").display());
+        let book = match p2panda_store::SqliteStoreBuilder::new()
+            .database_url(&book_url)
+            .create_database(true)
+            .build()
+            .await
+        {
+            Ok(db) => AddressBook::builder().store(db).spawn().await.context("address book")?,
+            Err(e) => {
+                // A peer with an unpersisted address book still works; it just
+                // forgets everyone on restart. Worth saying, not worth refusing.
+                eprintln!("diaswarm: address book not persisted ({e}) — peers are forgotten on restart");
+                AddressBook::builder().spawn().await.context("address book")?
+            }
+        };
 
         // SEED WHOEVER WE ALREADY KNOW, BEFORE THE ENDPOINT STARTS. A follower
         // scanned exactly one thing: the subject's node id. That is enough to

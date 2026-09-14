@@ -234,6 +234,11 @@ async fn main() -> Result<()> {
             diaswarm_net::share::carry_share(&swarm, &replicator, &dir, &own, args.adopt).await;
         let bytes = disk_bytes(&dir);
         let stored = held(&store, &replicator.carried()).await;
+        // **HOW MANY SUBJECTS IT HAS HEARD OF BUT IS NOT YET CARRYING.**
+        // Without this, "carrying 1" is ambiguous between "nobody has told me
+        // about anybody" and "I was told and did not act", which are different
+        // bugs in different files. Costs one in-memory read.
+        let heard_waiting = swarm.keys_wanted().await.map(|w| w.len()).unwrap_or(0);
         if stored > was_held {
             stalled_for = 0;
         } else if stored > 0 {
@@ -251,8 +256,9 @@ async fn main() -> Result<()> {
                     );
                 } else {
                     println!(
-                        "pool {} · carrying {} (+{}) · holding {} · pushes {} · {}{}",
+                        "pool {} · heard {} · carrying {} (+{}) · holding {} · pushes {} · {}{}",
                         t.pool,
+                        heard_waiting,
                         s.carrying,
                         s.adopted,
                         stored,
@@ -264,6 +270,23 @@ async fn main() -> Result<()> {
                             String::new()
                         },
                     );
+                }
+                // **RE-SUBSCRIBE WHEN IT HAS CLEARLY STOPPED**, which is the
+                // remedy Ayni has had since the phones hit this exact symptom:
+                // catch-up delivers once on connect and live mode then produces
+                // nothing for ever, `received_live_operations: 0` on every
+                // session while `LiveModeStarted` keeps firing. Dropping the
+                // handles and streaming the topics again is what brings it
+                // back there, and the peer simply never had it.
+                //
+                // Three passes, not one: a pass with nothing new is ordinary
+                // when the publisher has nothing to say, and re-subscribing on
+                // every quiet minute would be its own kind of broken.
+                if stalled_for >= 3 && stalled_for % 3 == 0 {
+                    match replicator.restream().await {
+                        Ok(n) => println!("    stalled — re-subscribed {n} topic(s)"),
+                        Err(e) => println!("    stalled — re-subscribe failed: {e:#}"),
+                    }
                 }
                 // The events, when asked for, or unprompted once a stall is
                 // undeniable — because that is the moment somebody needs them.
