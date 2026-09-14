@@ -2588,3 +2588,42 @@ A follower learning from bucket gossip that another phone holds a subject's
 announced keys subjects and nothing adopted them. Two phones, so this is the
 mechanism working, not the redundancy being proven: that still needs four or
 more devices and disjoint shares.
+
+### 📊 Freshness, measured at last — median 24s, and one gap I cannot explain
+
+The thing every counter in this project was a proxy for. **It needed no new
+code**: `SyncWorker` already logs `keys newest for <subject>: Ns old`, which is
+the newest readable reading's own timestamp against wall clock. Not derived from
+`received`, not derived from `live`, and not derived from anything written
+today — which is why it is the number to use.
+
+Sampled once per two-minute pass on phone B, 2026-09-14:
+
+| window | n | min | median | max |
+|---|---|---|---|---|
+| both ends pre-fix, 16:39–16:44 | 7 | 89s | **268s** | 400s |
+| both ends fixed, whole window | 13 | 23s | 83s | 345s |
+| both ends fixed, settled 16:55+ | 7 | 23s | **24s** | 83s |
+
+**Read the third row, not the first two.** The pre/post comparison is confounded:
+the loop phone was updated at 16:44 and Ayni at 16:45, so the "pre-fix" samples
+straddle the change and the early post-fix ones include a cold follower
+discovering its peers. The settled row is twelve minutes of a warm follower with
+a fixed publisher, and it says the newest reading is **23–83 seconds old**.
+
+For scale: the follower polls every 120s and the sensor reports every ~60s, so a
+median of 24s means the data is arriving between polls rather than at them —
+which is what pushing was supposed to buy and what, before `634acaf`, it could
+not have been buying, because nothing ever called `publish`.
+
+⚠️ **One excursion, unattributed: 202s → 322s → 345s across 16:51–16:54.** It
+climbs at exactly the rate of elapsed time, which means no reading arrived at
+all for about five minutes. Candidates: the publisher settling after its update,
+a missed push, or a sealing gap on the publisher's side — the follower cannot
+be fresher than the publisher seals. **Distinguishing them needs the publisher's
+`sealed epoch` timestamps beside this series**, and the loop phone dropped off
+adb before they could be collected. Left unattributed rather than guessed at.
+
+**What this still does not measure:** anything overnight, anything in doze,
+anything off-LAN, and the tail. Twelve minutes of a plugged-in phone on wifi is
+the easiest case there is.
