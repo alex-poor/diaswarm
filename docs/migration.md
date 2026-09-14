@@ -2623,13 +2623,42 @@ which is what pushing was supposed to buy and what, before `634acaf`, it could
 not have been buying, because nothing ever called `publish`. **All thirteen
 samples are under the 120s poll interval**, including the worst.
 
-⚠️ **The distribution is bimodal — a cluster at 23–24s and another at 80–84s —
-and that is not explained.** A publisher sealing on a steady ~60s cadence
-against a 120s sampler should give something closer to uniform. The obvious
-candidate is that the publisher's own seal cadence is irregular, since a
-follower can never be fresher than the subject seals, but that is a guess and
-attributing it needs the publisher's `sealed epoch` times beside this series.
-Recorded as an open question rather than smoothed over.
+✅ **BOTH OPEN QUESTIONS CLOSED, 17:22, once the loop phone was back on adb and
+its `sealed epoch` times could be put beside the follower's series.**
+
+The publisher seals on a **60-second cadence**, with extra partial seals between
+— and it had a **171-second gap** at 17:19:35 → 17:22:26.
+
+| follower sample | reported age | publisher's last seal | follower actually behind by |
+|---|---|---|---|
+| 17:13:47 | 83s | 17:13:23 | **59s** |
+| 17:15:47 | 84s | 17:15:23 | **60s** |
+| 17:17:47 | 24s | 17:17:23 | **0s** |
+| 17:19:47 | 23s | 17:19:35 | **11s** |
+| 17:21:47 | **143s** | 17:19:35 | **11s** |
+
+**1. The bimodality is exactly one seal cycle.** 84 − 24 = 60s, the publisher's
+own interval. The follower is either current with the last seal or one seal
+behind it, depending on whether a push landed before the sample ran. There was
+never a second mechanism to find.
+
+**2. The long samples are not staleness.** At 17:21:47 the follower reported
+143s and was **11 seconds behind everything the publisher had sealed**. The age
+climbed because the subject stopped sealing for 171s, and a follower cannot be
+fresher than the subject seals. The 345s excursion at 16:51–16:54 is almost
+certainly the same thing; its publisher logs had rolled out of the buffer.
+
+**So the honest statement of transport freshness is not the raw age series.** It
+is: **the follower is never more than one seal cycle behind the publisher, and
+usually within about eleven seconds.** The raw age is that lag plus whatever the
+publisher's own cadence adds, and on this hardware the publisher's cadence is
+the larger and more variable term.
+
+⚠️ **Which relocates the remaining freshness work.** Reducing what a person sees
+on the follower now means looking at **why AAPS's drain seals at 60s and
+sometimes stalls for three minutes**, not at the transport. That is a different
+component and a different question, and nothing in this document has measured
+it.
 
 ⚠️ **One excursion, unattributed: 202s → 322s → 345s across 16:51–16:54.** It
 climbs at exactly the rate of elapsed time, which means no reading arrived at
