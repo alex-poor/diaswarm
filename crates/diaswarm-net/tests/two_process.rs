@@ -232,8 +232,17 @@ fn a_segment_published_in_one_process_is_pushed_to_another() {
     // unfalsifiable — everything arrives somehow, and the question is how.
     let caught_up = until(&mut rb, Duration::from_secs(45), |l| field(l, "received") >= 1).is_some();
 
-    // The publisher seals and pushes a segment every second from t=10.
-    let pushed = until(&mut ra, Duration::from_secs(45), |l| field(l, "pushed") >= 1).is_some();
+    // The publisher seals and pushes a segment every second from t=10, and
+    // reports the running total it has sent.
+    let mut last_sent: Option<i64> = None;
+    let pushed = until(&mut ra, Duration::from_secs(45), |l| {
+        let s = field(l, "sent");
+        if s >= 0 {
+            last_sent = Some(s);
+        }
+        field(l, "pushed") >= 1
+    })
+    .is_some();
 
     // And this is the one that was zero for the life of the project.
     let live = until(&mut rb, Duration::from_secs(45), |l| field(l, "live") >= 1);
@@ -251,5 +260,25 @@ fn a_segment_published_in_one_process_is_pushed_to_another() {
         "nothing arrived over gossip in 45s. Catch-up worked and live mode did \
          not, which is the exact shape of the defect that made every follower \
          this project ever shipped one sync interval behind"
+    );
+
+    // **AND NOT MORE THAN WERE SENT, WHICH IS THE HARDER HALF.** A follower
+    // cannot receive more pushes than a publisher published. Four versions of
+    // the live counter over-reported, two of them impossibly, and each was
+    // believed for a while because the only assertion was `>= 1` — which a
+    // counter that fires on everything passes trivially. Measured on hardware
+    // at its worst: a phone reporting 4,872 live arrivals out of 4,890
+    // operations while its only publisher had pushed four times.
+    let sent = last_sent.unwrap_or(0);
+    let got = live.as_deref().map(|l| field(l, "live")).unwrap_or(0);
+    assert!(
+        sent > 0,
+        "the publisher never recorded sending anything, so the ceiling below is not a ceiling"
+    );
+    assert!(
+        got <= sent,
+        "the follower counted {got} pushed arrivals from a publisher that pushed \
+         {sent}. An over-reporting transport diagnostic is worse than none: it \
+         says the thing works whether or not it does"
     );
 }
