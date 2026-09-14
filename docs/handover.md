@@ -79,12 +79,19 @@ scale:
   holds everything. `announce_buckets` is now a pure function with a unit test,
   because the rule cannot be expressed at the scale the rig runs at.
 
-* the first draft adopted on a fixed internal budget. **Ayni calls
-  `keysCarryAll`**, so every installed copy of a released app would have started
-  holding strangers' ciphertext on update — and Ayni passes `0` to `swarmTick`
-  precisely so that stays a person's decision. `keysCarryAll` now takes the same
-  budget; Ayni passes `0`, the plugin passes `2`. A follower that adopts nothing
-  still announces and serves what it holds, so it is still a full pool member.
+* `keysCarryAll` now takes an adoption budget, as `swarmTick` does. **Both apps
+  pass `2`.** A first version had Ayni pass `0`, on the strength of a comment
+  left in Ayni's tick by the session that fixed discovery — and the user
+  corrected it: carrying other people's records is the entire point, and it is
+  the app's name. `strings.xml` says so outright. A follower that adopts nothing
+  keeps only the half of the bargain that benefits it, and it is the half that
+  does not work — followers are most of the phones, so if they carry nothing the
+  only peer holding a subject is the subject. See D28.
+
+  **`an_app_in_the_pool_carries_a_share_of_it` now fails the build on a zero
+  budget**, mutation-checked. Every existing guard was green while Ayni carried
+  nothing for anybody, because they all ask whether a call happens and this
+  defect lived in an argument.
 
 ### 4 · The loop phone — HALF DONE, and the half that matters is not
 
@@ -92,9 +99,11 @@ scale:
   Healthy: native library loads, `swarm: keys carrying 1 log(s)` — which is the
   live proof that `keysCarryAll` returns through its **changed 4-argument JNI
   signature**, the failure that would otherwise appear at load time.
-* ❌ **The loop phone is still on the 11:18 pre-fix build.** The install was
-  refused by this environment's permission classifier and was not worked around.
-  It needs a person to run:
+* ❌ **The loop phone is still on the 11:18 pre-fix build.** Three attempts to
+  install were refused by this environment's auto-mode permission classifier —
+  including a read-only `apksigner` invocation — while the *identical* command
+  for phone B went through minutes earlier. Inconsistent rather than principled,
+  and not worked around. It needs a person to run:
 
 ```sh
 ANDROID_SERIAL=2A281FDH2006AC ./plugin/build-apk.sh --install
@@ -138,10 +147,15 @@ detail.
 
 ## Still open, from before
 
-1. **Ayni has not been rebuilt** with D28, so no follower reports
-   `keys holders for <subject>: N` yet. Each app bundles its own `.so`, so
-   0.1.5 is not broken by the signature change — it simply does not have the
-   feature.
+1. **Ayni has not been rebuilt**, so the installed 0.1.5 still carries nothing
+   for strangers and reports no `keys holders for <subject>: N`. Each app
+   bundles its own `.so`, so 0.1.5 is not broken by the signature change — it
+   simply does not have any of this. Rebuilding it is what makes the pool
+   bigger than one carrier:
+
+   ```sh
+   ./follower/build-apk.sh --install     # phone B first
+   ```
 2. **De-duplication makes pushes invisible when catch-up wins.**
 3. **No overnight soak** — hours, never a night.
 4. **`event` record kind is emitted and nothing reads it.**

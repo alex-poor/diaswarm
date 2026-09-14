@@ -60,13 +60,28 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
             // same phone could reach the same subject from the other app at the
             // same moment.
             //
-            // ADOPT NOTHING — `0`, where the plugin passes 2. The defect is
-            // discovery; whether a follower's phone should start holding
-            // strangers' ciphertext is a separate decision and does not get to
-            // ride in on a bug fix.
+            // ADOPT, LIKE EVERY OTHER PEER. This passed `0` for a day, from a
+            // session that was fixing discovery and did not want to decide
+            // this in passing — "whether a follower's phone should start
+            // holding strangers' ciphertext is a separate decision".
+            //
+            // **THE DECISION WAS ALREADY MADE, AND IT IS THE APP'S NAME.**
+            // `strings.xml`: *Ayni* is Quechua for reciprocity, "your phone
+            // carries other people's sealed records so that yours are carried
+            // when your phone is off, and neither side can read what it
+            // holds." A follower that adopts nothing takes that bargain and
+            // keeps only the half that benefits it — and, worse, it is the
+            // half that does not work: a subject is highly available because
+            // other phones hold it, and if every follower holds nothing then
+            // the only peers carrying anything are the subjects themselves.
+            // That is not a swarm, it is a set of servers with extra steps.
+            //
+            // Same budget as the plugin. Bounded per pass, so a phone joining
+            // a large pool catches up over passes rather than pulling its
+            // whole share at once.
             if (Endpoint.handle != 0L) {
                 val pool = try {
-                    SwarmNative.swarmTick(Endpoint.handle, 0)
+                    SwarmNative.swarmTick(Endpoint.handle, 2)
                 } catch (e: Throwable) {
                     Log.w(TAG, "pool pass threw: $e")
                     ""
@@ -87,12 +102,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                     Endpoint.handle,
                     store,
                     SwarmPaths.identity(applicationContext).absolutePath,
-                    // ADOPT NOTHING — the same `0` this pass gives `swarmTick`,
-                    // for the same reason recorded there. A follower still
-                    // carries what it follows, still announces it, and still
-                    // serves it; what it does not do is start holding a
-                    // stranger's ciphertext because an update arrived.
-                    0
+                    // The same budget this pass gives `swarmTick`, and for the
+                    // reason recorded there: carrying other people's sealed
+                    // records is what this app is named after.
+                    2
                 )
                 Log.i(TAG, if (carried < 0) "keys carry unavailable ($carried)" else "keys carrying $carried log(s)")
                 verifyChains(applicationContext, keysToo = carried > 0)

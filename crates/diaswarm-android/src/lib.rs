@@ -3790,6 +3790,59 @@ mod shadow_tests {
         }
     }
 
+    /// AND IT MUST CARRY A SHARE, NOT ONLY TAKE A TURN.
+    ///
+    /// **THE RULE THE TICK GUARD CANNOT EXPRESS, AND THE ONE THE NAME PROMISES.**
+    /// Ayni passed `0` as its adoption budget to both `swarmTick` and
+    /// `keysCarryAll` for a day: it joined the pool, ticked it, announced what
+    /// it held, and adopted nothing for anybody. Every guard in this file was
+    /// green throughout, because each of them asks whether a call happens and
+    /// this defect is in an argument.
+    ///
+    /// It matters more than it looks. A subject is highly available because
+    /// *other* phones hold it, and followers are most of the phones. If every
+    /// follower carries nothing, the only peer holding a subject is the subject
+    /// — which is the property D15 exists to remove, arrived at by default.
+    /// `strings.xml` names the app for the opposite: "your phone carries other
+    /// people's sealed records so that yours are carried when your phone is
+    /// off".
+    ///
+    /// So: a pool member's budgets must be positive. Zero is not a smaller
+    /// setting, it is opting out of the half of the bargain that costs you.
+    #[test]
+    fn an_app_in_the_pool_carries_a_share_of_it() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for app in ["follower/src/main/kotlin", "plugin/src/main/kotlin"] {
+            let mut src = String::new();
+            collect_kotlin(&root.join(app), &mut src);
+            if !src.contains("SwarmNative.swarmJoin(") {
+                continue;
+            }
+            // The last argument of each call, with comments and whitespace
+            // stripped — the budget is written on its own line behind a
+            // comment in both apps.
+            for call in ["swarmTick", "keysCarryAll"] {
+                let Some(at) = src.find(&format!("SwarmNative.{call}(")) else { continue };
+                let tail = &src[at..];
+                let Some(close) = tail.find(')') else { continue };
+                let args: String = tail[..close]
+                    .lines()
+                    .map(|l| l.split("//").next().unwrap_or("").trim())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let last = args.rsplit(',').next().unwrap_or("").trim().to_string();
+                assert_ne!(
+                    last, "0",
+                    "{app} calls {call} with an adoption budget of 0.\n\
+                     It joins the pool, announces what it holds, and carries nothing for \n\
+                     anybody. A pool whose followers all do this has one holder per subject \n\
+                     — the subject — which is the availability this design exists to remove. \n\
+                     See D28, and the app's own name."
+                );
+            }
+        }
+    }
+
     /// Every `.kt` under a directory, concatenated, minus the declarations.
     fn collect_kotlin(dir: &std::path::Path, out: &mut String) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };

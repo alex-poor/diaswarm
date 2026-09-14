@@ -831,20 +831,38 @@ the sentence ambiguous between following and merely holding. **Nobody may land
 the announcing half alone**, and the doc comment on `Swarm::set_keys_held` says
 so at the seam.
 
-**A FOLLOWER STILL ADOPTS NOTHING, AND THAT IS DELIBERATE.** `keysCarryAll`
-takes an adoption budget exactly as `swarmTick` does, and Ayni passes `0` to
-both. The comment already in Ayni's tick says why, and it applies here word for
-word: *"whether a follower's phone should start holding strangers' ciphertext is
-a separate decision and does not get to ride in on a bug fix."* A first draft of
-this work adopted on a fixed internal budget, which would have made that
-decision for every installed copy of a released app from underneath — the same
-mistake with a different function's name on it. **A follower passing `0` is
-still a full pool member**: it announces what it holds and serves it, so a
-subject it follows gains a second holder in the pool regardless. What it does
-not do is start storing strangers.
+**A FOLLOWER ADOPTS TOO, AND ANYTHING ELSE WOULD BREAK THE THING THIS IS FOR.**
+`keysCarryAll` takes an adoption budget exactly as `swarmTick` does, and **Ayni
+passes `2` to both**, the same as the AAPS add-on.
 
-So today the peers that carry for strangers are the ones running the AAPS
-add-on, which pass `2` — the same budget that pass already gives the core vault.
+This entry first said the opposite, carrying forward a comment left in Ayni's
+tick by the session that fixed discovery — *"whether a follower's phone should
+start holding strangers' ciphertext is a separate decision and does not get to
+ride in on a bug fix."* That was a correct instinct about **when** to decide and
+it got mistaken here for the decision itself. The decision was made long before,
+and it is the app's name. From `follower/src/main/res/values/strings.xml`:
+
+> *Ayni*: Quechua for reciprocity — "your phone carries other people's sealed
+> records so that yours are carried when your phone is off, and neither side can
+> read what it holds."
+
+**A follower that adopts nothing keeps only the half of that bargain that
+benefits it — and it is the half that does not work.** A subject is highly
+available because *other* phones hold it. Followers are most of the phones. If
+every follower holds nothing, the only peer carrying a subject is the subject,
+and availability collapses back to "is their phone awake", which is the exact
+property [D15](#d15--a-fetch-says-nothing-about-who-is-fetching) exists to
+remove and the reason this decision was written at all. A pool of sources and no
+carriers is not a swarm; it is a set of servers with extra steps.
+
+**What a person is owed here is disclosure, not a smaller default.** Carrying is
+declared in the README's trade table — *"You carry strangers' ciphertext too —
+the deal runs both ways"* — and in the app's name and description. The real cost
+is storage, and it is not small on a fast sensor: roughly 78 MB a year per pool
+share at 288 readings a day, and about 329 MB at the 1,586 a day a Libre 3
+actually produces. If that turns out to be too much for a phone somebody uses
+for something else, the answer is a share they can size, or a cap — not a
+follower that silently freeloads.
 
 **What is knowingly still leaked**, unchanged in kind from D19: that a peer is
 in the pool, and roughly how much it carries. A subject's own phone announces
