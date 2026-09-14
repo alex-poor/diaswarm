@@ -267,3 +267,95 @@ async fn pushing_a_subject_nobody_carries_says_nobody() {
         "an operation went out on a topic that was streamed for a different subject"
     );
 }
+
+/// AND PUSHING STILL WORKS AFTER A RE-SUBSCRIBE.
+///
+/// **THE INTERACTION BETWEEN THE TWO REPAIRS, WHICH IS WHERE THE NEXT SILENT
+/// FAILURE WOULD LIVE.** `restream` exists because a one-shot subscription goes
+/// quiet when a gossip link dies and nothing re-establishes it; it works by
+/// dropping each topic's handle, which is what unsubscribes. `broadcast` works
+/// by looking that same handle up. So the two now share a map, and the
+/// failure mode if they ever get out of step is the worst kind: `pushed=1`
+/// against a handle whose actor is gone, reported as success, delivering
+/// nothing. Exactly the shape of the defect this file was written for.
+///
+/// A phone re-streams after a stall and then keeps publishing every five
+/// minutes, so this is the ordinary path and not an edge case.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_re_subscribe_does_not_quietly_end_pushing() {
+    let net = network_id("keys-live-restream");
+    let rng = Rng::default();
+
+    let subject_key = SigningKey::generate();
+    let author = subject_key.verifying_key();
+    let subject_hex = author.to_hex();
+    let mut subject = Vault::open(tmp("r-subject"), OFFSET, &subject_key).unwrap();
+    let (mgr, _bundle) = Vault::key_bundle(&rng).unwrap();
+
+    let subject_store = SqliteStoreBuilder::memory().build().await.unwrap();
+    let create = subject.create(mgr).unwrap();
+    wire::publish_control(&subject_store, &subject_key, &create).await.unwrap();
+    let segment = subject.seal(26_000, &day(26_000, 100.0)).unwrap();
+    wire::publish(&subject_store, &subject_key, &segment).await.unwrap();
+
+    let publisher = Swarm::join_network(tmp("r-pub"), SigningKey::generate(), net).await.unwrap();
+    let (pe, pg) = publisher.parts();
+    let publishing = KeysReplicator::keys(subject_store.clone(), pe, pg).await.unwrap();
+
+    let carrier_store = SqliteStoreBuilder::memory().build().await.unwrap();
+    let carrier = Swarm::join_network(tmp("r-car"), SigningKey::generate(), net).await.unwrap();
+    let (ce, cg) = carrier.parts();
+    let carrying = KeysReplicator::keys(carrier_store.clone(), ce, cg).await.unwrap();
+
+    let depth = pool::depth_for(2);
+    let topic = pool::bucket_topic(depth, pool::bucket_of(&subject_hex, depth));
+    publishing.carry(topic, &subject_hex).await.unwrap();
+    carrying.carry(topic, &subject_hex).await.unwrap();
+
+    let mut caught_up = 0;
+    for _ in 0..60 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        caught_up = segments_held(&carrier_store, &author).await;
+        if caught_up >= 1 {
+            break;
+        }
+    }
+    assert_eq!(caught_up, 1, "catch-up never ran, so nothing below can be read");
+
+    // THE STALL REMEDY, on both sides — a phone re-streams its own topics, and
+    // the publisher is a peer like any other.
+    assert_eq!(publishing.restream().await.unwrap(), 1, "the publisher re-streamed nothing");
+    assert_eq!(carrying.restream().await.unwrap(), 1, "the carrier re-streamed nothing");
+
+    // Give the fresh subscriptions time to find each other again.
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    let before = carrying.live_received();
+    let fresh = subject.seal(26_001, &day(26_001, 150.0)).unwrap();
+    let operation = wire::publish(&subject_store, &subject_key, &fresh).await.unwrap();
+    assert_eq!(
+        publishing.broadcast(&subject_hex, operation),
+        1,
+        "after re-streaming, the publisher had no handle to push onto — the \
+         handle `restream` dropped was never replaced in the map `broadcast` reads"
+    );
+
+    let mut live = before;
+    let mut held = caught_up;
+    for _ in 0..45 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        live = carrying.live_received();
+        held = segments_held(&carrier_store, &author).await;
+        if live > before && held > caught_up {
+            break;
+        }
+    }
+    println!("  carrier events: {:?}", carrying.events());
+    assert!(
+        live > before,
+        "nothing was pushed after a re-subscribe: `pushed` would have said 1 \
+         while delivering nothing, which is the failure this whole file exists \
+         to make impossible"
+    );
+    assert!(held > caught_up, "the pushed segment was received but not stored");
+}
