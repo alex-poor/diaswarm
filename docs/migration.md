@@ -1820,3 +1820,37 @@ stay-awake service started
 ```
 
 "On" has to mean on.
+
+### ✅ CLOSED — off-LAN, the case the relay exists for, 2026-09-14
+
+The last untested one, and the one that matters for anybody who does not live
+with the person they follow. The loop phone's wifi was turned off — with the
+restore running *on the phone* so it could not be stranded — putting it on Spark
+NZ mobile data behind CGNAT while the follower stayed on home wifi:
+
+```
+loop phone:  10.241.59.239   (CGNAT, no route from the LAN)
+follower:    192.168.88.213  (home wifi)
+
+12:23:26  (ayni) refreshed 1 subject(s)
+12:23:38  (ayni) refreshed 1 subject(s)
+12:25:27  (ayni) refreshed 1 subject(s)
+```
+
+Three fetches across two networks with no LAN path between them, so the relay
+carried every one. Sustained on cadence rather than a single lucky connection.
+
+That completes the set. Everything unknown at the start of the day now has a
+measurement behind it:
+
+| | |
+|---|---|
+| same wifi, both awake | ✅ |
+| follower asleep, unplugged | ✅ 51 min deep doze, 26/26 fetches |
+| subject changes address | ✅ test suite and hardware |
+| **different networks, via relay** | ✅ |
+| service survives update and reboot | ✅ |
+| one unreachable subject among several | ✅ bounded, does not block the rest |
+
+⚠️ Still not done: a real overnight rather than an hour, and the `event` record
+kind, which nothing reads and nothing on screen claims to.
