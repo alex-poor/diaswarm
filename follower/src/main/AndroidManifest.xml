@@ -81,6 +81,19 @@
         android:theme="@style/Theme.Follower">
         <!-- Declared `dataSync`: this fetches somebody's readings. Exported
              false — nothing outside this app has any business starting it. -->
+        <!-- Puts the service back after a reboot or an update. Without this,
+             "keep up to date while asleep" silently stops meaning anything the
+             moment the app is updated, until somebody opens it. RECEIVE_BOOT_
+             COMPLETED already arrives by merge from WorkManager. -->
+        <receiver
+            android:name=".Restart"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name=".StayAwake"
             android:exported="false"

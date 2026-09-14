@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Where one glucose reading goes · Swimlane</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #2d3142;
+      --color-muted:   #4f5d75;
+      --color-accent:  #eb6c36;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1280px; width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 1000px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Swimlane · diaswarm</p>
+    <h1>Where one glucose reading goes</h1>
+
+    <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="diaswarm-journey-title diaswarm-journey-desc">
+      <title id="diaswarm-journey-title">Where one glucose reading goes</title>
+      <desc id="diaswarm-journey-desc">Swimlane diagram tracing a single glucose reading from the subject's looping phone, where it is sealed and a key is wrapped for one chosen reader, out to strangers' phones that hold the ciphertext and cannot open it, and down to the follower's phone, which fetches it from any of them and opens it with a private key that never left the device.</desc>
+
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <!-- ============ Lane grid ============ -->
+      <line x1="40" y1="72"  x2="1240" y2="72"  stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+      <line x1="40" y1="272" x2="1240" y2="272" stroke="rgba(45,49,66,0.10)" stroke-width="1"/>
+      <line x1="40" y1="424" x2="1240" y2="424" stroke="rgba(45,49,66,0.10)" stroke-width="1"/>
+      <line x1="40" y1="624" x2="1240" y2="624" stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+      <line x1="248" y1="72" x2="248" y2="624" stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+
+      <!-- ============ Lane labels ============ -->
+      <text x="56" y="156" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.18em">YOUR PHONE</text>
+      <text x="56" y="172" fill="#4f5d75" font-size="8" font-family="'Geist', sans-serif">AndroidAPS + diaswarm</text>
+      <text x="56" y="188" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif">reads everything — it wrote it</text>
+
+      <text x="56" y="332" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.18em">THE POOL</text>
+      <text x="56" y="348" fill="#4f5d75" font-size="8" font-family="'Geist', sans-serif">phones you have never met</text>
+      <text x="56" y="364" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif">holds it · cannot open it</text>
+
+      <text x="56" y="508" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.18em">MUM'S PHONE</text>
+      <text x="56" y="524" fill="#4f5d75" font-size="8" font-family="'Geist', sans-serif">Ayni — a viewer, not a loop</text>
+      <text x="56" y="540" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif">opens only what she was granted</text>
+
+      <!-- ============ Arrows (drawn before boxes) ============ -->
+      <!-- A1 record -> seal -->
+      <line x1="480" y1="172" x2="544" y2="172" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A2 seal -> wrap -->
+      <line x1="752" y1="172" x2="816" y2="172" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A3 publish: wrap -> a pool peer -->
+      <path d="M 872,208 V 252 Q 872,260 864,260 H 600 Q 592,260 592,268 V 312" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A4/A5 peers replicate sideways -->
+      <line x1="504" y1="348" x2="464" y2="348" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <line x1="680" y1="348" x2="720" y2="348" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- A6 a peer serves the follower -->
+      <line x1="341" y1="384" x2="341" y2="488" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A7 or straight from your phone -->
+      <path d="M 984,208 V 464 Q 984,472 976,472 H 419 Q 411,472 411,480 V 488" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A8 fetch -> open -->
+      <line x1="480" y1="524" x2="544" y2="524" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- A9 open -> graph -->
+      <line x1="752" y1="524" x2="816" y2="524" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- ============ Arrow labels ============ -->
+      <rect x="488" y="152" width="48" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="512" y="161" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">SEAL</text>
+
+      <rect x="760" y="152" width="48" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="784" y="161" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">WRAP</text>
+
+      <rect x="698" y="240" width="68" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="732" y="249" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">PUBLISH</text>
+
+      <rect x="994" y="220" width="60" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="1024" y="229" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">VIA RELAY</text>
+
+      <rect x="351" y="440" width="76" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="389" y="449" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">FROM A PEER</text>
+
+      <rect x="664" y="450" width="68" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="698" y="459" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">OR FROM YOU</text>
+
+      <rect x="488" y="504" width="48" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="512" y="513" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">UNWRAP</text>
+
+      <rect x="760" y="504" width="48" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="784" y="513" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">DRAW</text>
+
+      <!-- ============ Callout leaders (dashed, drawn under nodes) ============ -->
+      <path d="M 1180 52 Q 1140 180 984 296" fill="none" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+      <circle cx="984" cy="296" r="2" fill="#2d3142"/>
+
+      <path d="M 870 592 Q 790 580 700 562" fill="none" stroke="rgba(235,108,54,0.50)" stroke-width="1" stroke-dasharray="4,3"/>
+      <circle cx="700" cy="560" r="2" fill="#eb6c36"/>
+
+      <!-- ============ LANE 1 · YOUR PHONE ============ -->
+      <rect x="272" y="136" width="208" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="272" y="136" width="208" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="376" y="168" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Reading recorded</text>
+      <text x="376" y="184" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">5.7 mmol/L · 07:32</text>
+      <text x="376" y="198" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">plain — nothing has left yet</text>
+
+      <rect x="544" y="136" width="208" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="544" y="136" width="208" height="72" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <g transform="translate(728,146)" stroke="#4f5d75" stroke-width="1.2" fill="none">
+        <rect x="0.6" y="5.6" width="10.8" height="7.8" rx="1.6"/>
+        <path d="M 3 5.6 V 3.6 a 3 3 0 0 1 6 0 V 5.6"/>
+      </g>
+      <text x="648" y="168" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Sealed into a segment</text>
+      <text x="648" y="184" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ChaCha20-Poly1305</text>
+      <text x="648" y="198" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">one key per segment</text>
+
+      <rect x="816" y="136" width="224" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="816" y="136" width="224" height="72" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <g transform="translate(1014,148)" stroke="#eb6c36" stroke-width="1.2" fill="none" stroke-linecap="round">
+        <circle cx="3.6" cy="6" r="3"/>
+        <path d="M 6.6 6 H 15"/>
+        <path d="M 11 6 V 9"/>
+        <path d="M 13.6 6 V 9"/>
+      </g>
+      <text x="928" y="168" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">A key wrapped for Mum</text>
+      <text x="928" y="184" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">X25519 → her public key</text>
+      <text x="928" y="198" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">one wrap per reader · published openly</text>
+
+      <!-- ============ LANE 2 · THE POOL ============ -->
+      <rect x="288" y="312" width="176" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="288" y="312" width="176" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+      <g transform="translate(440,322)" stroke="#4f5d75" stroke-width="1.2" fill="none">
+        <rect x="0.6" y="5.6" width="10.8" height="7.8" rx="1.6"/>
+        <path d="M 3 5.6 V 3.6 a 3 3 0 0 1 6 0 V 5.6"/>
+      </g>
+      <text x="376" y="344" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Stranger's phone</text>
+      <text x="376" y="360" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">bucket 0x3</text>
+      <text x="376" y="374" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">146 segments · 219 wraps</text>
+
+      <rect x="504" y="312" width="176" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="504" y="312" width="176" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+      <g transform="translate(656,322)" stroke="#4f5d75" stroke-width="1.2" fill="none">
+        <rect x="0.6" y="5.6" width="10.8" height="7.8" rx="1.6"/>
+        <path d="M 3 5.6 V 3.6 a 3 3 0 0 1 6 0 V 5.6"/>
+      </g>
+      <text x="592" y="344" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Stranger's phone</text>
+      <text x="592" y="360" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">bucket 0x3</text>
+      <text x="592" y="374" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">146 segments · 219 wraps</text>
+
+      <rect x="720" y="312" width="176" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="720" y="312" width="176" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+      <g transform="translate(872,322)" stroke="#4f5d75" stroke-width="1.2" fill="none">
+        <rect x="0.6" y="5.6" width="10.8" height="7.8" rx="1.6"/>
+        <path d="M 3 5.6 V 3.6 a 3 3 0 0 1 6 0 V 5.6"/>
+      </g>
+      <text x="808" y="344" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Stranger's phone</text>
+      <text x="808" y="360" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">bucket 0x3</text>
+      <text x="808" y="374" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">146 segments · 219 wraps</text>
+
+      <!-- ============ LANE 3 · MUM'S PHONE ============ -->
+      <rect x="272" y="488" width="208" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="272" y="488" width="208" height="72" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <g transform="translate(456,498)" stroke="#4f5d75" stroke-width="1.2" fill="none">
+        <rect x="0.6" y="5.6" width="10.8" height="7.8" rx="1.6"/>
+        <path d="M 3 5.6 V 3.6 a 3 3 0 0 1 6 0 V 5.6"/>
+      </g>
+      <text x="376" y="520" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Fetches it</text>
+      <text x="376" y="536" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">polls · ~2 min</text>
+      <text x="376" y="550" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">anyone may fetch this</text>
+
+      <rect x="544" y="488" width="208" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="544" y="488" width="208" height="72" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <g transform="translate(726,500)" stroke="#eb6c36" stroke-width="1.2" fill="none" stroke-linecap="round">
+        <circle cx="3.6" cy="6" r="3"/>
+        <path d="M 6.6 6 H 15"/>
+        <path d="M 11 6 V 9"/>
+        <path d="M 13.6 6 V 9"/>
+      </g>
+      <text x="648" y="520" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Opens it</text>
+      <text x="648" y="536" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">her private key</text>
+      <text x="648" y="550" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">never left this phone</text>
+
+      <rect x="816" y="488" width="224" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="816" y="488" width="224" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="928" y="520" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Her trend line</text>
+      <text x="928" y="536" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">5.7 mmol/L · 2 min old</text>
+      <text x="928" y="550" fill="rgba(45,49,66,0.55)" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">shown with its age, always</text>
+
+      <!-- ============ Editorial callouts ============ -->
+      <text x="1240" y="44" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="end">a relay sees who is talking, and when — never what</text>
+      <text x="1240" y="600" fill="#eb6c36" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="end">her private key never moved — nothing secret ever travels</text>
+
+      <!-- ============ Legend ============ -->
+      <line x1="40" y1="652" x2="1240" y2="652" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="40" y="668" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND</text>
+
+      <rect x="40" y="682" width="20" height="12" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="68" y="692" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Readable on this device</text>
+
+      <g transform="translate(240,681)" stroke="#4f5d75" stroke-width="1.2" fill="none">
+        <rect x="0.6" y="5.6" width="10.8" height="7.8" rx="1.6"/>
+        <path d="M 3 5.6 V 3.6 a 3 3 0 0 1 6 0 V 5.6"/>
+      </g>
+      <text x="262" y="692" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Sealed — ciphertext, unopenable</text>
+
+      <g transform="translate(460,683)" stroke="#eb6c36" stroke-width="1.2" fill="none" stroke-linecap="round">
+        <circle cx="3.6" cy="6" r="3"/>
+        <path d="M 6.6 6 H 15"/>
+        <path d="M 11 6 V 9"/>
+        <path d="M 13.6 6 V 9"/>
+      </g>
+      <text x="484" y="692" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Granted a key — one wrap per reader</text>
+
+      <line x1="700" y1="688" x2="728" y2="688" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <text x="736" y="692" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">The record moves</text>
+
+      <line x1="880" y1="688" x2="908" y2="688" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <text x="916" y="692" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Peers replicate to each other</text>
+    </svg>
+  </div>
+</body>
+</html>

@@ -1774,3 +1774,49 @@ and the app doze-blocked, with the relay incidental.
 
 Read `last_refresh`. It is the only one that answers the question anybody
 actually has, which is whether the readings are arriving.
+
+### ✅ CLOSED — a sleeping follower stays current, 2026-09-14
+
+Natural doze this time: unplugged, screen off, untouched. Fifty-one minutes in
+deep IDLE without missing a fetch.
+
+```
+11:27  IDLE_PENDING  relay=connected(1)  last_refresh 11:27:05
+11:29  IDLE          relay=connected(1)  last_refresh 11:29:06
+ ...                 every two minutes, no gap
+12:18  IDLE          relay=connected(1)  last_refresh 12:17:24
+```
+
+Twenty-six consecutive samples on the exact cadence. Against the same test on
+the WifiLock build:
+
+| | deep IDLE | fetches |
+|---|---|---|
+| `WifiLock` | 40 min | **none** — frozen at 10:06:21 |
+| foreground service | 51 min | **26 of 26**, on cadence |
+
+**The foreground service alone is sufficient. No battery exemption is needed** —
+not "Allow background usage", not "Unrestricted". The offer of the exemption
+stays in the row as a fallback for a phone that behaves differently, but asking
+for it by default would have been asking for a permission that does nothing.
+
+⚠️ **Three attempts failed before this one, all for the same reason: the phone
+was still on USB power**, and a powered phone never dozes. Twice that was not
+checked before walking away from the test. The rig now reports every
+precondition — service running, adb-wifi up, sampler alive, log buffer, screen
+off, and `USB powered` — in one command, and the answer is known in five seconds
+rather than forty-five minutes.
+
+And the run before that would have measured nothing for a different reason: the
+service was dead. `StayAwake` only started from `MainActivity.onCreate`, so an
+app update left the setting switched on and doing nothing until somebody opened
+the app. `Restart` now puts it back on `BOOT_COMPLETED` and
+`MY_PACKAGE_REPLACED`, proven by installing an update and watching it come back
+without the app being opened:
+
+```
+restart after android.intent.action.MY_PACKAGE_REPLACED — reapplying stay-awake
+stay-awake service started
+```
+
+"On" has to mean on.
