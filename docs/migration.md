@@ -2759,3 +2759,79 @@ stable**, against 1-in-2 before.
 the same day runs `diaswarm-net`; a 50% flake there is worse than no test,
 because it teaches everyone to re-run rather than read. It passed its first two
 CI runs by luck.
+
+### 🔴 THE OVERNIGHT FAILURE, FOUND: Android time-limits the foreground service
+
+**2026-09-15 03:37:54.** The soak answered, and the answer is not doze.
+
+```
+E ActivityManager: FGS Crashed: ServiceRecord{… nz.diaswarm.follower.StayAwake}
+E AndroidRuntime: android.app.RemoteServiceException$ForegroundServiceDidNotStopInTimeException:
+    A foreground service of type dataSync did not stop within its timeout
+I ActivityManager: Process nz.diaswarm.ayni (pid 14237) has died: prcp FGS
+```
+
+and then, one second later, it could not come back:
+
+```
+E AndroidRuntime: android.app.ForegroundServiceStartNotAllowedException:
+    Time limit already exhausted for foreground service type dataSync
+W ActivityManager: Scheduling restart … in 1800000ms for start-requested
+```
+
+**Android 15+ time-limits a `dataSync` foreground service to about six hours in
+any twenty-four.** At the limit the system calls `Service.onTimeout()`; a
+service that does not stop itself has its **process killed**, and the type's
+quota is then spent — so every restart for the rest of the window is refused.
+Ayni declares `android:foregroundServiceType="dataSync"`, targets SDK 36, and
+implements no `onTimeout()`.
+
+The service started at 21:25 and died at 03:37:54: **6 h 12 m.**
+
+#### What it means, and it is the flagship use case
+
+**Ayni cannot watch overnight.** A parent following a child's glucose has the
+app die around the six-hour mark and stay dead. That is the product's central
+promise, and it fails on a stock phone with nothing misconfigured.
+
+It fails *safely* — the app is gone rather than showing a stale number as
+though it were current, which is what showing the age was for — but it fails.
+
+#### It corrects a finding this repository already recorded
+
+`docs/migration.md` and the project memory both say the foreground service is
+**sufficient**, on the strength of *"51 minutes in natural deep IDLE, 26 of 26
+fetches, `effective=NONE` throughout"*. Every word of that is true and the
+conclusion does not survive six hours. **A 51-minute measurement cannot see a
+six-hour limit**, and the earlier soak that might have — 17:46→19:46 — was two
+hours and also too short.
+
+#### And doze was never the problem
+
+Worth stating plainly, because two sessions were spent on it. Between entering
+deep IDLE at 21:40 and dying at 03:37, the follower ran its **two-minute cadence
+without interruption for 5 h 57 m**, standby bucket `10 (ACTIVE)`,
+`effective=NONE` throughout. One 42-minute gap at 23:59, otherwise perfect.
+**Doze did not suppress it. The platform killed it.**
+
+`effective=DOZE|APP_BACKGROUND` at 03:43 is a *consequence* of there being no
+process left holding a foreground service — not a cause, and not the failure the
+`relay-drops-overnight` note describes.
+
+#### Fix directions, none verified
+
+* **Implement `Service.onTimeout()`** so the service stops cleanly instead of
+  being killed. Necessary regardless — a crash loop is worse than a stop — but
+  it does not buy availability, because the service still stops.
+* **Change the FGS type.** The six-hour limit applies to `dataSync` (and
+  `mediaProcessing`); other types are not time-limited. `specialUse` is the
+  honest declaration for "hold a p2p connection open", and its Play Store review
+  requirement does not apply to an F-Droid app. **Verify against the current
+  platform docs before relying on this.**
+* **Drop the FGS and use the battery-optimisation exemption instead**, which is
+  the only thing that clears `DOZE` and is the user's to grant. Costs the
+  `APP_BACKGROUND` clearance an FGS provides, and puts the cadence on
+  WorkManager's 15-minute floor.
+
+**Do not pick one from this list without measuring it for more than six hours.**
+That is the whole lesson of this entry.
