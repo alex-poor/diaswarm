@@ -874,6 +874,28 @@ direction the standing preference points at:
   subject is exactly p2panda's idiomatic model — an identifier for a set of
   data — and has no pool-size parameter to disagree about. It deletes the depth
   bug rather than working around it.
+
+  **To be exact about what is being adopted:** p2panda's topic model is two
+  separable things — a 32-byte identifier for a set of data, and an assumption
+  that the identifier is secret. This takes the first and not the second. What
+  is there today is neither: `f(depth, bucket(subject))` is a sharding scheme
+  layered over the identifier, and the layer is where the guessed parameter
+  enters.
+
+* **AND SPLITTING THE TWO ROLES TURNS A HARD FAILURE INTO A SOFT ONE**, which is
+  the better reason to do it. `replicate.rs` already describes the division —
+  *"gossip answers who is in this bucket; log sync answers give me their
+  operations"* — and then runs both over the bucket topic.
+
+  | | role | topic | when depth is wrong |
+  |---|---|---|---|
+  | bucket | *which* strangers exist in my slice | `f(depth, bucket)` | fewer strangers heard — **degrades** |
+  | subject | give me *this* subject's operations | `f(subject key)` | nothing to get wrong |
+
+  Today both ride the bucket topic, so a depth disagreement stops a granted
+  reader finding **its own subject** — a hard failure of the thing the project
+  is for. Split, depth governs only stranger discovery, which self-heals as
+  each peer's view of the pool converges.
 * **And it stays public, deliberately.** An earlier draft suggested deriving it
   from the subject/reader shared secret the way [D13](#d13--the-grant-log-names-nobody)
   derives grant tags. That would be a mistake here: a topic only the granted can
