@@ -904,7 +904,7 @@ fn topic(bytes: [u8; 32]) -> Topic {
     Hash::from_bytes(bytes).into()
 }
 
-fn is_subject(s: &str) -> bool {
+pub(crate) fn is_subject(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 

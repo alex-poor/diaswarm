@@ -129,6 +129,7 @@ async fn a_stranger_carries_a_keys_subject_it_was_never_introduced_to() {
             &carrier_dir,
             &carrier_own,
             4,
+            &[],
         )
         .await
         {

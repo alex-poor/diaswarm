@@ -19,7 +19,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::replicate::KeysReplicator;
-use crate::swarm::Swarm;
+use crate::swarm::{is_subject, Swarm};
 
 /// What one pass over the pool did.
 ///
@@ -78,6 +78,7 @@ pub async fn carry_share(
     store: &Path,
     own_subject: &str,
     max_adopt: usize,
+    also: &[String],
 ) -> Result<Share> {
     // `.max(2)` because a pool of one has no depth to speak of and the first
     // pass usually runs before anybody has been heard from.
@@ -85,6 +86,14 @@ pub async fn carry_share(
     let depth = crate::pool::depth_for(members);
 
     let mut wanted: Vec<String> = vec![own_subject.to_string()];
+
+    // **SUBJECTS THIS PEER WAS TOLD TO CARRY, WHICH NEED NO GOSSIP AT ALL.**
+    // Everything else here waits to be told: follows come from a pairing, and
+    // strangers from a `HoldingKeys` announcement that has to arrive over an
+    // overlay whose membership is sampled. A carrier somebody runs for their
+    // own family should not be at the mercy of that — they already know whose
+    // data they mean. Named subjects are carried every pass, unconditionally.
+    wanted.extend(also.iter().filter(|s| is_subject(s)).cloned());
 
     // Everyone we follow, by the keys identity their invite carried. A follow
     // with no keys identity is skipped rather than failed: it is somebody

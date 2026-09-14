@@ -72,6 +72,19 @@ struct Args {
     #[arg(long, value_name = "NAME")]
     network: Option<String>,
 
+    /// Carry this subject, whatever gossip does or does not say. Repeatable.
+    ///
+    /// **THE ONE WAY TO BE SURE.** Everything else this peer carries it has to
+    /// be *told about*: a follow comes from a pairing, a stranger from an
+    /// announcement that has to reach it over an overlay whose membership is
+    /// sampled and can simply not include the peer holding the data. A carrier
+    /// somebody runs for their own family already knows whose records it means;
+    /// naming them here removes discovery from the path entirely.
+    ///
+    /// Take the value from the phone's log line `swarm: keys subject <hex>`.
+    #[arg(long = "carry", value_name = "SUBJECT-HEX")]
+    carry: Vec<String>,
+
     /// Do one pass and exit.
     #[arg(long)]
     once: bool,
@@ -231,7 +244,8 @@ async fn main() -> Result<()> {
     loop {
         let tick = swarm.tick().await;
         let share =
-            diaswarm_net::share::carry_share(&swarm, &replicator, &dir, &own, args.adopt).await;
+            diaswarm_net::share::carry_share(&swarm, &replicator, &dir, &own, args.adopt, &args.carry)
+                .await;
         let bytes = disk_bytes(&dir);
         let stored = held(&store, &replicator.carried()).await;
         // **HOW MANY SUBJECTS IT HAS HEARD OF BUT IS NOT YET CARRYING.**

@@ -2485,6 +2485,8 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarryAll<'a>(
         &store,
         &own,
         max_adopt.max(0) as usize,
+        // A phone is told whom to carry by pairing, not by a flag.
+        &[],
     )) {
         Ok(share) => share.carrying as jlong,
         Err(_) => -4,
