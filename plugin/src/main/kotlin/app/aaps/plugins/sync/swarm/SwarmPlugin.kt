@@ -471,6 +471,29 @@ class SwarmPlugin @Inject constructor(
             LTag.CORE,
             "swarm: subject ${SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)}"
         )
+        // **AND THE KEYS SUBJECT, WHICH IS A DIFFERENT KEY AND HAS NEVER BEEN
+        // READABLE FROM A PHONE.** The line above is the core vault's X25519
+        // key; every keys log — segments, grants, and the bucket `keysCarry`
+        // associates — is keyed by an Ed25519 key that cannot be derived from
+        // it. The whole cutover is TO that vault, and until now the only way to
+        // learn its subject was to read the invite out of the UI. An afternoon
+        // of "which subject is this peer even carrying?" is the cost of leaving
+        // an identifier unprintable.
+        if (servingWithKeys) {
+            val keys = SwarmNative.keysOpen(
+                serving,
+                SwarmKeys.dir(context).absolutePath,
+                SwarmPaths.identity(context).absolutePath,
+                SwarmKeys.offsetMs
+            )
+            if (keys != 0L) {
+                try {
+                    aapsLogger.info(LTag.CORE, "swarm: keys subject ${SwarmNative.keysSubject(keys)}")
+                } finally {
+                    SwarmNative.keysClose(keys)
+                }
+            }
+        }
         val vault = SwarmPaths.vault(context, this::class.java)
         if (!java.io.File(vault, "meta.json").exists()) {
             aapsLogger.info(LTag.CORE, "swarm: nothing sealed here yet — following only")

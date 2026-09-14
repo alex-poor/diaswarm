@@ -2283,3 +2283,34 @@ to catch, which is why it is worth saying out loud rather than quietly fixing.
 a push; two sessions do not borrow each other's counts; and a recycled session
 id does not lose its pushes (saturating to zero there would undercount silently
 for the life of the session — a working transport reported as a broken one).
+
+### ✅ The transport suite was flaky, which is worse than absent
+
+Two consecutive parallel runs of `tests/two_process.rs` failed two
+**different** pre-existing tests; the same suite run serially passed 4/4 twice,
+in 22 s and 26 s. Four tests at once is eight peers on one machine competing
+for discovery.
+
+A transport suite that flakes teaches you to discount a red result, which is
+precisely how a real transport defect survived for the life of this project.
+The tests now take a static lock so plain `cargo test` is honest — a guarantee
+nobody has to remember is the only kind that holds.
+
+### 📋 Where hardware verification actually stands
+
+| claim | evidence | status |
+|---|---|---|
+| `SyncHandle::publish` is now called | `tests/live_mode.rs` ×4, `two_process.rs` ×1, all mutation-checked | ✅ |
+| the send path runs on a phone | phone B's AAPS: `shadow agrees — … pushed 1` | ✅ |
+| a push is *delivered* to a follower | — | ⚠️ **not yet** |
+
+The last row cannot be measured on the current rig. Ayni's keys replicator
+carries only *its own* subject and the subjects it *follows* — pool adoption
+applies to the core vault, not the keys vault — so the only peer that can push
+to Ayni is the loop phone, which is still on the pre-fix build. With the
+corrected counter Ayni reports `counts received=4 live=0`, which is the right
+answer and a clean negative control.
+
+`swarm: keys subject <hex>` is now logged at plugin startup. The keys subject is
+a different key from the core vault's and could not be read from a phone at
+all, which is what made a laptop-side check impossible without driving the UI.

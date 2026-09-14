@@ -356,16 +356,15 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
                             match out {
                                 Ok(()) => *received.lock().unwrap() += 1,
                                 Err(e) => {
-                                    log.lock().unwrap().push(format!("could not store: {e}"))
+                                    remember(&log, format!("could not store: {e}"))
                                 }
                             }
                         }
-                        other => log
-                            .lock()
-                            .unwrap()
-                            .push(format!("{other:?} from {}", &remote.to_hex()[..8])),
+                        other => {
+                            remember(&log, format!("{other:?} from {}", &remote.to_hex()[..8]))
+                        }
                     },
-                    Err(e) => log.lock().unwrap().push(format!("error: {e}")),
+                    Err(e) => remember(&log, format!("error: {e}")),
                 }
             }
         });
@@ -463,11 +462,7 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
             // data, and it must not fail the publish that produced it.
             match handle.publish(operation.clone()) {
                 Ok(()) => sent += 1,
-                Err(e) => self
-                    .events
-                    .lock()
-                    .unwrap()
-                    .push(format!("could not push live: {e}")),
+                Err(e) => remember(&self.events, format!("could not push live: {e}")),
             }
         }
         sent
@@ -490,6 +485,29 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
     /// Every non-operation sync event so far.
     pub fn events(&self) -> Vec<String> {
         self.events.lock().unwrap().clone()
+    }
+}
+
+/// How many sync events to keep.
+///
+/// **BECAUSE THIS RAN UNBOUNDED ON A PHONE THAT DRIVES AN INSULIN PUMP.** Every
+/// non-operation event was appended for ever, and they are not small: a single
+/// `SyncFinished` Debug-formats its whole `Metrics` struct at around 300 bytes.
+/// A phone syncing every couple of minutes produces several per session, which
+/// is megabytes a day of strings nothing ever reads — `keysSyncEvents` asks for
+/// a tail of six. The publishing app has been killed for heap before, and when
+/// it is killed the loop stops.
+///
+/// 256 is far more than any diagnostic has wanted and small enough to be free.
+const KEEP_EVENTS: usize = 256;
+
+/// Record a sync event, forgetting the oldest once there are too many.
+fn remember(log: &Mutex<Vec<String>>, line: String) {
+    let mut log = log.lock().unwrap();
+    log.push(line);
+    if log.len() > KEEP_EVENTS {
+        let excess = log.len() - KEEP_EVENTS;
+        log.drain(..excess);
     }
 }
 
@@ -580,6 +598,28 @@ mod tests {
         assert_eq!(count_live(&mut seen, 2, 1), 1, "a second session started at its own zero");
         assert_eq!(count_live(&mut seen, 1, 2), 1);
         assert_eq!(count_live(&mut seen, 2, 2), 1);
+    }
+
+    /// THE EVENT LOG DOES NOT GROW FOR EVER.
+    ///
+    /// **IT DID, ON A PHONE THAT DRIVES AN INSULIN PUMP.** Every sync event was
+    /// appended and none were ever dropped; a `SyncFinished` Debug-formats its
+    /// whole `Metrics` at about 300 bytes, several per session, a session every
+    /// couple of minutes — megabytes a day of strings that nothing reads, since
+    /// the only consumer asks for a tail of six. That app has been killed for
+    /// heap before, and when it is killed the loop stops.
+    #[test]
+    fn the_event_log_forgets_the_oldest_rather_than_growing() {
+        let log = std::sync::Mutex::new(Vec::new());
+        for i in 0..super::KEEP_EVENTS * 3 {
+            super::remember(&log, format!("event {i}"));
+        }
+        let kept = log.lock().unwrap();
+        assert_eq!(kept.len(), super::KEEP_EVENTS, "the log grew past its cap");
+        // AND IT KEEPS THE NEWEST. Forgetting the recent ones would be worse
+        // than growing: the tail is the only part a diagnostic ever asks for.
+        assert_eq!(kept.last().unwrap(), &format!("event {}", super::KEEP_EVENTS * 3 - 1));
+        assert_eq!(kept.first().unwrap(), &format!("event {}", super::KEEP_EVENTS * 2));
     }
 
     /// A RECYCLED SESSION ID DOES NOT LOSE ITS PUSHES.
