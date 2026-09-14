@@ -1854,3 +1854,39 @@ measurement behind it:
 
 ⚠️ Still not done: a real overnight rather than an hour, and the `event` record
 kind, which nothing reads and nothing on screen claims to.
+
+### 🐛 The off-LAN "proof" tested the wrong path, and hid a stalled subscription
+
+Twenty minutes after declaring transport closed, the follower was showing a
+reading **nine minutes old**, then ten, with the row count sliding *backwards*
+(377 → 376 → 375) as the six-hour window moved on with nothing new arriving.
+
+**What I actually proved off-LAN was the core-vault fetch.** `refreshed 1
+subject(s)` is `netRefresh` — the `diaswarm-net` path. Phone B is in keys-only
+mode, so what it *displays* comes from the keys vault, replicated by p2panda log
+sync, which is a different mechanism over a different subscription. The relay
+carried core fetches across networks perfectly. Keys replication stopped at the
+same moment, and I called the whole thing closed on one of the two.
+
+**The defect underneath is real and is the same shape as `swarmTick`.** After
+the publisher changed network, the follower's log-sync subscription wedged and
+never recovered:
+
+```
+12:24  last segment received
+12:33  keys # opened 640 rows 377   "9 min ago"
+12:34  keys # opened 640 rows 375   "10 min ago"
+       keys carrying 2 log(s)        ← printed every pass, the whole time
+```
+
+`keys carrying 2` every pass, so the app believed it was subscribed. Eleven
+minutes, no self-healing, and the publisher was back on its original address the
+whole time — so not an address problem.
+
+A force-stop and relaunch fixed it in one pass: `66s ago`. The data had been
+sitting on the publisher all along.
+
+⚠️ **So "carrying N logs" is not evidence of anything.** It reports that a
+subscription object exists, not that bytes are moving — which is precisely the
+distinction this project keeps being caught by. The honest signal is the same
+one as everywhere else: did a record actually arrive.
