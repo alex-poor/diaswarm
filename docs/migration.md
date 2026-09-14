@@ -2413,6 +2413,22 @@ core-vault subjects; the keys logs of a stranger are never carried by anyone.
 Not a defect in the live-push work, and not fixed here: it is a decision about
 what the cutover means, and it belongs to whoever is making it.
 
+> ✅ **CLOSED 2026-09-14 by [D28](decisions.md).** Bucket announcements and pool
+> adoption now cover keys subjects: `BucketMessage::HoldingKeys`,
+> `Swarm::keys_wanted`, and a `keysCarryAll` that adopts up to four heard
+> strangers a pass and then reports what it holds so the next tick announces it.
+> `tests/keys_pool.rs` has a stranger carrying a subject it was never introduced
+> to, failing to read it, and re-announcing it — mutation-checked both ways.
+>
+> **The announcing half is not separable from the adopting half**, and D28 is
+> mostly about why: a peer that says "I hold keys-subject Y" while only
+> followers hold Y has published the follower set, which is the D18 leak.
+>
+> Two peers in one process. Not phones, and not disjoint shares — the same gap
+> the core vault's pool has always had. What a phone can now say is
+> `keys holders for <subject>: N`, through the new `keysHoldersHeard`; it was
+> "none" by construction before, and nothing reported even that.
+
 ### ✅ First live delivery ever recorded, and it is p2panda's number, not mine
 
 The evidence that matters does not come from the counter I wrote — which has

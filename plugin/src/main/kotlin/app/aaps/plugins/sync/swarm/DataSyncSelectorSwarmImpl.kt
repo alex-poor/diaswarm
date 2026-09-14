@@ -839,7 +839,9 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         val carried = SwarmNative.keysCarryAll(
             handle,
             SwarmPaths.store(context).absolutePath,
-            SwarmPaths.identity(context).absolutePath
+            SwarmPaths.identity(context).absolutePath,
+            // The same budget this pass gives the core vault above.
+            2
         )
         // **SAY WHAT IT DID, NOT ONLY WHEN IT FAILED.** The first version of
         // this logged nothing on success, so a pass that carried nothing and a

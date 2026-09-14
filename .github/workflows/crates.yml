@@ -83,9 +83,6 @@ jobs:
         working-directory: crates/diaswarm-keys
         run: cargo test --no-fail-fast
 
-      - name: diaswarm-spaces
-        working-directory: crates/diaswarm-spaces
-        run: cargo test --no-fail-fast
 
       - name: diaswarm-android
         working-directory: crates/diaswarm-android

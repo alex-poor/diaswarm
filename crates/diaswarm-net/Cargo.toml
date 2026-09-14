@@ -7,7 +7,6 @@ description = "Move a vault between peers over iroh"
 
 [dependencies]
 diaswarm-core = { path = "../diaswarm-core" }
-diaswarm-spaces = { path = "../diaswarm-spaces" }
 diaswarm-keys = { path = "../diaswarm-keys" }
 iroh = "1.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "fs", "signal", "time"] }

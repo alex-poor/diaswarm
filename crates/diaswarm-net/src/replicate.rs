@@ -6,7 +6,7 @@
 //! which logs a topic covers, subscribes, and the library catches it up and
 //! then keeps it live over gossip. Measured in `spike/p2panda-logsync`,
 //! including that it carries operation bodies up to at least 4 MB, which is
-//! what `diaswarm-spaces` puts record ciphertext in.
+//! two orders of magnitude above the day of records a segment holds.
 //!
 //! HOW IT MEETS THE POOL, WHICH IS THE PART WORTH READING. Nothing in
 //! [`crate::pool`] changes. A bucket topic already carries a gossip
@@ -22,12 +22,13 @@
 //! self-healing arithmetic the pool always had, with the transport handed to
 //! the library.
 //!
-//! **A SUBJECT IS AN AUTHOR AND SOME LOGS.** `diaswarm-spaces` publishes
-//! everything a subject ever seals into log 0 of the subject's own key, so
-//! associating `(topic, subject_key, 0)` was the whole of "carry this person's
-//! data". `diaswarm-keys` splits that in two — segments in log 0, grants in log
-//! 1 — so this is parameterised over the logs a subject has and over the
-//! extension type they carry, rather than hard-wired to one of each.
+//! **A SUBJECT IS AN AUTHOR AND SOME LOGS.** `diaswarm-keys` splits what a
+//! subject writes in two — segments in log 0, grants in log 1 — so associating
+//! a subject with a topic means associating both, and this is parameterised
+//! over the logs a subject has and the extension type they carry rather than
+//! hard-wired to one of each. It was generic before it needed to be, for a
+//! second vault that has since been deleted; the generics stay because two
+//! logs of different shapes is the case that is actually live.
 //!
 //! **AND THAT IS WHY BOTH OF ITS LOGS CARRY ONE EXTENSION TYPE.**
 //! `LogSync<S, L, E>` takes a single `E`, and two instances cannot share an
@@ -82,11 +83,6 @@ use p2panda_sync::protocols::TopicLogSyncEvent;
 
 use p2panda_core::Extensions;
 
-use diaswarm_spaces::Conditions;
-
-/// The extensions `diaswarm-spaces` operations carry.
-pub type SpacesArgs = diaswarm_spaces::SpacesArgs<Conditions>;
-
 /// The extensions `diaswarm-keys` operations carry, across both its logs.
 pub type KeysArgs = diaswarm_keys::wire::KeysArgs;
 
@@ -106,9 +102,6 @@ type Handles<A> = Arc<Mutex<std::collections::HashMap<[u8; 32], Stream<A>>>>;
 /// follower reported 17,128 live arrivals out of 8,103 operations received,
 /// which is not merely wrong but impossible.
 type Session = ([u8; 32], [u8; 32], u64);
-
-/// Replication for a `diaswarm-spaces` peer.
-pub type SpacesReplicator = Replicator<SpacesArgs>;
 
 /// Replication for a `diaswarm-keys` peer: segments and grants, one session.
 pub type KeysReplicator = Replicator<KeysArgs>;
@@ -222,16 +215,6 @@ impl<A: Extensions + Send + 'static> Clone for Replicator<A> {
     }
 }
 
-impl SpacesReplicator {
-    /// Start replication for a `diaswarm-spaces` peer: one log, one shape.
-    pub async fn spaces(store: SqliteStore, endpoint: Endpoint, gossip: Gossip) -> Result<Self> {
-        Self::start(store, endpoint, gossip, &[diaswarm_spaces::LOG_ID], |_| {
-            diaswarm_spaces::LOG_ID
-        })
-        .await
-    }
-}
-
 impl KeysReplicator {
     /// Start replication for a `diaswarm-keys` peer: segments and grants.
     pub async fn keys(store: SqliteStore, endpoint: Endpoint, gossip: Gossip) -> Result<Self> {
@@ -309,6 +292,20 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
 
         self.associated.lock().unwrap().insert(pair);
         self.stream(topic_bytes).await
+    }
+
+    /// Every subject this replicator carries, whoever it belongs to.
+    ///
+    /// What the pool announces on this peer's behalf — see
+    /// [`crate::swarm::Swarm::set_keys_held`]. Taken from the association set
+    /// rather than from the store, because "carrying" is a live subscription
+    /// and a store can hold a subject nothing is listening for any more.
+    pub fn carried(&self) -> Vec<String> {
+        let mut out: Vec<String> =
+            self.associated.lock().unwrap().iter().map(|(_, s)| s.clone()).collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// Subscribe to a topic, once, and keep collecting from it.

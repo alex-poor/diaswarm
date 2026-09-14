@@ -1411,179 +1411,6 @@ mod identity_tests {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The spaces vault
-// ---------------------------------------------------------------------------
-//
-// A SECOND VAULT, ALONGSIDE THE FIRST, AND NOT WIRED TO ANYTHING YET.
-//
-// `diaswarm-spaces` replaces the hand-composed sealing construction above with
-// p2panda's own key layer (D20), and `diaswarm-net::replicate` replaces the
-// vault protocol with log sync (D21). Both are measured — on this subject's
-// real history, and on this phone — and neither has ever run inside AAPS.
-//
-// So they ship switched off, behind their own JNI entry points, next to the
-// ones that work. The plugin decides which to call; nothing here changes what
-// a phone does until it does. That is the same posture the plugin itself takes
-// (SECURITY.md: it ships disabled and cannot dose), for the same reason: the
-// failure mode being guarded against is not a bad reading, it is an app that
-// will not start on a phone driving an insulin pump.
-//
-// The old vault stays until the differential test has been run against a
-// migrated device, not merely against a copy of its database.
-
-/// An open spaces vault and the runtime it needs.
-///
-/// The runtime is owned here because `diaswarm-spaces` is async and JNI is not.
-/// One per vault rather than one shared: a handle that outlives its runtime is
-/// a use-after-free, and the lifetimes are easier to see when they are the same
-/// object.
-struct SpacesVault {
-    runtime: tokio::runtime::Runtime,
-    vault: diaswarm_spaces::Vault,
-}
-
-/// Open, or create, the spaces vault under a directory. Returns a handle, or 0.
-#[no_mangle]
-pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesOpen<'a>(
-    mut env: JNIEnv<'a>,
-    _class: JClass<'a>,
-    dir: JString<'a>,
-    offset_ms: jlong,
-) -> jlong {
-    let Ok(dir) = env.get_string(&dir) else { return 0 };
-    let dir = PathBuf::from(String::from(dir));
-
-    let Ok(runtime) = tokio::runtime::Runtime::new() else { return 0 };
-    let Ok(vault) = runtime.block_on(diaswarm_spaces::Vault::open(dir, offset_ms)) else {
-        return 0;
-    };
-    Box::into_raw(Box::new(SpacesVault { runtime, vault })) as jlong
-}
-
-/// Close it. Safe to call with 0.
-#[no_mangle]
-pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesClose<'a>(
-    _env: JNIEnv<'a>,
-    _class: JClass<'a>,
-    handle: jlong,
-) {
-    if handle == 0 {
-        return;
-    }
-    // Dropping the runtime stops its threads; dropping the vault closes the
-    // store. Order matters only in that both must happen, which `Box` does.
-    drop(unsafe { Box::from_raw(handle as *mut SpacesVault) });
-}
-
-/// The subject's public key, hex. Empty on failure.
-#[no_mangle]
-pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesSubject<'a>(
-    env: JNIEnv<'a>,
-    _class: JClass<'a>,
-    handle: jlong,
-) -> JString<'a> {
-    if handle == 0 {
-        return to_jstring(env, String::new());
-    }
-    let v = unsafe { &*(handle as *const SpacesVault) };
-    to_jstring(env, v.vault.subject().to_hex())
-}
-
-/// Seal a batch of canonical records. Returns how many were sealed, or < 0.
-#[no_mangle]
-pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesSeal<'a>(
-    mut env: JNIEnv<'a>,
-    _class: JClass<'a>,
-    handle: jlong,
-    ndjson: JString<'a>,
-) -> jlong {
-    if handle == 0 {
-        return -1;
-    }
-    let Ok(body) = env.get_string(&ndjson) else { return -2 };
-    let body = String::from(body);
-    let v = unsafe { &mut *(handle as *mut SpacesVault) };
-
-    let records: Vec<Record> = body
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| Record::from_json(l).ok())
-        .map(Record::normalise)
-        .collect();
-
-    match v.runtime.block_on(v.vault.seal(&records)) {
-        Ok(_) => records.len() as jlong,
-        Err(_) => -3,
-    }
-}
-
-/// Grant a reader. `history` decides whether it reaches back (D20).
-///
-/// Returns 0, or < 0. The reader must already be known to this vault — on a
-/// phone that is what scanning an invite does.
-#[no_mangle]
-pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesGrant<'a>(
-    mut env: JNIEnv<'a>,
-    _class: JClass<'a>,
-    handle: jlong,
-    reader_hex: JString<'a>,
-    history: jboolean,
-) -> jlong {
-    if handle == 0 {
-        return -1;
-    }
-    let Ok(who) = env.get_string(&reader_hex) else { return -2 };
-    let Some(reader) = verifying_key(&String::from(who)) else { return -3 };
-    let v = unsafe { &mut *(handle as *mut SpacesVault) };
-
-    let reach = if history != 0 {
-        diaswarm_spaces::Reach::Everything
-    } else {
-        diaswarm_spaces::Reach::FromNow
-    };
-    match v.runtime.block_on(v.vault.grant(reader, reach)) {
-        Ok(_) => 0,
-        Err(_) => -4,
-    }
-}
-
-/// Withdraw a reader's access, from the next thing sealed onward.
-#[no_mangle]
-pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesRevoke<'a>(
-    mut env: JNIEnv<'a>,
-    _class: JClass<'a>,
-    handle: jlong,
-    reader_hex: JString<'a>,
-) -> jlong {
-    if handle == 0 {
-        return -1;
-    }
-    let Ok(who) = env.get_string(&reader_hex) else { return -2 };
-    let Some(reader) = verifying_key(&String::from(who)) else { return -3 };
-    let v = unsafe { &mut *(handle as *mut SpacesVault) };
-    match v.runtime.block_on(v.vault.revoke(reader)) {
-        Ok(_) => 0,
-        Err(_) => -4,
-    }
-}
-
-/// A one-line summary, for a log line or a status row.
-#[no_mangle]
-pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_spacesStatus<'a>(
-    env: JNIEnv<'a>,
-    _class: JClass<'a>,
-    handle: jlong,
-) -> JString<'a> {
-    if handle == 0 {
-        return to_jstring(env, String::from("no vault"));
-    }
-    let v = unsafe { &*(handle as *const SpacesVault) };
-    let readers = v.runtime.block_on(v.vault.reader_ids()).map(|r| r.len()).unwrap_or(0);
-    let summary = format!("{} windows, {readers} readers", v.vault.windows());
-    to_jstring(env, summary)
-}
-
 /// Parse a hex public key. `None` rather than a panic on anything unexpected:
 /// this comes from a QR code somebody photographed.
 fn verifying_key(hex: &str) -> Option<p2panda_core::VerifyingKey> {
@@ -1602,11 +1429,12 @@ fn verifying_key(hex: &str) -> Option<p2panda_core::VerifyingKey> {
 // The keys vault, and what shadow mode is actually for
 // ---------------------------------------------------------------------------
 //
-// SHADOW MODE SHADOWS THE VAULT THAT IS GOING TO SHIP, AND UNTIL NOW IT DID
-// NOT. It sealed into `diaswarm-spaces`, which D26 decided against: spaces
+// SHADOW MODE SHADOWS THE VAULT THAT IS GOING TO SHIP, AND ONCE IT DID NOT.
+// It sealed into `diaswarm-spaces`, which D26 decided against: that vault
 // cannot express a follower who reads only the last day, because its
 // application messages chain to their space's previous tips. Shadowing it was
-// measuring the thing that is not going to happen.
+// measuring the thing that is not going to happen. That crate and its JNI
+// surface are now deleted outright.
 //
 // AND IT COMPARED NOTHING. Four places said it logs "whether they agree" — the
 // preference summary a user reads included — and the code added up how many
@@ -1633,11 +1461,13 @@ fn verifying_key(hex: &str) -> Option<p2panda_core::VerifyingKey> {
 ///
 /// **THE TAG IS NOT DECORATION.** Every vault handle crosses JNI as a bare
 /// `jlong`, so nothing in the type system stops Kotlin passing a keys handle to
-/// `spacesClose` — and `SwarmNative`'s own comment says why that matters: "two
-/// native handle types reachable from Kotlin is a crash waiting for whoever
-/// passes the wrong one". It happened during this very change: the close in
+/// the wrong `close` — and `SwarmNative`'s own comment says why that matters:
+/// "two native handle types reachable from Kotlin is a crash waiting for
+/// whoever passes the wrong one". It happened once: the close in
 /// `sealPending`'s `finally` was left as `spacesClose`, which would have freed
-/// this struct as a `SpacesVault` on a phone driving an insulin pump.
+/// this struct as a `SpacesVault` on a phone driving an insulin pump. Deleting
+/// that family removed the particular wrong answer and not the hazard — the
+/// tag is what makes the next one a refusal instead of undefined behaviour.
 ///
 /// A leading magic word turns that from undefined behaviour into a refusal with
 /// a log line. It cannot catch a *stale* pointer, only a wrongly-typed one, and
@@ -2210,6 +2040,38 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmHoldersHeard<'a>(
     to_jstring(env, pooled.swarm.holders_heard(&subject).join("\n"))
 }
 
+/// Who in the pool has announced holding this subject's **keys** logs.
+///
+/// Takes the encoded keys identity a follow records — the same string
+/// `keysCarryAll` decodes — rather than a bare signer, because that is what
+/// the caller has and decoding it here keeps one implementation of the format.
+///
+/// **THE QUESTION THE KEYS VAULT COULD NOT ANSWER UNTIL NOW.** `swarmHoldersHeard`
+/// reports the core vault's pool, and until 2026-09-14 the keys vault had no
+/// pool at all: `keysCarryAll` carried this phone's own subject and its
+/// follows, and nothing announced or adopted a stranger's. So the honest answer
+/// here was always "none", and nothing on a phone said so. Now that strangers
+/// carry each other's keys logs, this is how a person finds out whether the
+/// redundancy is real on the pool they are actually in — as opposed to in a
+/// test with two peers on one laptop.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysHoldersHeard<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    keys_identity: JString<'a>,
+) -> JString<'a> {
+    if handle == 0 {
+        return to_jstring(env, String::new());
+    }
+    let Ok(encoded) = env.get_string(&keys_identity) else { return to_jstring(env, String::new()) };
+    let Ok(id) = diaswarm_keys::decode_identity(&String::from(encoded)) else {
+        return to_jstring(env, String::new());
+    };
+    let pooled = unsafe { &*(handle as *const Pooled) };
+    to_jstring(env, pooled.swarm.keys_holders_heard(&id.signer.to_hex()).join("\n"))
+}
+
 /// A counts line, then the last `limit` sync events, newest last, one per line.
 ///
 /// The first line is always `counts received=N live=M`: every operation that
@@ -2515,7 +2377,8 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysTreatments<'a>(
     to_jstring(env, rows.iter().map(|(_, l)| l.clone()).collect::<Vec<_>>().join("\n"))
 }
 
-/// Carry every keys log this phone should hold: its own, and each it follows.
+/// Carry every keys log this phone should hold: its own, each it follows, and
+/// each stranger's that falls in this phone's share of the pool.
 ///
 /// **ONE CALL, BECAUSE THE DECODING BELONGS IN RUST.** A follow records the
 /// subject's keys identity as it arrived in their invite, and what `carry`
@@ -2527,6 +2390,21 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysTreatments<'a>(
 /// that does not announce its own bucket is a subject nobody can replicate
 /// from — the pool would hold followers and no source.
 ///
+/// **AND STRANGERS', WHICH IS THE HALF THAT WAS MISSING.** Until 2026-09-14
+/// this carried our own subject and our follows and stopped. Pool adoption
+/// announced and fetched *core*-vault subjects only, so
+/// [D15](../../docs/decisions.md) — any holder serves identical bytes, so a
+/// subject whose phone is asleep stays readable — was true of the vault being
+/// replaced and false of the vault replacing it. After a cutover a follower
+/// could reach a subject at exactly one address: the subject's own phone. That
+/// is not a swarm, and it is the property the whole design is for.
+///
+/// The two halves are one change on purpose. Announcing what we hold without
+/// strangers holding anything would publish the follower set — a peer saying
+/// "I hold keys-subject Y" would mean "I am watching Y's glucose", which is
+/// the leak [D18](../../docs/decisions.md) was retired for. Carrying
+/// strangers' subjects is what makes that sentence ambiguous.
+///
 /// Returns how many were carried, or negative. A follow with no keys identity
 /// is skipped rather than failed: it is somebody paired before the field
 /// existed, or a subject with no keys vault, and neither is an error.
@@ -2537,6 +2415,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarryAll<'a>(
     pool: jlong,
     store_path: JString<'a>,
     identity_path: JString<'a>,
+    max_adopt: jint,
 ) -> jlong {
     if pool == 0 {
         return -1;
@@ -2573,6 +2452,32 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarryAll<'a>(
         wanted.push(id.signer.to_hex());
     }
 
+    // Strangers heard about on the bucket topics this phone holds. `tick` is
+    // what fills that table, and the plugin and the follower both call it every
+    // pass — see `every_app_that_joins_the_pool_also_ticks_it`.
+    //
+    // **THE BUDGET IS THE CALLER'S, AND `0` IS A REAL ANSWER.** `swarmTick`
+    // already takes one for the core vault and Ayni passes zero to it,
+    // deliberately: "whether a follower's phone should start holding
+    // strangers' ciphertext is a separate decision and does not get to ride in
+    // on a bug fix". Adopting here on a fixed internal budget would make that
+    // decision for a released app from underneath, which is the same mistake
+    // with a different function's name on it. So the two budgets match, and a
+    // follower that carries nothing for strangers still announces and serves
+    // what it does hold.
+    //
+    // Bounded for the reason `tick_and_adopt` is bounded: a phone that has just
+    // joined a large pool must not try to pull its entire share in one worker,
+    // over mobile data, against a deadline. It catches up over passes.
+    if max_adopt > 0 {
+        let heard: Vec<String> = pooled
+            .runtime
+            .block_on(pooled.swarm.keys_wanted())
+            .map(|w| w.into_iter().map(|(s, _)| s).take(max_adopt as usize).collect())
+            .unwrap_or_default();
+        wanted.extend(heard);
+    }
+
     let mut carried = 0i64;
     for subject in wanted {
         let topic = diaswarm_net::pool::bucket_topic(
@@ -2583,6 +2488,11 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarryAll<'a>(
             carried += 1;
         }
     }
+
+    // SAY WHAT WE NOW HOLD, OR NOBODY ELSE CAN FIND IT. A peer that fetches and
+    // stays quiet is a dead end: the subject's own phone stays the only address
+    // anyone can learn, which is the state this whole function is fixing.
+    pooled.swarm.set_keys_held(replicator.carried());
     carried
 }
 
@@ -3782,11 +3692,17 @@ mod shadow_tests {
     /// pointed at this seam, which is where the defect was.
     ///
     /// A bare "everything must be called" rule is no good here: several
-    /// declarations are dead *by decision* — the `spaces*` family belongs to
-    /// the message layer D26 dropped, and a few keys helpers were superseded.
-    /// So the dead ones are listed by name. The list is the point: adding a
-    /// declaration and forgetting to call it fails immediately, and so does
-    /// quietly dropping the last call to a live one.
+    /// declarations are dead *by decision* — a few keys helpers were
+    /// superseded, and two core helpers are exercised from Rust rather than
+    /// Kotlin. So the dead ones are listed by name. The list is the point:
+    /// adding a declaration and forgetting to call it fails immediately, and so
+    /// does quietly dropping the last call to a live one.
+    ///
+    /// **THE `spaces*` FAMILY USED TO BE SEVEN OF THESE ENTRIES.** They were
+    /// dead by decision for long enough to look permanent, and were shipped to
+    /// two phones all that time. A list of knowingly-dead declarations is a
+    /// holding pen, not a destination: when the reason is "a decision went the
+    /// other way", the answer is to delete the code.
     ///
     /// If this fails, the fix is one of three things — call it, delete it, or
     /// put it on the list with a reason. Not the third by reflex.
@@ -3794,13 +3710,6 @@ mod shadow_tests {
     fn every_jni_declaration_is_called_or_knowingly_dead() {
         // Dead by decision, each with the reason it is still declared.
         const KNOWN_DEAD: &[(&str, &str)] = &[
-            ("spacesOpen", "D26 dropped the spaces message layer"),
-            ("spacesClose", "D26"),
-            ("spacesSubject", "D26"),
-            ("spacesSeal", "D26 — still measured by opcost, not used by an app"),
-            ("spacesGrant", "D26"),
-            ("spacesRevoke", "D26"),
-            ("spacesStatus", "D26"),
             ("header", "core helper, exercised by the Rust tests"),
             ("canonicalLine", "core helper, exercised by the Rust tests"),
             ("keysSubject", "superseded by keysIdentity"),

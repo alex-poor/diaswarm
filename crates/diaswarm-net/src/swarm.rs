@@ -57,6 +57,19 @@ pub enum BucketMessage {
     /// and a peer claiming to hold something it does not is found out by the
     /// fetch coming back empty. Naming yourself is a hint, not a credential.
     Holding { from: String, subjects: Vec<String> },
+    /// The same sentence about the *keys* vault's subjects.
+    ///
+    /// **A SEPARATE VARIANT, BECAUSE THE TWO VAULTS HAVE DIFFERENT SUBJECTS.**
+    /// A core subject is an X25519 encryption key and a keys subject is the
+    /// Ed25519 key its logs are authored under, so the same person is two
+    /// different hex strings. Announcing them in one list would send every
+    /// listener off to `adopt()` — the `wire.rs` pull — for a subject that
+    /// vault has never heard of, and get an empty answer that looks exactly
+    /// like a peer that has gone away.
+    ///
+    /// Older peers drop this on the floor: `serde_json` fails to match the
+    /// variant, and the receive loop already ignores what it cannot parse.
+    HoldingKeys { from: String, subjects: Vec<String> },
 }
 
 /// A running member of the pool.
@@ -87,6 +100,18 @@ pub struct Swarm {
     /// remembering. Keeping every announcer means the fallback has somewhere
     /// else to try.
     heard: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    /// The same, for keys-vault subjects. See [`BucketMessage::HoldingKeys`].
+    heard_keys: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    /// Keys subjects this peer holds, as last reported by whoever owns the
+    /// replicator.
+    ///
+    /// **PUSHED IN, NOT READ OFF DISK, AND THAT IS THE WHOLE AWKWARDNESS.**
+    /// `subjects_held` can list the core vault's subjects because they are
+    /// directories. A keys subject is rows in a SQLite log store, and the
+    /// thing that knows which ones this peer carries is the replicator's own
+    /// association set — which lives a layer up. So the owner tells the swarm
+    /// what it carries, and the swarm announces it.
+    keys_held: Arc<Mutex<Vec<String>>>,
     /// Until when this peer accepts an invite pushed at it. See `Request::Offer`.
     offers: Arc<std::sync::atomic::AtomicI64>,
     /// Kept so a subject followed AFTER startup can be seeded too — a scan
@@ -206,6 +231,8 @@ impl Swarm {
             _presence: presence,
             joined: Arc::new(Mutex::new(HashMap::new())),
             heard: Arc::new(Mutex::new(HashMap::new())),
+            heard_keys: Arc::new(Mutex::new(HashMap::new())),
+            keys_held: Arc::new(Mutex::new(Vec::new())),
             relay: relay_url,
             offers,
         };
@@ -305,6 +332,7 @@ impl Swarm {
         let mine = pool::my_buckets(&me, &members, depth, pool::REPLICAS);
 
         let held = subjects_held(&self.store);
+        let held_keys: Vec<String> = self.keys_held.lock().unwrap().clone();
         let mut announced = 0usize;
 
         for bucket in &mine {
@@ -322,6 +350,33 @@ impl Swarm {
                 let _ = handle.publish(msg).await;
                 announced += 1;
             }
+
+        }
+
+        // KEYS SUBJECTS ARE ANNOUNCED SOMEWHERE THIS PEER MAY NOT HOLD, and
+        // that is the difference between being a replica and being the source.
+        // A phone always carries its *own* keys log (`keysCarryAll`), but its
+        // own subject hashes wherever it hashes — which, in a pool of any size,
+        // is usually not one of this peer's buckets. Announcing only into
+        // `mine` would mean the one peer that definitely has the data is the
+        // one peer that never says so, and no stranger would ever hear the
+        // subject exists.
+        //
+        // Invisible at two peers, because `REPLICAS` (3) exceeds the pool and
+        // everybody holds everything. It would have started failing silently at
+        // about five — which is to say, at the first pool that was not a test.
+        for bucket in announce_buckets(&mine, &held_keys, depth) {
+            let handle = self.ensure_joined(depth, bucket).await?;
+            let ours_keys: Vec<String> =
+                held_keys.iter().filter(|s| pool::bucket_of(s, depth) == bucket).cloned().collect();
+            if !ours_keys.is_empty() {
+                let msg = serde_json::to_vec(&BucketMessage::HoldingKeys {
+                    from: me.clone(),
+                    subjects: ours_keys,
+                })?;
+                let _ = handle.publish(msg).await;
+                announced += 1;
+            }
         }
 
         let wanted: Vec<(String, Vec<String>)> = self
@@ -334,6 +389,8 @@ impl Swarm {
             .map(|(s, from)| (s.clone(), from.clone()))
             .collect();
 
+        let wanted_keys = self.keys_wanted_in(&mine, depth, &held_keys);
+
         Ok(TickReport {
             pool: members.len(),
             depth,
@@ -341,7 +398,73 @@ impl Swarm {
             held: held.len(),
             announced,
             wanted,
+            wanted_keys,
         })
+    }
+
+    /// Keys subjects heard in our buckets that this peer is not carrying yet.
+    ///
+    /// **SEPARATE FROM [`Swarm::tick`] BECAUSE TICKING ANNOUNCES.** The caller
+    /// that owns the replicator needs to ask this question every pass, and both
+    /// apps already tick once a pass of their own accord. Asking through `tick`
+    /// would publish a second round of gossip each time for an answer that is
+    /// sitting in a map.
+    pub async fn keys_wanted(&self) -> Result<Vec<(String, Vec<String>)>> {
+        let me = self.node_id().await?;
+        let members = self.pool_members().await?;
+        let depth = pool::depth_for(members.len());
+        let mine = pool::my_buckets(&me, &members, depth, pool::REPLICAS);
+        let held = self.keys_held.lock().unwrap().clone();
+        Ok(self.keys_wanted_in(&mine, depth, &held))
+    }
+
+    /// One definition of "wanted", used by both callers.
+    fn keys_wanted_in(
+        &self,
+        mine: &[u64],
+        depth: u8,
+        held: &[String],
+    ) -> Vec<(String, Vec<String>)> {
+        self.heard_keys
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(s, _)| !held.contains(*s))
+            .filter(|(s, _)| mine.contains(&pool::bucket_of(s, depth)))
+            .map(|(s, from)| (s.clone(), from.clone()))
+            .collect()
+    }
+
+    /// Tell the pool which keys-vault subjects this peer is carrying.
+    ///
+    /// **THIS IS THE HALF OF D15 THE KEYS VAULT DID NOT HAVE.** Pool adoption
+    /// announced and carried core-vault subjects only, so "any holder serves
+    /// identical bytes, and a subject whose phone is asleep is still readable"
+    /// was true of the vault being replaced and false of the vault replacing
+    /// it. A follower could only ever get data from the subject's own phone.
+    ///
+    /// **AND IT IS WHY ANNOUNCING IS NOT A NEW LEAK.** A peer saying "I hold
+    /// keys-subject Y" is only safe because strangers now hold Y too. If the
+    /// subject and its followers were the only holders, this announcement
+    /// would publish the follower set — exactly the leak
+    /// [D18](../../docs/decisions.md) was retired for. The crowd is what makes
+    /// "P holds Y" ambiguous between following it and merely carrying it, so
+    /// the announcing half and the adopting half have to ship together. Do not
+    /// land one without the other.
+    pub fn set_keys_held(&self, subjects: Vec<String>) {
+        let mut held = self.keys_held.lock().unwrap();
+        held.clear();
+        held.extend(subjects.into_iter().filter(|s| is_subject(s)));
+        held.sort();
+        held.dedup();
+    }
+
+    /// Who was heard announcing a keys subject, newest announcement last.
+    ///
+    /// The fallback path for a follower whose subject has gone quiet: any of
+    /// these serves the same operations.
+    pub fn keys_holders_heard(&self, subject: &str) -> Vec<String> {
+        self.heard_keys.lock().unwrap().get(subject).cloned().unwrap_or_default()
     }
 
     /// One pass, and take on what it finds.
@@ -385,31 +508,35 @@ impl Swarm {
         self.joined.lock().unwrap().insert(bucket, h.clone());
 
         let heard = Arc::clone(&self.heard);
+        let heard_keys = Arc::clone(&self.heard_keys);
         let mut rx = h.subscribe();
         tokio::spawn(async move {
             while let Some(Ok(bytes)) = rx.next().await {
-                if let Ok(BucketMessage::Holding { from, subjects }) =
-                    serde_json::from_slice::<BucketMessage>(&bytes)
-                {
-                    // A node id that does not parse cannot be dialled, so it is
-                    // not a hint — it is junk that would sit in the table
-                    // looking like an answer.
-                    if from.parse::<p2panda_net::NodeId>().is_err() {
+                let (from, subjects, into) = match serde_json::from_slice::<BucketMessage>(&bytes) {
+                    Ok(BucketMessage::Holding { from, subjects }) => (from, subjects, &heard),
+                    Ok(BucketMessage::HoldingKeys { from, subjects }) => {
+                        (from, subjects, &heard_keys)
+                    }
+                    Err(_) => continue,
+                };
+                // A node id that does not parse cannot be dialled, so it is
+                // not a hint — it is junk that would sit in the table
+                // looking like an answer.
+                if from.parse::<p2panda_net::NodeId>().is_err() {
+                    continue;
+                }
+                let mut set = into.lock().unwrap();
+                for s in subjects {
+                    if !is_subject(&s) || pool::bucket_of(&s, depth) != bucket {
                         continue;
                     }
-                    let mut set = heard.lock().unwrap();
-                    for s in subjects {
-                        if !is_subject(&s) || pool::bucket_of(&s, depth) != bucket {
-                            continue;
-                        }
-                        let who = set.entry(s).or_default();
-                        if !who.contains(&from) {
-                            who.push(from.clone());
-                            // Bounded: a subject announced by thousands of
-                            // peers must not become a list of thousands on a
-                            // phone. Any of them serves identical bytes.
-                            who.truncate(MAX_HEARD);
-                        }
+                    let who = set.entry(s).or_default();
+                    if !who.contains(&from) {
+                        who.push(from.clone());
+                        // Bounded: a subject announced by thousands of
+                        // peers must not become a list of thousands on a
+                        // phone. Any of them serves identical bytes.
+                        who.truncate(MAX_HEARD);
                     }
                 }
             }
@@ -630,6 +757,33 @@ pub struct TickReport {
     pub announced: usize,
     /// Subjects in our buckets we do not have yet, and everyone who has one.
     pub wanted: Vec<(String, Vec<String>)>,
+    /// The same for the keys vault: subjects heard in our buckets that this
+    /// peer is not yet carrying.
+    ///
+    /// **NOT ADOPTED HERE, UNLIKE `wanted`.** Taking one on means associating
+    /// its logs with a topic on a `Replicator`, which this module does not
+    /// hold — see [`Swarm::set_keys_held`]. The caller that owns the
+    /// replicator carries these and then reports back what it carries.
+    pub wanted_keys: Vec<(String, Vec<String>)>,
+}
+
+/// Where to announce keys subjects: this peer's share, plus wherever the
+/// subjects it actually holds happen to live.
+///
+/// Pure, and separate from [`Swarm::tick`], so the rule can be asserted without
+/// standing up a pool big enough for `mine` to exclude anything — which is the
+/// only size at which getting it wrong is visible.
+fn announce_buckets(mine: &[u64], held_keys: &[String], depth: u8) -> Vec<u64> {
+    let mut out = mine.to_vec();
+    for s in held_keys {
+        let b = pool::bucket_of(s, depth);
+        if !out.contains(&b) {
+            out.push(b);
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// How many announcers to remember per subject.
@@ -699,4 +853,51 @@ fn subjects_held(store: &Path) -> Vec<String> {
         .map(|e| e.file_name().to_string_lossy().to_string())
         .filter(|s| is_subject(s))
         .collect()
+}
+
+#[cfg(test)]
+mod announce_tests {
+    use super::*;
+
+    /// A PEER ANNOUNCES ITS OWN SUBJECT EVEN WHEN THE POOL DID NOT GIVE IT
+    /// THAT BUCKET.
+    ///
+    /// The bug this exists for was invisible in the integration test and would
+    /// have been invisible on the two phones here: with `REPLICAS` (3) at or
+    /// above the pool size, every peer holds every bucket and the distinction
+    /// never arises. It starts mattering at about five peers — the first pool
+    /// that is not a test — and the symptom would have been a subject that
+    /// nobody in the swarm ever hears about, which reads exactly like the
+    /// feature not being there.
+    #[test]
+    fn a_peer_announces_its_own_subject_outside_its_share() {
+        let depth = 8u8;
+        // A subject, and a share that deliberately excludes wherever it lands.
+        let mine_missing_it: Vec<u64> = (0..(1u64 << depth))
+            .filter(|b| *b != pool::bucket_of(SUBJECT, depth))
+            .take(4)
+            .collect();
+        const SUBJECT: &str =
+            "4a2f00000000000000000000000000000000000000000000000000000000beef";
+
+        let held = vec![SUBJECT.to_string()];
+        let buckets = announce_buckets(&mine_missing_it, &held, depth);
+
+        assert!(
+            buckets.contains(&pool::bucket_of(SUBJECT, depth)),
+            "a peer holding {SUBJECT} would never announce it: its bucket is not \
+             in this peer's share, so the one peer that certainly has the data \
+             is the one peer that never says so"
+        );
+        for b in &mine_missing_it {
+            assert!(buckets.contains(b), "the peer's own share was dropped");
+        }
+    }
+
+    /// And it does not invent buckets for subjects it does not hold.
+    #[test]
+    fn announcing_adds_nothing_when_there_is_nothing_held() {
+        let mine = vec![3u64, 9, 11];
+        assert_eq!(announce_buckets(&mine, &[], 8), vec![3, 9, 11]);
+    }
 }

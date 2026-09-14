@@ -86,7 +86,13 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                 val carried = SwarmNative.keysCarryAll(
                     Endpoint.handle,
                     store,
-                    SwarmPaths.identity(applicationContext).absolutePath
+                    SwarmPaths.identity(applicationContext).absolutePath,
+                    // ADOPT NOTHING — the same `0` this pass gives `swarmTick`,
+                    // for the same reason recorded there. A follower still
+                    // carries what it follows, still announces it, and still
+                    // serves it; what it does not do is start holding a
+                    // stranger's ciphertext because an update arrived.
+                    0
                 )
                 Log.i(TAG, if (carried < 0) "keys carry unavailable ($carried)" else "keys carrying $carried log(s)")
                 verifyChains(applicationContext, keysToo = carried > 0)
@@ -218,6 +224,18 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                         TAG,
                         if (holders.isEmpty()) "holders for ${subject.short}: none — only the subject can serve this"
                         else "holders for ${subject.short}: ${holders.size} (${holders.joinToString { it.take(8) }})"
+                    )
+                    // AND THE SAME FOR THE VAULT BEING CUT OVER TO, WHICH IS THE
+                    // ONE THAT MATTERS NOW. Until the pool carried keys logs
+                    // this was "none" by construction: a follower could only
+                    // ever reach a subject at the subject's own phone, which is
+                    // the opposite of what the pool is for.
+                    val keysHolders = SwarmNative.keysHoldersHeard(Endpoint.handle, subject.keys)
+                        .lines().filter { it.isNotBlank() }
+                    Log.i(
+                        TAG,
+                        if (keysHolders.isEmpty()) "keys holders for ${subject.short}: none"
+                        else "keys holders for ${subject.short}: ${keysHolders.size} (${keysHolders.joinToString { it.take(8) }})"
                     )
                 }
             } catch (e: Throwable) {

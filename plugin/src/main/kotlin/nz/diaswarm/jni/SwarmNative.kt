@@ -307,42 +307,13 @@ object SwarmNative {
 
 
     // -----------------------------------------------------------------------
-    // The spaces vault (D20/D21) — shadow only, see SwarmBooleanKey
-    // -----------------------------------------------------------------------
-
-    /** Open or create the spaces vault under [dir]. Returns a handle, or 0. */
-    external fun spacesOpen(dir: String, offsetMs: Long): Long
-
-    /** Close it. Safe with 0. */
-    external fun spacesClose(handle: Long)
-
-    /** The subject's public key, hex. Empty on failure. */
-    external fun spacesSubject(handle: Long): String
-
-    /** Seal canonical records. Returns how many, or < 0. */
-    external fun spacesSeal(handle: Long, ndjson: String): Long
-
-    /**
-     * Grant a reader. [history] decides whether the grant reaches backwards:
-     * true gives them everything ever sealed, false only what comes next.
-     */
-    external fun spacesGrant(handle: Long, readerHex: String, history: Boolean): Long
-
-    /** Withdraw a reader, from the next thing sealed onward. */
-    external fun spacesRevoke(handle: Long, readerHex: String): Long
-
-    /** One line: windows and readers. */
-    external fun spacesStatus(handle: Long): String
-
-
-    // -----------------------------------------------------------------------
     // The keys vault (D26) — what shadow mode actually shadows
     // -----------------------------------------------------------------------
     //
-    // The spaces entry points above stay because the code is still there and
-    // still measured, but D26 decided against that message layer: it cannot
-    // express a follower who reads only the last day. Shadowing it was
-    // measuring the thing that is not going to ship.
+    // A `spaces*` family used to sit above this, declared and called by
+    // neither app since D26 decided against that message layer — it cannot
+    // express a follower who reads only the last day. It was shipped to two
+    // phones for as long as it was dead. Deleted rather than left listed.
 
     /**
      * Open or create the keys vault under [dir], signing as the identity at
@@ -456,7 +427,18 @@ object SwarmNative {
      * identity is skipped rather than failed: somebody paired before the field
      * existed, or a subject with no keys vault, and neither is an error.
      */
-    external fun keysCarryAll(poolHandle: Long, storePath: String, identityPath: String): Long
+    /**
+     * Carry every keys log this phone should hold: its own, each it follows,
+     * and up to [maxAdopt] strangers heard in this phone's share of the pool.
+     *
+     * **[maxAdopt] MIRRORS [swarmTick]'s, AND ZERO IS A REAL ANSWER.** A
+     * follower passes 0 to both: whether a follower's phone should start
+     * holding strangers' ciphertext is a decision for a person, not something
+     * that arrives with an update. A phone that adopts nothing still announces
+     * and serves what it does hold, so passing 0 does not take it out of the
+     * pool.
+     */
+    external fun keysCarryAll(poolHandle: Long, storePath: String, identityPath: String, maxAdopt: Int): Long
 
     /**
      * Take the handover queue, keep what verifies, and say what may be granted.
@@ -648,6 +630,15 @@ object SwarmNative {
      * anybody else is there has never been visible from a phone.
      */
     external fun swarmHoldersHeard(handle: Long, subject: String): String
+
+    /**
+     * The same question of the keys vault: who has announced holding this
+     * subject's keys logs. Takes the encoded keys identity, not a bare key.
+     *
+     * Answered "none" by construction until 2026-09-14, because nothing
+     * announced or adopted a stranger's keys logs. See `keysCarryAll`.
+     */
+    external fun keysHoldersHeard(handle: Long, keysIdentity: String): String
 
     external fun keysSyncEvents(handle: Long, limit: Long): String
 

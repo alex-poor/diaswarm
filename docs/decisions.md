@@ -797,6 +797,89 @@ record. The thing the TODOs are about is the thing this decision removes.
 per record somewhere, which would mean the separation is less clean than both
 the API and those TODOs suggest.
 
+### D28 · The pool carries keys logs too, and announcing them is only safe because it does
+
+**Settled 2026-09-14.** Bucket announcements and pool adoption now cover
+`diaswarm-keys` subjects as well as core-vault ones:
+`BucketMessage::HoldingKeys` says which keys subjects a peer holds,
+`Swarm::keys_wanted` reports the ones heard in this peer's buckets, and
+`keysCarryAll` carries up to four of them a pass and then reports back what it
+holds so the next tick announces it.
+
+**WHY THIS IS A DECISION AND NOT A BUG FIX.** The cutover was going to drop the
+property the project exists for. [D15](#d15--a-fetch-says-nothing-about-who-is-fetching)
+— any holder serves identical bytes, so a subject whose phone is asleep is
+still readable — held for the core vault and not at all for the vault replacing
+it. `keysCarryAll` carried a phone's own subject and its follows; bucket
+announcements came from `subjects_held`, which lists the core vault's
+directories, and a keys subject is a *different key* that appears in none of
+them. After a cutover a follower could reach a subject at exactly one address:
+the subject's own phone. Everything the README says about three copies, about
+self-healing arithmetic and about a stranger serving a history while the
+originating phone is switched off would have become false of the shipping path
+without one word of it changing.
+
+**THE TWO HALVES MUST SHIP TOGETHER, AND THAT IS THE ACTUAL CONTENT OF THIS
+DECISION.** Announcing "I hold keys-subject Y" is safe only because strangers
+hold Y as well. If a subject and its followers were the only holders, the
+announcement would *be* the follower set — "I hold Y" would mean "I am watching
+Y's glucose", which is precisely the leak
+[D18](#d18--peers-tell-each-other-who-holds-what-and-that-publishes-the-follower-set)
+was retired for and that [D19](#d19--the-pool-is-the-only-way-peers-find-each-other)
+was careful to avoid reintroducing. Carrying strangers' subjects is what makes
+the sentence ambiguous between following and merely holding. **Nobody may land
+the announcing half alone**, and the doc comment on `Swarm::set_keys_held` says
+so at the seam.
+
+**A FOLLOWER STILL ADOPTS NOTHING, AND THAT IS DELIBERATE.** `keysCarryAll`
+takes an adoption budget exactly as `swarmTick` does, and Ayni passes `0` to
+both. The comment already in Ayni's tick says why, and it applies here word for
+word: *"whether a follower's phone should start holding strangers' ciphertext is
+a separate decision and does not get to ride in on a bug fix."* A first draft of
+this work adopted on a fixed internal budget, which would have made that
+decision for every installed copy of a released app from underneath — the same
+mistake with a different function's name on it. **A follower passing `0` is
+still a full pool member**: it announces what it holds and serves it, so a
+subject it follows gains a second holder in the pool regardless. What it does
+not do is start storing strangers.
+
+So today the peers that carry for strangers are the ones running the AAPS
+add-on, which pass `2` — the same budget that pass already gives the core vault.
+
+**What is knowingly still leaked**, unchanged in kind from D19: that a peer is
+in the pool, and roughly how much it carries. A subject's own phone announces
+both its core subject and its keys subject, so the two keys are linkable to one
+peer — which anyone holding that subject's invite could already do, since D27
+put both in it.
+
+**A SEPARATE GOSSIP VARIANT, NOT A LONGER LIST.** A core subject is an X25519
+encryption key; a keys subject is the Ed25519 key its logs are authored under.
+One list would send every listener to `adopt()` — the `wire.rs` pull — for a
+subject that vault has never heard of, and an empty answer there is
+indistinguishable from a peer that has gone away. Old peers ignore the new
+variant, because the receive loop already drops what it cannot parse.
+
+✅ **Proven by `crates/diaswarm-net/tests/keys_pool.rs`**, and proven by
+mutation rather than by passing. A stranger that is told nothing but which pool
+to join ends up holding a subject's segments, cannot open one of them, and then
+announces them so a third peer could find the subject somewhere other than its
+own phone. Removing the announcing half reproduces the exact prior symptom —
+`wanted_keys` never names the subject — and removing the re-announcement leaves
+the pool with one findable copy. Two peers is a deterministic pool rather than a
+lucky one: `depth_for(2)` is 1 and `REPLICAS` is 3, so both peers hold both
+buckets on every run.
+
+⚠️ **Measured between two peers in one process. Not measured on phones, and not
+measured with genuinely disjoint shares** — which needs four or more devices,
+and is the same gap the README already declares for the core vault's pool. What
+a phone can now say about it is `keys holders for <subject>: N`, which is a real
+answer and was "none" by construction before this.
+
+*Reopens if:* asking real people shows that being a visible holder of a named
+stranger's ciphertext is not acceptable even when unreadable — in which case
+the answer is not to stop carrying but to stop announcing per subject, and the
+cost is that a follower cannot find a second holder.
+
 ### D27 · An existing follower migrates without re-pairing, and the proof is the secret they already share
 
 **Settled 2026-09-13, deliberately ahead of need.** Re-pairing is acceptable
@@ -1237,6 +1320,29 @@ and dependent on n0 discovery rather than mDNS — turns out to be far slower th
 the local case.
 
 ### D20 · The vault moves onto p2panda-spaces; a window is a space
+
+> ❌ **REVERSED BY [D26](#d26--drop-to-p2panda-encryption-and-keep-segments),
+> and as of 2026-09-14 the code is deleted.** `crates/diaswarm-spaces`, its
+> seven `spaces*` JNI entry points, the Kotlin declarations of them in both
+> apps, `tests/replicate.rs` and `bin/twophone.rs` are gone, and
+> `p2panda-spaces` and `p2panda-auth` have left the dependency tree of both
+> APKs. Kept below because the reasoning is what D26 argues against, and
+> because the costs it documents for `p2panda-spaces` are still true of that
+> library.
+>
+> **It was dead for two days before it was deleted, and it shipped to two
+> phones in that state.** Nothing in Kotlin had called `spaces*` since D26;
+> the JNI guard listed all seven as "dead by decision", which is a holding pen
+> that reads like a decision. Every property `tests/replicate.rs` asserted —
+> a stranger carries a subject it was never introduced to, it cannot read what
+> it carries, and a granted reader gets the subject *from* the stranger — is
+> asserted by `tests/keys_replicate.rs` on the vault that is actually being cut
+> over to, which is why the test could go with the code rather than before it.
+>
+> **The `ShadowSpacesVault` preference keeps its name.** It drives the *keys*
+> vault and has done since D26. Renaming the stored key would silently reset
+> the setting on a phone that is driving an insulin pump, which is a worse
+> outcome than a stale name in a settings file.
 
 **Settled 2026-09-10.** `crates/diaswarm-spaces` replaces the sealing
 construction with `p2panda-spaces`, which composes `p2panda-auth`
