@@ -18,7 +18,32 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+/// **ONE AT A TIME, OR THE SUITE LIES ABOUT THE TRANSPORT.**
+///
+/// Each test here spawns two peers, and each peer runs an iroh endpoint, mDNS
+/// and gossip. Four tests at once is eight of those on one machine competing
+/// for discovery, and it does not fail cleanly — it fails a *different* test
+/// each run. Measured: two consecutive parallel runs failed
+/// `two_separate_processes_see_each_other_in_the_pool` and then
+/// `a_holding_announcement_crosses_a_process_boundary`; the same suite run
+/// serially passed 4/4 twice, in 22s and 26s.
+///
+/// A flaky transport suite is worse than none, because it teaches you to
+/// discount a red result — and the whole reason this file exists is that a real
+/// transport defect went unnoticed for the life of the project.
+///
+/// Serialising here rather than asking for `--test-threads=1` on the command
+/// line: a guarantee nobody has to remember is the only kind that holds.
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+/// Take the lock, ignoring poisoning — a panic in one test must not turn the
+/// rest of the file into errors that hide the original failure.
+fn alone() -> MutexGuard<'static, ()> {
+    ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn tmp(tag: &str) -> std::path::PathBuf {
     let p = std::env::temp_dir().join(format!(
@@ -27,6 +52,30 @@ fn tmp(tag: &str) -> std::path::PathBuf {
     ));
     std::fs::create_dir_all(&p).unwrap();
     p
+}
+
+/// Spawn a keys peer — publisher or follower — in its own process.
+fn keys_peer(
+    dir: &std::path::Path,
+    net: &str,
+    secs: u64,
+    role: &str,
+    subject: Option<&str>,
+) -> (Child, BufReader<std::process::ChildStdout>) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_keyspeer"));
+    cmd.arg(dir).arg(net).arg(secs.to_string()).arg(role);
+    if let Some(s) = subject {
+        cmd.arg(s);
+    }
+    let mut child =
+        cmd.stdout(Stdio::piped()).stderr(Stdio::null()).spawn().expect("spawn keyspeer");
+    let out = BufReader::new(child.stdout.take().unwrap());
+    (child, out)
+}
+
+/// The `"key":"value"` string a JSON line carries, if it carries one.
+fn text(line: &str, key: &str) -> Option<String> {
+    line.split(&format!("\"{key}\":\"")).nth(1)?.split('"').next().map(|s| s.to_string())
 }
 
 /// Spawn a peer and return it with a reader over its stdout.
@@ -78,6 +127,7 @@ fn field(line: &str, key: &str) -> i64 {
 /// in-process test in this crate is measuring a function call.
 #[test]
 fn two_separate_processes_see_each_other_in_the_pool() {
+    let _alone = alone();
     let net = "twoproc-see";
     let (mut a, mut ra) = peer(&tmp("see-a"), net, 40, true);
     let (mut b, mut rb) = peer(&tmp("see-b"), net, 40, false);
@@ -99,6 +149,7 @@ fn two_separate_processes_see_each_other_in_the_pool() {
 /// free. Between two processes on one machine it is a real test.
 #[test]
 fn a_holding_announcement_crosses_a_process_boundary() {
+    let _alone = alone();
     let net = "twoproc-gossip";
     let (mut a, mut ra) = peer(&tmp("gos-a"), net, 60, true);
     let (mut b, mut rb) = peer(&tmp("gos-b"), net, 60, false);
@@ -128,6 +179,7 @@ fn a_holding_announcement_crosses_a_process_boundary() {
 /// ever asserted in-process with `adopt` called by hand.
 #[test]
 fn a_second_process_adopts_without_being_told_to() {
+    let _alone = alone();
     let net = "twoproc-adopt";
     let (mut a, mut ra) = peer(&tmp("ad-a"), net, 75, true);
     let (mut b, mut rb) = peer(&tmp("ad-b"), net, 75, false);
@@ -143,5 +195,61 @@ fn a_second_process_adopts_without_being_told_to() {
         "no peer ended up holding anything in 60s — D15's redundancy is the \
          reason a sleeping subject is still readable, and a pool where nobody \
          adopts provides nothing"
+    );
+}
+
+/// AND A SEGMENT PUBLISHED NOW CROSSES A PROCESS BOUNDARY NOW.
+///
+/// **THE REGRESSION THIS SUITE EXISTS TO PREVENT, AT THE ONLY SCALE THAT
+/// COUNTS.** `tests/live_mode.rs` asserts the same property with both peers
+/// under one runtime, which proves `SyncHandle::publish` is called and that the
+/// far end stores what it is handed. It does not prove that a *process* can
+/// push to another process — and for the life of this project that was exactly
+/// the thing that did not happen: 69 live-mode sessions across two phones, and
+/// `received_live_operations: 0` in every one of them.
+///
+/// The follower's `live` count is the assertion. `received` climbing is not
+/// enough: catch-up delivers everything, which is why the total was always
+/// healthy while the transport was half-built.
+#[test]
+fn a_segment_published_in_one_process_is_pushed_to_another() {
+    let _alone = alone();
+    let net = "twoproc-live";
+    let (mut a, mut ra) = keys_peer(&tmp("live-a"), net, 75, "publish", None);
+
+    // The publisher names its own subject on the way up; the follower cannot
+    // be started until it is known.
+    let up = until(&mut ra, Duration::from_secs(25), |l| l.contains("\"event\":\"up\""));
+    let subject = up.as_deref().and_then(|l| text(l, "subject"));
+    let Some(subject) = subject else {
+        let _ = a.kill();
+        panic!("the publisher never came up");
+    };
+
+    let (mut b, mut rb) = keys_peer(&tmp("live-b"), net, 75, "follow", Some(&subject));
+
+    // It has to have fetched the history first, or "arrived live" would be
+    // unfalsifiable — everything arrives somehow, and the question is how.
+    let caught_up = until(&mut rb, Duration::from_secs(45), |l| field(l, "received") >= 1).is_some();
+
+    // The publisher seals and pushes a segment every second from t=10.
+    let pushed = until(&mut ra, Duration::from_secs(45), |l| field(l, "pushed") >= 1).is_some();
+
+    // And this is the one that was zero for the life of the project.
+    let live = until(&mut rb, Duration::from_secs(45), |l| field(l, "live") >= 1);
+
+    let _ = a.kill();
+    let _ = b.kill();
+    assert!(caught_up, "the follower never received anything at all, live or otherwise");
+    assert!(
+        pushed,
+        "the publisher never had a live stream to push onto — it carries its own \
+         subject, so a 0 here means the handle was dropped or never kept"
+    );
+    assert!(
+        live.is_some(),
+        "nothing arrived over gossip in 45s. Catch-up worked and live mode did \
+         not, which is the exact shape of the defect that made every follower \
+         this project ever shipped one sync interval behind"
     );
 }

@@ -2257,3 +2257,29 @@ exact hardware symptom in the event log — `LiveModeStarted`, then
 ⚠️ **Not yet confirmed on hardware.** The counter to watch is `live` in the
 follower's `sync: counts received=… live=…` line, and `pushed=` in the
 publisher's shadow-pass line. Both are zero in every build before this one.
+
+### ⚠️ And the live counter was wrong within twenty minutes of shipping
+
+The first version of `live` asked `metrics.received_live_operations > 0`. That
+is a fact about the **session**, not about the operation in hand: `Metrics` is
+cumulative, so once a session has taken one push, every later catch-up
+operation on that same session looks pushed too. Sessions do re-sync — the
+phone's own event log shows `SyncFinished, LiveModeStarted, SyncFinished,
+LiveModeStarted` against one peer.
+
+Caught by two numbers that could not both be true:
+
+| side | reported |
+|---|---|
+| Ayni (receiving) | `counts received=1059 live=1052` |
+| AAPS (publishing, its only peer) | `shadow agrees — given 1, … pushed 1` |
+
+The true figure was **one**. A counter added to detect a broken transport was
+reporting success by accident — the same failure shape as the defect it exists
+to catch, which is why it is worth saying out loud rather than quietly fixing.
+
+`FromSync` carries a `session_id`, so the rule is now the per-session
+*increase*, in `count_live`, with three unit tests: catch-up after a push is not
+a push; two sessions do not borrow each other's counts; and a recycled session
+id does not lose its pushes (saturating to zero there would undercount silently
+for the life of the session — a working transport reported as a broken one).

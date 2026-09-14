@@ -163,11 +163,14 @@ pub struct Replicator<A: Extensions + Send + 'static> {
     /// **THE NUMBER THAT WOULD HAVE CAUGHT THE MISSING SEND HALF ON DAY ONE.**
     /// `received` counts both phases and so was always healthy: catch-up syncs
     /// delivered everything, and live mode delivered nothing, and one total
-    /// cannot tell those apart. `Metrics::received_live_operations` is bumped
-    /// immediately before the event is emitted, so a non-zero value on an
-    /// `OperationReceived` identifies a live-phase arrival exactly — no
-    /// heuristic and no sampling.
+    /// cannot tell those apart.
+    ///
+    /// See [`count_live`] for how the two are told apart, and for the wrong
+    /// rule that shipped first and reported 1,052 live arrivals on a phone
+    /// whose only peer had pushed exactly one.
     live: Arc<Mutex<usize>>,
+    /// The last `received_live_operations` seen on each session, for [`count_live`].
+    live_seen: Arc<Mutex<std::collections::HashMap<u64, u32>>>,
     /// Every sync event, in order.
     ///
     /// Kept because "nothing replicated" has several very different causes —
@@ -197,6 +200,7 @@ impl<A: Extensions + Send + 'static> Clone for Replicator<A> {
             associated: Arc::clone(&self.associated),
             received: Arc::clone(&self.received),
             live: Arc::clone(&self.live),
+            live_seen: Arc::clone(&self.live_seen),
             events: Arc::clone(&self.events),
         }
     }
@@ -253,6 +257,7 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
             associated: Arc::new(Mutex::new(HashSet::new())),
             received: Arc::new(Mutex::new(0)),
             live: Arc::new(Mutex::new(0)),
+            live_seen: Arc::new(Mutex::new(std::collections::HashMap::new())),
             events: Arc::new(Mutex::new(Vec::new())),
         })
     }
@@ -304,6 +309,7 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         let mut events = handle.subscribe().await.context("subscribing to a topic")?;
         let received = Arc::clone(&self.received);
         let live = Arc::clone(&self.live);
+        let live_seen = Arc::clone(&self.live_seen);
         let log = Arc::clone(&self.events);
         let store = self.store.clone();
         let log_of = self.log_of;
@@ -318,12 +324,15 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         let task = tokio::spawn(async move {
             while let Some(next) = events.next().await {
                 match next {
-                    Ok(FromSync { event, remote, .. }) => match event {
+                    Ok(FromSync { event, remote, session_id, .. }) => match event {
                         TopicLogSyncEvent::OperationReceived { operation, metrics } => {
                             *last_event.lock().unwrap() = std::time::Instant::now();
-                            if metrics.received_live_operations > 0 {
-                                *live.lock().unwrap() += 1;
-                            }
+                            let n = count_live(
+                                &mut live_seen.lock().unwrap(),
+                                session_id,
+                                metrics.received_live_operations,
+                            );
+                            *live.lock().unwrap() += n;
                             // STORED, OR THIS PEER CARRIES NOTHING.
                             //
                             // And stored in the log its own header says it
@@ -484,6 +493,38 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
     }
 }
 
+/// How many of this event's operations arrived pushed rather than fetched.
+///
+/// **THE OBVIOUS RULE IS WRONG, AND IT SHIPPED FIRST.** `Metrics` is cumulative
+/// over a *session*, so `received_live_operations > 0` means "this session has
+/// received a live operation at some point", not "this operation is live". A
+/// session that takes one push and then re-syncs — which is ordinary, and which
+/// the event log shows happening as `SyncFinished, LiveModeStarted,
+/// SyncFinished, LiveModeStarted` against one peer — makes every catch-up
+/// operation after that point look pushed.
+///
+/// Measured on a phone within minutes of shipping it: a follower reported 1,052
+/// live arrivals out of 1,059 while the only peer that could have pushed to it
+/// reported `pushed 1`. The true figure was one. A counter that exists to
+/// detect a broken transport is worth nothing if it reports success by
+/// accident, so this counts the *increase* instead, per session.
+///
+/// A drop means a new session reusing the id, so the new value is the count.
+fn count_live(
+    seen: &mut std::collections::HashMap<u64, u32>,
+    session_id: u64,
+    received_live: u32,
+) -> usize {
+    let previous = seen.insert(session_id, received_live).unwrap_or(0);
+    if received_live >= previous {
+        (received_live - previous) as usize
+    } else {
+        // The counter went backwards, so this is a different session wearing a
+        // recycled id: everything it reports is new.
+        received_live as usize
+    }
+}
+
 /// A subject is named by its hex public key; log sync wants the key itself.
 fn subject_key(subject: &str) -> Result<VerifyingKey> {
     let bytes = (0..subject.len())
@@ -493,4 +534,65 @@ fn subject_key(subject: &str) -> Result<VerifyingKey> {
         .context("a subject is hex")?;
     let bytes: [u8; 32] = bytes.try_into().map_err(|_| anyhow::anyhow!("a subject is 32 bytes"))?;
     VerifyingKey::from_bytes(&bytes).context("a subject is a public key")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_live;
+    use std::collections::HashMap;
+
+    /// A LIVE COUNT THAT COUNTS CATCH-UP IS WORSE THAN NO LIVE COUNT.
+    ///
+    /// **THIS IS THE RULE THAT WAS WRONG ON A PHONE FOR TWENTY MINUTES.** The
+    /// first version asked `received_live_operations > 0`, which is a fact
+    /// about the *session*, not about the operation in hand. A follower
+    /// reported 1,052 live arrivals out of 1,059 while its only peer had pushed
+    /// one — so the number that exists to prove the transport works was proving
+    /// it by accident, which is the same failure shape as the defect it was
+    /// added to detect.
+    #[test]
+    fn catch_up_after_a_push_is_not_a_push() {
+        let mut seen = HashMap::new();
+        // A session catches up: many operations, none of them live.
+        for _ in 0..1_000 {
+            assert_eq!(count_live(&mut seen, 7, 0), 0);
+        }
+        // Then one is pushed.
+        assert_eq!(count_live(&mut seen, 7, 1), 1);
+        // And then the session re-syncs, delivering another fifty by catch-up.
+        // The cumulative metric still says 1, and none of these are live.
+        for _ in 0..50 {
+            assert_eq!(count_live(&mut seen, 7, 1), 0, "catch-up counted as a push");
+        }
+        // A second push is a second push.
+        assert_eq!(count_live(&mut seen, 7, 2), 1);
+    }
+
+    /// TWO SESSIONS ARE COUNTED APART.
+    ///
+    /// Metrics are per session, so one peer's pushes must not cancel another's.
+    /// Two phones and a laptop in one pool is the ordinary case, not the
+    /// exotic one.
+    #[test]
+    fn sessions_do_not_borrow_each_others_counts() {
+        let mut seen = HashMap::new();
+        assert_eq!(count_live(&mut seen, 1, 1), 1);
+        assert_eq!(count_live(&mut seen, 2, 1), 1, "a second session started at its own zero");
+        assert_eq!(count_live(&mut seen, 1, 2), 1);
+        assert_eq!(count_live(&mut seen, 2, 2), 1);
+    }
+
+    /// A RECYCLED SESSION ID DOES NOT LOSE ITS PUSHES.
+    ///
+    /// A counter that went backwards is a new session, not a negative number of
+    /// operations. Saturating to zero here would silently undercount for the
+    /// whole life of the new session, which is the failure that is hardest to
+    /// notice: a transport that works, reported as one that does not.
+    #[test]
+    fn a_session_id_that_starts_over_starts_over() {
+        let mut seen = HashMap::new();
+        assert_eq!(count_live(&mut seen, 3, 9), 9);
+        assert_eq!(count_live(&mut seen, 3, 2), 2, "a restarted session lost its pushes");
+        assert_eq!(count_live(&mut seen, 3, 3), 1);
+    }
 }
