@@ -797,6 +797,96 @@ record. The thing the TODOs are about is the thing this decision removes.
 per record somewhere, which would mean the separation is less clean than both
 the API and those TODOs suggest.
 
+### D29 · The desktop is two products, and only one of them is blocked
+
+**Settled 2026-09-14.** "A desktop app" has been standing in for two things with
+very different readiness, and conflating them is how the research path would get
+built on a grant model that cannot express what its UI would promise.
+
+**1. A desktop peer — nothing blocks it.** A reader for yourself and your
+family, and an always-on carrier. It is a UI over crates that already exist:
+`diaswarm-core`, `-keys`, `-net`, with no JNI, no NDK and no cross-compilation.
+The CLI already performs the whole job — `keygen · init · seal · grant · revoke ·
+read · log` plus `serve · keep · peer`. Every hard thing about the Android build
+is *absent* here: no doze, no multicast lock, no foreground service, no
+WorkManager, no battery optimisation.
+
+**And it repairs the pool's real weakness, which is that phones sleep.**
+[D15](#d15--a-fetch-says-nothing-about-who-is-fetching) promises that a subject
+whose phone is asleep stays readable because somebody else holds the bytes —
+and every holder so far is a phone, subject to exactly the doze behaviour the
+2026-09-14 soak exists to measure. One mains-powered peer with a disk makes that
+promise structural rather than probabilistic, and 329 MB/yr is nothing there.
+**This is a reason to build it that has nothing to do with clinicians.**
+
+**2. The research / clinician gateway — blocked, and not on UI.** Blocked on
+time-scoped grants, which is the thing [D2a](#d2a--the-key-layer-ships-as-the-reference-construction-not-p2panda)
+deferred and [D26](#d26--drop-to-p2panda-encryption-and-keep-segments)'s vault
+made worse. `diaswarm-keys::Vault::grant` says so at the seam: *"A GRANT REACHES
+BACK OVER EVERYTHING, AND CANNOT BE ASKED NOT TO."*
+
+**The risk this decision exists to prevent:** a gateway screen offering *"share
+the last 90 days"* that in fact hands over every day the subject has ever
+sealed. [feasibility.md §11](feasibility.md) forbids exactly that class of
+claim, and a clinician-facing untruth is worse than a family-facing
+simplification, not better.
+
+#### ✅ And the blocker is smaller than the seam comment concluded
+
+The comment on `grant` says *"there is no `history` flag and no way to pass a
+narrower bundle: the library does not expose one."* **True of the layer it
+calls, and not true of the crate.** Read from `p2panda-encryption` 0.7.1's own
+source:
+
+| what is needed | upstream 0.7.1 | status |
+|---|---|---|
+| hand a joiner a *subset* of secrets | `Dcgka::add(y, added, bundle, rng)` takes the bundle **as a parameter** | `pub`, in `pub mod dcgka` |
+| build that subset | `SecretBundle::from_secrets(Vec<GroupSecret>)` | re-exported from `data_scheme` |
+| decide what is in it | `GroupSecret::timestamp()` | `pub` |
+| make the scope fine-grained | `EncryptionGroup::update` rotates the secret | `pub` |
+
+`EncryptionGroup::add` hardcodes `&y.secrets` — that is the whole of the
+restriction, and it is one wrapper above a function that already accepts what is
+wanted. **So a time-scoped grant is reachable on the pinned version, with no
+fork and no waiting on upstream — by dropping one layer, which is the move D26
+already made once and for the same reason.**
+
+**Granularity is a rotation question, and its cost is already measured.** Secrets
+rotate per group operation, so filtering a bundle by timestamp scopes to
+rotation boundaries rather than to days. Day-granular windows therefore mean
+rotating daily — and D26 measured that: a year of daily rotation is a
+366-secret bundle and a **0.76 ms** welcome.
+
+⚠️ **This is read from the source. Nothing has been built, compiled or
+measured**, and on the evidence of this repository's last three days that
+distinction is the whole difference between a finding and a result. The spike
+that would settle it is small: filter a bundle, `Dcgka::add` with it, assert the
+joiner opens epoch N and fails on epoch N−1.
+
+#### Sequencing, and why this order
+
+1. **The desktop peer.** No blockers, useful alone, strengthens the pool, and it
+   is where CSV/Parquet export belongs — exporting *to yourself* needs no new
+   grant semantics at all. It is also the fixable half of
+   [rights.md §5](rights.md)'s interoperability failure.
+2. **Scoped grants**, via the spike above. Protocol work, not UI.
+3. **The gateway** — by which point "90 days" means 90 days.
+
+Step 1 is worth having even if step 2 stalls. Step 3 without step 2 is a
+misrepresentation, which is why it is third rather than merely last.
+
+**And [D5](#d5--the-commons-is-a-gateway-not-a-bigger-phone)'s constraint stands
+over all of it:** the gateway is how data comes *back* — cohort baselines, and a
+record of what somebody's data supported. *"A commons that only takes is the
+thing people have already refused."* An export-only tool does not satisfy D5; it
+is the named failure mode. [rights.md §6](rights.md) scores this principle as
+**fail, on intent only**, and says design intent is what the Charter already
+receives from everyone else.
+
+*Reopens if:* the spike shows `Dcgka::add` is not usable from outside the crate's
+own group wrapper in practice — in which case D9 applies and the fix is a
+`add_with_secrets` contributed upstream, not a fork.
+
 ### D28 · The pool carries keys logs too, and announcing them is only safe because it does
 
 **Settled 2026-09-14.** Bucket announcements and pool adoption now cover

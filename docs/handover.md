@@ -221,6 +221,26 @@ phone must not be picked up.
    sensor's. Nothing in this repository can shorten a 183-second Libre 3 gap;
    what it can do is never imply the number is fresher than it is.
 
+## Next: the desktop, and what it is blocked on
+
+[D29](decisions.md) settles that "a desktop app" is two products.
+
+**The desktop peer is unblocked and worth building on its own merits** — a
+reader plus an always-on carrier, over crates that already exist, with none of
+Android's difficulty. It repairs the pool's structural weakness, which is that
+every holder today is a phone that sleeps.
+
+**The research/clinician gateway is blocked on time-scoped grants** — and the
+blocker is smaller than `Vault::grant`'s seam comment concluded. Reading
+`p2panda-encryption` 0.7.1: `EncryptionGroup::add` hardcodes the full bundle,
+but `Dcgka::add` one layer below **takes the bundle as a parameter**, and
+`SecretBundle::from_secrets` + `GroupSecret::timestamp()` are both public. So
+scoped grants look reachable on the pinned version with no fork.
+
+⚠️ **Read from source, not built.** The spike that settles it is small: filter a
+bundle, `Dcgka::add` with it, assert the joiner opens epoch N and fails on N−1.
+Do that before anyone designs a screen that says "the last 90 days".
+
 ## Constraints that still apply
 
 * **Nothing is pushed.** Three commits sit on local `main`. Pushing runs CI, and
