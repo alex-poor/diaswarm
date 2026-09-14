@@ -2074,11 +2074,27 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysHoldersHeard<'a>(
 
 /// A counts line, then the last `limit` sync events, newest last, one per line.
 ///
-/// The first line is always `counts stored=N live_raw=M (not comparable)`:
-/// operations this peer has stored, and p2panda's own live-arrival counter
-/// summed over sessions. It is first because it is what distinguishes a working
-/// transport from a working poll, and separate from the events because it is a
-/// running total and they are a tail.
+/// The first line is always `counts stored=N pushed=yes|NO`: how many
+/// operations this peer has stored, and whether *any* of them were pushed to it
+/// in live mode rather than fetched by a catch-up sync. It is first because
+/// that is the distinction between a working transport and a working poll, and
+/// it is separate from the events because it is cumulative and they are a tail.
+///
+/// **A YES/NO, BECAUSE THE NUMBER BEHIND IT IS NOT A COUNT.** It comes from
+/// `Metrics::received_live_operations` summed over sessions, and that counter
+/// does not advance once per operation — `n=2` per event on one build, `n=1` on
+/// another, so the multiplier is not even constant. Printed as a number beside
+/// `stored` it produced `received=20401 live=21622` on a phone: more pushed
+/// arrivals than arrivals. The raw value is still shown, in a parenthesis that
+/// says what it is, because it is p2panda's own and hiding it would be the
+/// fourth time this diagnostic was made more clever than it can support.
+///
+/// **Why it survives at all, given five wrong versions:** it is the only
+/// *cumulative* answer. The per-arrival `live op from <peer>` lines below are
+/// strictly more informative — they name the sender — but they live in a capped
+/// log that rolls, so they speak for the last few minutes. This line still says
+/// "a push has landed at some point since this app started" when somebody looks
+/// hours later, which is when people actually look.
 ///
 /// **THE TWO NUMBERS ARE IN DIFFERENT UNITS AND MUST NOT BE COMPARED**, which
 /// is the fifth way this counter has misled. `stored` is one per operation
@@ -2132,10 +2148,13 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSyncEvents<'a>(
     //
     // And they are NAMED apart because putting them side by side under one word
     // invited the comparison the doc comment above explains is meaningless.
+    let live = replicator.live_received();
     let mut out = format!(
-        "counts stored={} live_raw={} (not comparable)",
+        "counts stored={} pushed={}{}",
         replicator.received(),
-        replicator.live_received()
+        if live > 0 { "yes" } else { "NO — everything arrived by catch-up" },
+        if live > 0 { format!(" (p2panda's raw counter {live}, not a count of anything)") }
+        else { String::new() },
     );
     for line in tail {
         out.push('\n');
