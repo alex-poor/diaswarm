@@ -2412,3 +2412,37 @@ core-vault subjects; the keys logs of a stranger are never carried by anyone.
 
 Not a defect in the live-push work, and not fixed here: it is a decision about
 what the cutover means, and it belongs to whoever is making it.
+
+### ✅ First live delivery ever recorded, and it is p2panda's number, not mine
+
+The evidence that matters does not come from the counter I wrote — which has
+been wrong four times — but from p2panda's own `Metrics`, read out of the
+follower's session events on phone B. Counting every session by peer:
+
+| peer | build | sessions | `received_live_operations` |
+|---|---|---|---|
+| `9eeeac47` — the loop phone | **pre-fix** | 175 | `0` in every one |
+| `b8e0c9ba` — phone B's AAPS | **fixed** | 55 | `0` |
+| `b8e0c9ba` — phone B's AAPS | **fixed** | 1 | **`7`** |
+| `073e07e9` — laptop watcher | fixed | 16 | `0` |
+
+One non-zero, from the one peer running the fix. The publisher's own log for
+that window says `pushed 1` on each of four passes, plus its group-create and
+grants — which is where seven comes from.
+
+**Before this change that column was zero in all sixty-nine sessions ever
+observed.** It is now non-zero, from the peer that publishes, and still zero
+from the peer that has not been updated. That is the control and the treatment
+in one table.
+
+⚠️ **One number is discarded rather than explained.** A laptop peer reported
+`live=899` against a publisher that had pushed 4. It reconciles with neither
+the publisher nor the phone follower, and that peer is not like the others —
+it carries the subject at four depths at once and receives other subjects'
+logs over the same topics. Until it is accounted for it is not evidence, and
+it is recorded here so that it is not quietly forgotten.
+
+This corrects the entry above it: de-duplication makes a push invisible **when
+catch-up has already delivered the operation**, which is what the laptop saw
+first. It does not make pushing useless — the follower on phone B saw the
+pushes arrive.
