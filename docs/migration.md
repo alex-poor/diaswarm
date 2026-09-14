@@ -2058,3 +2058,33 @@ makes it fail with `these report state and no app can read them: ["events"]`.
 
 It is a naming heuristic and it will miss things. It is still better than what
 happened today, which was noticing on the fourth guess.
+
+### 🔍 And the first pass said nobody is holding the subject
+
+`holders_heard` was wired up and immediately answered a question nobody had been
+able to ask:
+
+```
+holders for 552f688a: none — only the subject can serve this
+```
+
+**D15's promise is not operational.** "Any holder serves identical bytes" is what
+makes a swarm more than a pair of phones — a follower should be able to read a
+sleeping subject from a peer that is awake. No peer has announced holding this
+subject, so there is no redundancy at all: if the loop phone is unreachable, the
+follower gets nothing.
+
+That is the structural reason a sleeping subject meant a total blackout, and it
+was invisible until this line existed.
+
+Part of it is a choice made this morning: the follower ticks with `maxAdopt = 0`
+— "the defect is discovery; whether a follower's phone should hold strangers'
+ciphertext is a separate decision and does not ride in on a bug fix". That
+reasoning still stands, and this is the other side of the bargain: a pool where
+nobody adopts is a pool that provides nothing when it is needed.
+
+⚠️ **Two structural findings in one afternoon, both from diagnostics that
+existed and could not be read:** live mode has never delivered an operation, and
+nothing holds the subject. Neither is a bug in the sense of a wrong line of
+code. Both are the system not doing what the design says it does, and both were
+invisible from a phone.

@@ -200,6 +200,21 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                 // everything came by gossip push.
                 if (events.isEmpty()) Log.i(TAG, "sync: no session events recorded")
                 else events.forEach { Log.i(TAG, "sync: $it") }
+                // AND WHETHER ANYBODY ELSE HOLDS THIS SUBJECT. D15's promise is
+                // that any holder serves identical bytes, so a subject whose
+                // phone is asleep can still be read from a peer — and whether
+                // a peer is there has never been visible from a phone. When
+                // this follower sat in a pool of one all morning, this is the
+                // line that would have said so.
+                for ((subject, _) in stale) {
+                    val holders = SwarmNative.swarmHoldersHeard(Endpoint.handle, subject.key)
+                        .lines().filter { it.isNotBlank() }
+                    Log.i(
+                        TAG,
+                        if (holders.isEmpty()) "holders for ${subject.short}: none — only the subject can serve this"
+                        else "holders for ${subject.short}: ${holders.size} (${holders.joinToString { it.take(8) }})"
+                    )
+                }
             } catch (e: Throwable) {
                 Log.w(TAG, "sync events threw: $e")
             } finally {
