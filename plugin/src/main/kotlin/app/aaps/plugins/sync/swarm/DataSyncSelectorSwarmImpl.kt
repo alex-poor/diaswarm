@@ -329,6 +329,22 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private var shadowFailures = 0L
 
     /**
+     * Segments this pass pushed onto a live gossip stream, as opposed to merely
+     * filing in the log.
+     *
+     * **THE ONLY SIGN FROM THIS SIDE THAT LIVE MODE SENDS ANYTHING.** Storing
+     * an operation makes it fetchable by the next catch-up sync; pushing it is
+     * what makes a follower current in seconds. For the whole life of this
+     * project the push was never wired — measured as 69 live-mode starts and
+     * zero live operations received — and nothing on the publishing phone could
+     * have shown that, because every counter here described the store.
+     *
+     * A pass that sealed segments while a follower carries this subject and
+     * reports `pushed 0` means the send half is broken again.
+     */
+    private var shadowPushed = 0L
+
+    /**
      * Records waiting to be sealed into the spaces vault, held ACROSS passes.
      *
      * **BECAUSE AN OPERATION IS EXPENSIVE FOR EVER, NOT JUST ONCE.** The core
@@ -601,7 +617,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             val line =
                 "swarm: shadow ${if (agreed) "agrees" else "DISAGREES"} — " +
                     "given $shadowSealed, holds $shadowHeld, missing $shadowMissing, " +
-                    "lost $shadowLost, failures $shadowFailures"
+                    "lost $shadowLost, failures $shadowFailures, pushed $shadowPushed"
             // AT THE LEVEL THE VERDICT DESERVES. A disagreement logged at info
             // is a disagreement nobody greps for.
             if (agreed) aapsLogger.info(LTag.CORE, line) else aapsLogger.error(LTag.CORE, line)
@@ -610,6 +626,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             shadowMissing = 0L
             shadowLost = 0L
             shadowFailures = 0L
+            shadowPushed = 0L
         }
     }
 
@@ -766,6 +783,9 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             shadowHeld += held
             shadowMissing += missing
             shadowLost += lost
+            // Additive, and absent on an older .so: a missing `pushed` is not a
+            // format disagreement, unlike the four fields above.
+            shadowPushed += fields["pushed"]?.toLongOrNull() ?: 0L
 
             // A disagreement is logged at the moment it happens, with the epoch,
             // rather than only as a total at the end of the pass. A total tells

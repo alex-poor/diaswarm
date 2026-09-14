@@ -196,8 +196,13 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                 // how the first version of this told me nothing for a pass and
                 // I nearly concluded the call was broken. Empty is a finding:
                 // the replicator records session events and errors but not
-                // arrivals, so none at all means no session has happened and
-                // everything came by gossip push.
+                // arrivals, so none at all means no session has happened.
+                //
+                // **AND THE COMMENT HERE USED TO SAY "everything came by gossip
+                // push", WHICH WAS EXACTLY BACKWARDS.** Nothing ever came by
+                // push: the publishing side never called `SyncHandle::publish`,
+                // so every byte this follower has ever shown arrived in a
+                // catch-up sync. The `counts` line now says which it was.
                 if (events.isEmpty()) Log.i(TAG, "sync: no session events recorded")
                 else events.forEach { Log.i(TAG, "sync: $it") }
                 // AND WHETHER ANYBODY ELSE HOLDS THIS SUBJECT. D15's promise is

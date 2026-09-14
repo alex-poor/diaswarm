@@ -43,6 +43,23 @@
 //! the carrier's store was empty. A peer that carries nothing while reporting
 //! healthy sync is the worst shape a bug in this project can take.
 //!
+//! **AND PUBLISHING IS NOT SENDING** — the same mistake at the other end of the
+//! wire, and it survived every build this project shipped. Log sync catches a
+//! peer up and then switches to live mode, where new operations are *pushed*
+//! over gossip by `SyncHandle::publish`. Nothing here ever called it: `stream`
+//! moved the handle into its spawned task, where it kept the subscription alive
+//! and was unreachable for ever after. So a subject wrote operations to its
+//! store — which is not on the network — and they reached a follower whenever
+//! the next catch-up sync happened to run.
+//!
+//! It hid behind healthy-looking totals: operations arrived, sessions
+//! succeeded, and staleness got blamed on doze, on Wi-Fi locks, on the relay
+//! and on a one-shot subscription in turn. The thing that said it plainly was
+//! `received_live_operations: 0` in all sixty-nine live-mode sessions across
+//! two phones. [`Replicator::broadcast`] is the missing half, and
+//! [`Replicator::live_received`] is the counter that makes its absence visible
+//! rather than inferable.
+//!
 //! WHAT THIS CANNOT DO. Start a sync on demand: `SyncHandle::initiate_session`
 //! is `#[cfg(test)]` upstream. A peer subscribes and waits for discovery to
 //! find someone who shares the topic. For the pool that is right — nobody is
@@ -55,6 +72,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use p2panda_core::{Hash, Topic, VerifyingKey};
+use p2panda_net::sync::SyncHandle;
 use p2panda_net::{Endpoint, Gossip, LogSync};
 use p2panda_store::operations::OperationStore;
 use p2panda_store::topics::TopicStore;
@@ -71,6 +89,12 @@ pub type SpacesArgs = diaswarm_spaces::SpacesArgs<Conditions>;
 
 /// The extensions `diaswarm-keys` operations carry, across both its logs.
 pub type KeysArgs = diaswarm_keys::wire::KeysArgs;
+
+/// The live stream handle for one topic, and what it carries.
+type Stream<A> = SyncHandle<p2panda_core::Operation<A>, TopicLogSyncEvent<A>>;
+
+/// Every topic's live stream handle, shared by every clone of a replicator.
+type Handles<A> = Arc<Mutex<std::collections::HashMap<[u8; 32], Stream<A>>>>;
 
 /// Replication for a `diaswarm-spaces` peer.
 pub type SpacesReplicator = Replicator<SpacesArgs>;
@@ -108,6 +132,21 @@ pub struct Replicator<A: Extensions + Send + 'static> {
     /// Aborting the task drops the handle it holds, which unsubscribes, which
     /// is what makes re-streaming possible at all.
     tasks: Arc<Mutex<std::collections::HashMap<[u8; 32], tokio::task::JoinHandle<()>>>>,
+    /// The live stream handle for each topic, kept so new operations can be
+    /// *pushed* as well as received.
+    ///
+    /// **THE SENDING HALF OF LIVE MODE, WHICH WAS NEVER WIRED.** p2panda's
+    /// contract is that after catch-up "nodes switch to live-mode to directly
+    /// push new messages to the network using a gossip protocol", and the way
+    /// to push is `SyncHandle::publish`. Nothing in this project ever called
+    /// it: operations were written to the store and the store is invisible to
+    /// gossip. Measured on two phones — 69 `LiveModeStarted` and
+    /// `received_live_operations: 0` every single time, for the life of the
+    /// app. Every byte a follower ever received came from a catch-up sync.
+    ///
+    /// Holding the handle here also keeps the subscription alive, which is what
+    /// the spawned task used to do by owning it.
+    handles: Handles<A>,
     /// When an operation last arrived on any topic.
     ///
     /// One clock rather than per topic: the two logs of one subject are
@@ -119,6 +158,16 @@ pub struct Replicator<A: Extensions + Send + 'static> {
     associated: Arc<Mutex<HashSet<([u8; 32], String)>>>,
     /// Operations seen arriving, for tests and for reporting progress.
     received: Arc<Mutex<usize>>,
+    /// Of those, the ones that arrived *pushed* rather than fetched.
+    ///
+    /// **THE NUMBER THAT WOULD HAVE CAUGHT THE MISSING SEND HALF ON DAY ONE.**
+    /// `received` counts both phases and so was always healthy: catch-up syncs
+    /// delivered everything, and live mode delivered nothing, and one total
+    /// cannot tell those apart. `Metrics::received_live_operations` is bumped
+    /// immediately before the event is emitted, so a non-zero value on an
+    /// `OperationReceived` identifies a live-phase arrival exactly — no
+    /// heuristic and no sampling.
+    live: Arc<Mutex<usize>>,
     /// Every sync event, in order.
     ///
     /// Kept because "nothing replicated" has several very different causes —
@@ -126,6 +175,31 @@ pub struct Replicator<A: Extensions + Send + 'static> {
     /// finished having transferred nothing — and they are indistinguishable
     /// from a count of zero.
     events: Arc<Mutex<Vec<String>>>,
+}
+
+/// **CLONEABLE, BECAUSE THE PUBLISHER IS NOT THE POOL.** Every field is either
+/// already shared (`Arc`), a cheap handle (`SqliteStore`, `LogSync`) or plain
+/// data, so a clone is the same replicator seen from somewhere else — the same
+/// stream handles, the same tasks, the same counters. It exists so the vault
+/// that seals a segment can push it without the pool handle being threaded
+/// through every JNI call that touches a vault.
+impl<A: Extensions + Send + 'static> Clone for Replicator<A> {
+    fn clone(&self) -> Self {
+        Replicator {
+            store: self.store.clone(),
+            sync: self.sync.clone(),
+            logs: self.logs.clone(),
+            log_of: self.log_of,
+            streaming: Arc::clone(&self.streaming),
+            tasks: Arc::clone(&self.tasks),
+            handles: Arc::clone(&self.handles),
+            last_event: Arc::clone(&self.last_event),
+            associated: Arc::clone(&self.associated),
+            received: Arc::clone(&self.received),
+            live: Arc::clone(&self.live),
+            events: Arc::clone(&self.events),
+        }
+    }
 }
 
 impl SpacesReplicator {
@@ -174,9 +248,11 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
             log_of,
             streaming: Arc::new(Mutex::new(HashSet::new())),
             tasks: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            handles: Arc::new(Mutex::new(std::collections::HashMap::new())),
             last_event: Arc::new(Mutex::new(std::time::Instant::now())),
             associated: Arc::new(Mutex::new(HashSet::new())),
             received: Arc::new(Mutex::new(0)),
+            live: Arc::new(Mutex::new(0)),
             events: Arc::new(Mutex::new(Vec::new())),
         })
     }
@@ -227,19 +303,27 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         let handle = self.sync.stream(topic, true).await.context("streaming a topic")?;
         let mut events = handle.subscribe().await.context("subscribing to a topic")?;
         let received = Arc::clone(&self.received);
+        let live = Arc::clone(&self.live);
         let log = Arc::clone(&self.events);
         let store = self.store.clone();
         let log_of = self.log_of;
 
         let last_event = Arc::clone(&self.last_event);
-        // The handle has to outlive this function: dropping it unsubscribes.
+        // **KEPT, NOT MOVED INTO THE TASK.** Dropping the handle unsubscribes,
+        // so it has to outlive this function either way — but it used to go
+        // into the spawned task as `let _keep = handle`, where nothing could
+        // ever reach it again. That is what made this peer receive-only:
+        // `publish` lives on the handle, and the handle was buried.
+        self.handles.lock().unwrap().insert(topic_bytes, handle);
         let task = tokio::spawn(async move {
-            let _keep = handle;
             while let Some(next) = events.next().await {
                 match next {
                     Ok(FromSync { event, remote, .. }) => match event {
-                        TopicLogSyncEvent::OperationReceived { operation, .. } => {
+                        TopicLogSyncEvent::OperationReceived { operation, metrics } => {
                             *last_event.lock().unwrap() = std::time::Instant::now();
+                            if metrics.received_live_operations > 0 {
+                                *live.lock().unwrap() += 1;
+                            }
                             // STORED, OR THIS PEER CARRIES NOTHING.
                             //
                             // And stored in the log its own header says it
@@ -315,6 +399,10 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
             if let Some(task) = self.tasks.lock().unwrap().remove(topic) {
                 task.abort();
             }
+            // Dropping the handle is what unsubscribes; aborting the task only
+            // stops reading. Since the handle moved out of the task and into
+            // `handles`, this is now the line that does it.
+            self.handles.lock().unwrap().remove(topic);
             self.streaming.lock().unwrap().remove(topic);
         }
         for topic in &topics {
@@ -323,9 +411,71 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         Ok(topics.len())
     }
 
+    /// Push a freshly published operation to everyone listening to `subject`.
+    ///
+    /// **THIS IS THE HALF OF LIVE MODE THAT WAS MISSING FOR THE WHOLE LIFE OF
+    /// THE PROJECT.** Writing an operation to the store makes it available to
+    /// the *next* catch-up sync and to nothing else — the store is not on the
+    /// network. p2panda's contract is that after catch-up "nodes switch to
+    /// live-mode to directly push new messages to the network using a gossip
+    /// protocol", and the pushing is `SyncHandle::publish`. Nothing here ever
+    /// called it. Measured on two phones: 69 `LiveModeStarted` events against a
+    /// peer that synced perfectly, and `received_live_operations: 0` every
+    /// single time. Every byte a follower ever got came from catch-up, which is
+    /// why freshness tracked the sync interval and never the publish.
+    ///
+    /// Addressed by subject rather than by topic because the topic is a pool
+    /// bucket whose depth moves with the member count, and the caller that
+    /// seals a segment has no business knowing that. `carry` already recorded
+    /// which topic each subject went on; this reads it back.
+    ///
+    /// Returns how many topics it went out on — 0 means nobody is carrying this
+    /// subject yet, which is a real answer and not an error.
+    pub fn broadcast(&self, subject: &str, operation: p2panda_core::Operation<A>) -> usize
+    where
+        A: Clone,
+    {
+        let topics: Vec<[u8; 32]> = self
+            .associated
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, s)| s == subject)
+            .map(|(t, _)| *t)
+            .collect();
+
+        let handles = self.handles.lock().unwrap();
+        let mut sent = 0;
+        for topic in topics {
+            let Some(handle) = handles.get(&topic) else { continue };
+            // A failure here means the topic's actor is gone, which `restream`
+            // is the cure for. The operation is already in the store, so the
+            // next catch-up still carries it: this is a lost push, not lost
+            // data, and it must not fail the publish that produced it.
+            match handle.publish(operation.clone()) {
+                Ok(()) => sent += 1,
+                Err(e) => self
+                    .events
+                    .lock()
+                    .unwrap()
+                    .push(format!("could not push live: {e}")),
+            }
+        }
+        sent
+    }
+
     /// How many operations have arrived from other peers.
     pub fn received(&self) -> usize {
         *self.received.lock().unwrap()
+    }
+
+    /// How many of those were pushed to us in live mode rather than fetched.
+    ///
+    /// Zero while `received` climbs means catch-up is carrying everything and
+    /// the push half is not working — the state this project was in for its
+    /// whole life, unnoticed, because nothing counted the two separately.
+    pub fn live_received(&self) -> usize {
+        *self.live.lock().unwrap()
     }
 
     /// Every non-operation sync event so far.

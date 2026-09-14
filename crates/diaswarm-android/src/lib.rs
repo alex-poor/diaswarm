@@ -1661,6 +1661,36 @@ struct KeysVault {
     store: diaswarm_keys::SqliteStore,
     signing: p2panda_core::SigningKey,
     vault: diaswarm_keys::Vault,
+    /// The pool's replicator, so a published operation can be *pushed* and not
+    /// merely filed.
+    ///
+    /// **WITHOUT THIS THE VAULT IS WRITE-TO-DISK-ONLY.** `wire::publish` puts an
+    /// operation in the store, and the store is not on the network: it reaches
+    /// a follower only when the next catch-up sync happens to run. Live mode —
+    /// the thing that makes a follower current in seconds instead of minutes —
+    /// needs the operation handed to `SyncHandle::publish`, and the handle
+    /// belongs to the replicator, which belongs to the pool. A clone, because
+    /// every part of a replicator that matters is already shared.
+    ///
+    /// `None` when the vault was opened without a pool, which is what the tests
+    /// and a phone that has not joined look like.
+    push: Option<diaswarm_net::replicate::KeysReplicator>,
+}
+
+/// Hand a just-published operation to live mode, and say how many peers' topics
+/// it went out on.
+///
+/// Failure is deliberately not propagated: the operation is already in the
+/// store, so the worst case is that it arrives at the next catch-up instead of
+/// now. A publish that succeeded must not be reported as failed because gossip
+/// was unavailable.
+fn push_live(
+    push: Option<&diaswarm_net::replicate::KeysReplicator>,
+    signing: &p2panda_core::SigningKey,
+    operation: diaswarm_keys::wire::KeysOperation,
+) -> usize {
+    let Some(rep) = push else { return 0 };
+    rep.broadcast(&signing.verifying_key().to_hex(), operation)
 }
 
 /// Borrow a handle, or `None` if it is not one of ours.
@@ -1698,6 +1728,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysOpen<'a>(
     let pooled = unsafe { &*(pool as *const Pooled) };
     let Some(store) = pooled.keys_store.clone() else { return 0 };
     let handle = pooled.runtime.handle().clone();
+    let push = pooled.keys_replicator.clone();
 
     let (Ok(dir), Ok(id_s)) = (env.get_string(&dir), env.get_string(&identity_path)) else {
         return 0;
@@ -1727,14 +1758,15 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysOpen<'a>(
         // and one that starts at the first grant cannot show that nothing came
         // before it. An earlier version of this dropped the message on the
         // floor, so every vault made by it has a log beginning mid-history.
-        if handle
-            .block_on(diaswarm_keys::wire::publish_control(&store, &signing, &create))
-            .is_err()
-        {
-            return 0;
+        match handle.block_on(diaswarm_keys::wire::publish_control(&store, &signing, &create)) {
+            Ok(op) => {
+                push_live(push.as_ref(), &signing, op);
+            }
+            Err(_) => return 0,
         }
     }
-    Box::into_raw(Box::new(KeysVault { tag: KEYS_TAG, handle, store, signing, vault })) as jlong
+    Box::into_raw(Box::new(KeysVault { tag: KEYS_TAG, handle, store, signing, vault, push }))
+        as jlong
 }
 
 /// Close it. Safe to call with 0.
@@ -1809,7 +1841,11 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSealChecked<'a>(
     };
 
     let (store, handle, signing) = (v.store.clone(), v.handle.clone(), v.signing.clone());
-    to_jstring(env, seal_checked(&mut v.vault, &store, &handle, &signing, epoch, &body))
+    let push = v.push.clone();
+    to_jstring(
+        env,
+        seal_checked(&mut v.vault, &store, &handle, &signing, push.as_ref(), epoch, &body),
+    )
 }
 
 /// A followed subject's readings out of the keys vault, in `netGlucose`'s shape.
@@ -2174,7 +2210,14 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmHoldersHeard<'a>(
     to_jstring(env, pooled.swarm.holders_heard(&subject).join("\n"))
 }
 
-/// The last `limit` sync events, newest last, one per line.
+/// A counts line, then the last `limit` sync events, newest last, one per line.
+///
+/// The first line is always `counts received=N live=M`: every operation that
+/// has arrived from a peer, and how many of those were *pushed* to us in live
+/// mode rather than fetched by a catch-up sync. It is first because it is the
+/// one that distinguishes a working transport from a working poll, and it is
+/// separated from the events because it is a running total and they are a tail.
+///
 ///
 /// **THE REPLICATOR HAS KEPT THESE ALL ALONG AND NOTHING COULD READ THEM.** Its
 /// own comment says why they exist — "nothing replicated" has several very
@@ -2203,7 +2246,20 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSyncEvents<'a>(
     let all = replicator.events();
     let n = limit.max(1) as usize;
     let tail = if all.len() > n { &all[all.len() - n..] } else { &all[..] };
-    to_jstring(env, tail.join("\n"))
+    // **THE TWO COUNTS, SEPARATELY, BECAUSE THE TOTAL HID THE BUG.** Operations
+    // kept arriving and the phone looked healthy, while every one of them came
+    // from a catch-up sync and live mode delivered nothing for the life of the
+    // app. One number could not have shown that and did not.
+    let mut out = format!(
+        "counts received={} live={}",
+        replicator.received(),
+        replicator.live_received()
+    );
+    for line in tail {
+        out.push('\n');
+        out.push_str(line);
+    }
+    to_jstring(env, out)
 }
 
 /// Re-subscribe every keys topic, now.
@@ -2644,13 +2700,15 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRevokeReader<'a>(
     };
     match v.vault.revoke(tag) {
         Ok(message) => {
-            if let Err(e) = v.handle.block_on(diaswarm_keys::wire::publish_control(
+            match v.handle.block_on(diaswarm_keys::wire::publish_control(
                 &v.store,
                 &v.signing,
                 &message,
             )) {
-                let _ = e;
-                return -5;
+                Ok(op) => {
+                    push_live(v.push.as_ref(), &v.signing, op);
+                }
+                Err(_) => return -5,
             }
             0
         }
@@ -2713,12 +2771,15 @@ fn grant_and_publish<'a>(
     };
     let tag = match granted {
         Ok((welcome, tag)) => {
-            if let Err(e) = v.handle.block_on(diaswarm_keys::wire::publish_control(
+            match v.handle.block_on(diaswarm_keys::wire::publish_control(
                 &v.store,
                 &v.signing,
                 &welcome,
             )) {
-                return to_jstring(env, format!("error publish {e}"));
+                Ok(op) => {
+                    push_live(v.push.as_ref(), &v.signing, op);
+                }
+                Err(e) => return to_jstring(env, format!("error publish {e}")),
             }
             tag
         }
@@ -2781,11 +2842,11 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRevoke<'a>(
     // carries the rotated secret as direct messages to everyone still in the
     // group; a remaining reader that never processes it stops opening days at
     // the moment somebody *else* was revoked, with nothing to say why.
-    if v.handle
-        .block_on(diaswarm_keys::wire::publish_control(&v.store, &v.signing, &message))
-        .is_err()
-    {
-        return -5;
+    match v.handle.block_on(diaswarm_keys::wire::publish_control(&v.store, &v.signing, &message)) {
+        Ok(op) => {
+            push_live(v.push.as_ref(), &v.signing, op);
+        }
+        Err(_) => return -5,
     }
     0
 }
@@ -2803,6 +2864,7 @@ pub fn seal_checked(
     store: &diaswarm_keys::SqliteStore,
     runtime: &tokio::runtime::Handle,
     signing: &p2panda_core::SigningKey,
+    push: Option<&diaswarm_net::replicate::KeysReplicator>,
     epoch: i64,
     body: &str,
 ) -> String {
@@ -2833,9 +2895,14 @@ pub fn seal_checked(
     // control log, find its welcome and join — all of which worked — and then
     // have nothing to open. The failure looked like a broken reader and was a
     // missing writer.
-    if let Err(e) = runtime.block_on(diaswarm_keys::wire::publish(store, signing, &segment)) {
-        return format!("error publish {e}");
-    }
+    let pushed = match runtime.block_on(diaswarm_keys::wire::publish(store, signing, &segment)) {
+        // **AND PUSH IT, OR IT ARRIVES WHEN THE NEXT SYNC HAPPENS TO RUN.**
+        // Storing makes it fetchable; only this makes it delivered. See
+        // `KeysReplicator::broadcast` for what was measured before this line
+        // existed.
+        Ok(op) => push_live(push, signing, op),
+        Err(e) => return format!("error publish {e}"),
+    };
 
     // **READ BACK OFF DISK RATHER THAN TRUSTING WHAT WAS JUST WRITTEN.** A seal
     // returns a count of its argument, which is a statement about the caller.
@@ -2848,8 +2915,13 @@ pub fn seal_checked(
         day.iter().map(|r| r.to_canonical_json()).collect();
     let missing = given.iter().filter(|r| !present.contains(&r.to_canonical_json())).count();
 
+    // **`pushed` IS IN THE LINE BECAUSE IT IS THE ONLY WAY TO SEE LIVE MODE
+    // WORKING FROM THE SENDING SIDE.** A `0` here with a follower carrying the
+    // subject means the push half is broken again, which is exactly the state
+    // this project shipped in unnoticed for its whole life. It is a count of
+    // topics the operation went out on, not of peers that got it.
     format!(
-        "ok epoch={epoch} given={} held={} missing={missing} lost={}",
+        "ok epoch={epoch} given={} held={} missing={missing} lost={} pushed={pushed}",
         given.len(),
         day.len(),
         skipped.lost()
@@ -3575,20 +3647,28 @@ mod shadow_tests {
     #[test]
     fn the_report_says_what_the_plugin_reads() {
         let (mut v, store, rt, key) = vault("format");
-        let report = seal_checked(&mut v, &store, rt.handle(), &key, 20_000, &ndjson(20_000 * 86_400_000, 12));
+        let report = seal_checked(&mut v, &store, rt.handle(), &key, None, 20_000, &ndjson(20_000 * 86_400_000, 12));
 
         assert!(report.starts_with("ok "), "unexpected report: {report}");
         let fields: std::collections::HashMap<&str, &str> = report
             .split(' ')
             .filter_map(|f| f.split_once('='))
             .collect();
-        for key in ["epoch", "given", "held", "missing", "lost"] {
+        // `pushed` is in this list because the plugin sums it into the line
+        // that says whether live mode is sending anything. A build where it
+        // silently stopped being emitted would report `pushed 0` for ever,
+        // which is indistinguishable from the defect it exists to detect.
+        for key in ["epoch", "given", "held", "missing", "lost", "pushed"] {
             let value = fields.get(key).unwrap_or_else(|| panic!("no {key} in {report}"));
             value.parse::<i64>().unwrap_or_else(|_| panic!("{key} is not a number in {report}"));
         }
         assert_eq!(fields["given"], "12");
         assert_eq!(fields["missing"], "0", "a fresh seal lost records: {report}");
         assert_eq!(fields["lost"], "0");
+        // No pool here, so nothing to push onto — and it says 0 rather than
+        // failing the seal. A vault that refused to seal because it could not
+        // gossip would be a worse bug than the one this fixes.
+        assert_eq!(fields["pushed"], "0", "a vault with no pool claimed a push: {report}");
     }
 
     /// A DAY ARRIVING IN PIECES STILL REPORTS NOTHING MISSING.
@@ -3603,7 +3683,7 @@ mod shadow_tests {
         let base = 20_001 * 86_400_000;
         let mut held = 0i64;
         for chunk in 0..6 {
-            let report = seal_checked(&mut v, &store, rt.handle(), &key, 20_001, &ndjson(base + chunk * 12 * 300_000, 12));
+            let report = seal_checked(&mut v, &store, rt.handle(), &key, None, 20_001, &ndjson(base + chunk * 12 * 300_000, 12));
             let fields: std::collections::HashMap<&str, &str> =
                 report.split(' ').filter_map(|f| f.split_once('=')).collect();
             assert_eq!(fields["missing"], "0", "flush {chunk} lost records: {report}");

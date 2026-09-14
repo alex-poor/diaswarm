@@ -2203,3 +2203,57 @@ has started 69 times against a peer it syncs with perfectly and delivered
 `received_live_operations: 0` every time. Catch-up works; gossip-borne live
 delivery does not. That is the last unexplained thing, and it is the one that
 would take the follower from minutes-behind to seconds-behind.
+
+### ✅ Answered: nothing ever called `SyncHandle::publish`
+
+Live mode had started 69 times and delivered nothing because **the sending half
+of it was never wired**, in any build this project has ever shipped.
+
+p2panda's `LogSync` catches a peer up and then, in its own documentation,
+"nodes switch to live-mode to directly push new messages to the network using a
+gossip protocol". The pushing is `SyncHandle::publish(operation)`. Three
+independent lines agreed:
+
+1. `SyncHandle::publish` is the only way to push, and it is on the handle;
+2. `grep -rn "\.publish(" crates/diaswarm-net/src crates/diaswarm-keys/src`
+   returned nothing — it had never been called;
+3. `crates/diaswarm-net/src/replicate.rs` moved the handle into its spawned
+   task as `let _keep = handle;`, where it kept the subscription alive and was
+   unreachable for ever after.
+
+So a subject wrote each operation to its SQLite store, and the store is not on
+the network. Every byte any follower has ever displayed arrived in a **catch-up
+sync** — which is why freshness tracked the sync interval rather than the
+publish, and why an hour of tuning doze, Wi-Fi locks, the relay and the
+subscription lifetime moved the number around without ever fixing it.
+
+**What it cost:** three wrong diagnoses of one stall, a falsified `WifiLock`
+change, a foreground service justified partly on the wrong grounds, and a
+follower that was structurally minutes behind and looked healthy from every
+angle the code could see.
+
+**Why nothing caught it.** One counter. `received` counted operations from both
+phases, and catch-up delivered everything, so the total was always healthy. The
+two phases are now counted separately — `live_received()` — and that number is
+zero if and only if the push half is broken.
+
+**The fix**, in three parts:
+
+| where | what |
+|---|---|
+| `replicate.rs` | the handle is kept in `handles`, not buried in the task; `broadcast(subject, op)` calls `publish` on every topic `carry` recorded for that subject |
+| `diaswarm-android/src/lib.rs` | `KeysVault` holds a clone of the pool's replicator; every `wire::publish`/`publish_control` site pushes what it just wrote |
+| both apps | `keysSealChecked` reports `pushed=N`; `keysSyncEvents` leads with `counts received=N live=M` |
+
+**Tests** — `crates/diaswarm-net/tests/live_mode.rs`, three of them: a segment
+sealed while a peer is already listening arrives pushed; so does a grant (the
+one that strands a new reader at pairing time); and broadcasting a subject
+nobody carries is 0 rather than a number that always looks healthy.
+
+Mutation-checked. Removing the `publish` call makes the first two fail with the
+exact hardware symptom in the event log — `LiveModeStarted`, then
+`received_live_operations: 0`, and the operation not delivered in 45 s.
+
+⚠️ **Not yet confirmed on hardware.** The counter to watch is `live` in the
+follower's `sync: counts received=… live=…` line, and `pushed=` in the
+publisher's shadow-pass line. Both are zero in every build before this one.

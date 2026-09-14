@@ -627,11 +627,18 @@ object SwarmNative {
      * Returns how many topics were re-streamed.
      */
     /**
-     * The last `limit` sync events, newest last. A diagnostic.
+     * `counts received=N live=M`, then the last `limit` sync events. A diagnostic.
      *
-     * The replicator has kept these since it was written, and nothing could
+     * The replicator has kept the events since it was written, and nothing could
      * read them — so every diagnosis of replication on a phone has been
      * guesswork from outside. Answers when a sync happened and what came of it.
+     *
+     * **THE COUNTS LINE IS THE ONE THAT MATTERS.** `received` is every operation
+     * that arrived from a peer; `live` is how many of those were pushed to us
+     * over gossip rather than fetched by a catch-up sync. They were one number
+     * until live mode was found to have never sent anything for the life of the
+     * app — 69 live-mode starts, zero live operations — which a single total
+     * could not have shown and did not.
      */
     /**
      * Who in the pool has announced holding this subject, one per line.
