@@ -2088,3 +2088,36 @@ existed and could not be read:** live mode has never delivered an operation, and
 nothing holds the subject. Neither is a bug in the sense of a wrong line of
 code. Both are the system not doing what the design says it does, and both were
 invisible from a phone.
+
+### ✅ Two peers, two processes, real sockets — and what it does NOT catch
+
+Every test in this crate ran both peers in one process, which makes gossip
+trivially local: a `Holding` announcement never crosses a network and live
+delivery is a function call away. So a thorough pool test passes — and it is a
+good test, it proves the mechanism — while two phones report `holders: none` and
+`received_live_operations: 0` in every session.
+
+`poolpeer` is one peer with a process boundary around it, printing JSON state a
+second at a time. `tests/two_process.rs` spawns two and asserts three things
+over real sockets:
+
+| | |
+|---|---|
+| two processes see each other in the pool | the floor — below this nothing means anything |
+| a `Holding` announcement **crosses a process boundary** | gossip, the same mechanism that carries live operations |
+| a second process **adopts without being told to** | D15's redundancy, previously only ever asserted with `adopt` called by hand |
+
+Twelve seconds, and mutation-checked: putting the second peer on a different
+network id makes the gossip test fail.
+
+⚠️ **And they all pass, which does not reproduce today's failure.** Gossip works
+perfectly between two processes on one machine. So the gap is narrower than
+"in-process versus cross-process" — it is **one machine versus two Android
+devices**. Something about the phones, not the code path, is stopping gossip:
+discovery, connection stability, NAT between two wifi clients, or Android
+throttling a background socket.
+
+That is worth being exact about rather than claiming the harness solved it. What
+it does do is close a real hole permanently — a regression in gossip or adoption
+logic now fails in twelve seconds instead of surfacing as a stale graph — and it
+narrows the remaining question to something specific and physical.
