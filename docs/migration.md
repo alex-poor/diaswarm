@@ -1998,8 +1998,27 @@ And it makes `restream_if_quiet` a symptom treatment that happens to work —
 re-subscribing forces a fresh catch-up, which is the thing that actually
 delivers. Worth keeping as a safety net, not worth mistaking for the fix.
 
-⚠️ **The real question is why live mode is silent**, and that is not answered
-yet: gossip mesh never forming, the topic not matching between peers, or the
-`ConnectionLost(TimedOut)` above being the normal state rather than an anomaly.
-That is the next thing to look at, and now it can be looked at rather than
-guessed at.
+Confirmed across every session on the phone, not just the one first seen:
+
+```
+received_sync_operations: 0    received_live_operations: 0
+received_sync_operations: 6    received_live_operations: 0
+received_sync_operations: 0    received_live_operations: 0
+received_sync_operations: 2    received_live_operations: 0
+```
+
+Sync counts vary; **live is zero every time.** And the sessions repeat —
+`SyncStarted → SyncFinished → LiveModeStarted`, with the freshness age
+collapsing at each `SyncFinished` and climbing until the next one. So the
+follower's data arrives entirely through reconnection, and the gaps are the
+intervals between reconnections.
+
+The `Failed { ConnectionLost(TimedOut) }` fits that: connections do not survive,
+each re-establishment triggers a fresh catch-up, and live mode never gets the
+chance to deliver — or is not working at all. Those are different problems with
+different fixes and the logs so far cannot separate them.
+
+⚠️ **The real question is why live mode is silent**, and it is not answered yet:
+the gossip mesh never forming, a topic mismatch between peers, or connections
+dropping before live can carry anything. Now readable rather than guessable,
+which is the whole difference.
