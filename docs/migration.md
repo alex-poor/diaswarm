@@ -2603,7 +2603,7 @@ Sampled once per two-minute pass on phone B, 2026-09-14:
 |---|---|---|---|---|
 | both ends pre-fix, 16:39–16:44 | 7 | 89s | **268s** | 400s |
 | both ends fixed, whole window | 13 | 23s | 83s | 345s |
-| both ends fixed, settled 16:55+ | 7 | 23s | **24s** | 83s |
+| both ends fixed, settled 16:55–17:17 | 13 | 23s | **24s** | 107s |
 
 **Read the third row, not the first two.** The pre/post comparison is confounded:
 the loop phone was updated at 16:44 and Ayni at 16:45, so the "pre-fix" samples
@@ -2611,10 +2611,25 @@ straddle the change and the early post-fix ones include a cold follower
 discovering its peers. The settled row is twelve minutes of a warm follower with
 a fixed publisher, and it says the newest reading is **23–83 seconds old**.
 
+Twenty-two minutes, thirteen samples, one per pass:
+
+```
+23 23 23 24 24 24 24 80 83 83 83 84 107
+```
+
 For scale: the follower polls every 120s and the sensor reports every ~60s, so a
 median of 24s means the data is arriving between polls rather than at them —
 which is what pushing was supposed to buy and what, before `634acaf`, it could
-not have been buying, because nothing ever called `publish`.
+not have been buying, because nothing ever called `publish`. **All thirteen
+samples are under the 120s poll interval**, including the worst.
+
+⚠️ **The distribution is bimodal — a cluster at 23–24s and another at 80–84s —
+and that is not explained.** A publisher sealing on a steady ~60s cadence
+against a 120s sampler should give something closer to uniform. The obvious
+candidate is that the publisher's own seal cadence is irregular, since a
+follower can never be fresher than the subject seals, but that is a guess and
+attributing it needs the publisher's `sealed epoch` times beside this series.
+Recorded as an open question rather than smoothed over.
 
 ⚠️ **One excursion, unattributed: 202s → 322s → 345s across 16:51–16:54.** It
 climbs at exactly the rate of elapsed time, which means no reading arrived at
@@ -2623,6 +2638,16 @@ a missed push, or a sealing gap on the publisher's side — the follower cannot
 be fresher than the publisher seals. **Distinguishing them needs the publisher's
 `sealed epoch` timestamps beside this series**, and the loop phone dropped off
 adb before they could be collected. Left unattributed rather than guessed at.
+
+> **And the disconnection turned out to demonstrate the product.** With no adb
+> to the loop phone at all, the follower kept reporting
+> `live op from 9eeeac47 n=9,10,…,14` and `keys newest for 552f688a: 26s old` —
+> so the publisher was known to be alive, looping and pushing, from the other
+> phone, through the swarm. The USB drop was host-side and nothing else.
+>
+> Worth noticing because it is the actual use case: the question a follower
+> exists to answer is "is their phone still working and how current is this
+> number", and it answered it about a phone the laptop could no longer see.
 
 **What this still does not measure:** anything overnight, anything in doze,
 anything off-LAN, and the tail. Twelve minutes of a plugged-in phone on wifi is
