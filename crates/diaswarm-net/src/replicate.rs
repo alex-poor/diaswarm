@@ -96,6 +96,17 @@ type Stream<A> = SyncHandle<p2panda_core::Operation<A>, TopicLogSyncEvent<A>>;
 /// Every topic's live stream handle, shared by every clone of a replicator.
 type Handles<A> = Arc<Mutex<std::collections::HashMap<[u8; 32], Stream<A>>>>;
 
+/// One sync session: which topic, which peer, which session of theirs.
+///
+/// **ALL THREE, BECAUSE `session_id` ALONE IS NOT UNIQUE.** A replicator streams
+/// a topic per subject and each has its own manager handing out session ids, so
+/// two topics run sessions numbered alike. Keyed on the id alone, their
+/// cumulative counters interleave and each switch reads as a session starting
+/// over — which counts the whole running total again. Measured on a phone: a
+/// follower reported 17,128 live arrivals out of 8,103 operations received,
+/// which is not merely wrong but impossible.
+type Session = ([u8; 32], [u8; 32], u64);
+
 /// Replication for a `diaswarm-spaces` peer.
 pub type SpacesReplicator = Replicator<SpacesArgs>;
 
@@ -170,7 +181,7 @@ pub struct Replicator<A: Extensions + Send + 'static> {
     /// whose only peer had pushed exactly one.
     live: Arc<Mutex<usize>>,
     /// The last `received_live_operations` seen on each session, for [`count_live`].
-    live_seen: Arc<Mutex<std::collections::HashMap<u64, u32>>>,
+    live_seen: Arc<Mutex<std::collections::HashMap<Session, u32>>>,
     /// Every sync event, in order.
     ///
     /// Kept because "nothing replicated" has several very different causes —
@@ -327,12 +338,11 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
                     Ok(FromSync { event, remote, session_id, .. }) => match event {
                         TopicLogSyncEvent::OperationReceived { operation, metrics } => {
                             *last_event.lock().unwrap() = std::time::Instant::now();
-                            let n = count_live(
+                            let pushed = count_live(
                                 &mut live_seen.lock().unwrap(),
-                                session_id,
+                                (topic_bytes, *remote.as_bytes(), session_id),
                                 metrics.received_live_operations,
                             );
-                            *live.lock().unwrap() += n;
                             // STORED, OR THIS PEER CARRIES NOTHING.
                             //
                             // And stored in the log its own header says it
@@ -354,13 +364,38 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
                             }
                             .await;
                             match out {
-                                Ok(()) => *received.lock().unwrap() += 1,
+                                Ok(()) => {
+                                    *received.lock().unwrap() += 1;
+                                    // **COUNTED ONLY IF IT WAS ALSO KEPT**, so
+                                    // `live` can never exceed `received`. The
+                                    // first two versions of this counter both
+                                    // reported numbers that were not merely
+                                    // wrong but arithmetically impossible, and
+                                    // an impossible number is one nobody can
+                                    // reason from. Tying it to the same branch
+                                    // makes the invariant structural rather
+                                    // than something to remember.
+                                    *live.lock().unwrap() += pushed;
+                                }
                                 Err(e) => {
                                     remember(&log, format!("could not store: {e}"))
                                 }
                             }
                         }
                         other => {
+                            // A SESSION THAT HAS ENDED KEEPS NO BASELINE. This
+                            // is what bounds `live_seen` in normal running: an
+                            // id is only interesting while its session is live.
+                            if matches!(
+                                other,
+                                TopicLogSyncEvent::SessionFinished { .. }
+                                    | TopicLogSyncEvent::Failed { .. }
+                            ) {
+                                live_seen
+                                    .lock()
+                                    .unwrap()
+                                    .remove(&(topic_bytes, *remote.as_bytes(), session_id));
+                            }
                             remember(&log, format!("{other:?} from {}", &remote.to_hex()[..8]))
                         }
                     },
@@ -501,6 +536,13 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
 /// 256 is far more than any diagnostic has wanted and small enough to be free.
 const KEEP_EVENTS: usize = 256;
 
+/// How many in-flight sessions to keep a live-counting baseline for.
+///
+/// Bounded because this runs on a phone that drives an insulin pump. Entries
+/// are removed when a session ends, so this is a backstop against a session
+/// whose end event never arrives, not a working limit.
+const KEEP_SESSIONS: usize = 256;
+
 /// Record a sync event, forgetting the oldest once there are too many.
 fn remember(log: &Mutex<Vec<String>>, line: String) {
     let mut log = log.lock().unwrap();
@@ -529,11 +571,21 @@ fn remember(log: &Mutex<Vec<String>>, line: String) {
 ///
 /// A drop means a new session reusing the id, so the new value is the count.
 fn count_live(
-    seen: &mut std::collections::HashMap<u64, u32>,
-    session_id: u64,
+    seen: &mut std::collections::HashMap<Session, u32>,
+    session: Session,
     received_live: u32,
 ) -> usize {
-    let previous = seen.insert(session_id, received_live).unwrap_or(0);
+    // **FAIL TOWARDS UNDERCOUNTING.** Sessions are forgotten when they end, so
+    // this cap should never be reached; if it is, something is already wrong.
+    // Refusing a new baseline reports fewer pushes than happened, which causes
+    // an investigation. Clearing the map instead would report the next
+    // session's whole running total as new — over-reporting, which HIDES a
+    // broken transport. That is the mistake this counter has already made
+    // twice, and it is the one that costs a day.
+    if !seen.contains_key(&session) && seen.len() >= KEEP_SESSIONS {
+        return 0;
+    }
+    let previous = seen.insert(session, received_live).unwrap_or(0);
     if received_live >= previous {
         (received_live - previous) as usize
     } else {
@@ -556,48 +608,108 @@ fn subject_key(subject: &str) -> Result<VerifyingKey> {
 
 #[cfg(test)]
 mod tests {
-    use super::count_live;
+    use super::{count_live, Session, KEEP_SESSIONS};
     use std::collections::HashMap;
+
+    fn session(topic: u8, peer: u8, id: u64) -> Session {
+        ([topic; 32], [peer; 32], id)
+    }
 
     /// A LIVE COUNT THAT COUNTS CATCH-UP IS WORSE THAN NO LIVE COUNT.
     ///
-    /// **THIS IS THE RULE THAT WAS WRONG ON A PHONE FOR TWENTY MINUTES.** The
-    /// first version asked `received_live_operations > 0`, which is a fact
-    /// about the *session*, not about the operation in hand. A follower
-    /// reported 1,052 live arrivals out of 1,059 while its only peer had pushed
-    /// one — so the number that exists to prove the transport works was proving
-    /// it by accident, which is the same failure shape as the defect it was
-    /// added to detect.
+    /// **THIS IS THE RULE THAT WAS WRONG ON A PHONE.** The first version asked
+    /// `received_live_operations > 0`, which is a fact about the *session*, not
+    /// about the operation in hand. A follower reported 1,052 live arrivals out
+    /// of 1,059 while its only peer had pushed one — so the number that exists
+    /// to prove the transport works was proving it by accident, which is the
+    /// same failure shape as the defect it was added to detect.
     #[test]
     fn catch_up_after_a_push_is_not_a_push() {
         let mut seen = HashMap::new();
-        // A session catches up: many operations, none of them live.
+        let s = session(1, 1, 7);
         for _ in 0..1_000 {
-            assert_eq!(count_live(&mut seen, 7, 0), 0);
+            assert_eq!(count_live(&mut seen, s, 0), 0);
         }
-        // Then one is pushed.
-        assert_eq!(count_live(&mut seen, 7, 1), 1);
-        // And then the session re-syncs, delivering another fifty by catch-up.
-        // The cumulative metric still says 1, and none of these are live.
+        assert_eq!(count_live(&mut seen, s, 1), 1);
+        // The session re-syncs and delivers fifty more by catch-up. The
+        // cumulative metric still says 1, and none of these are live.
         for _ in 0..50 {
-            assert_eq!(count_live(&mut seen, 7, 1), 0, "catch-up counted as a push");
+            assert_eq!(count_live(&mut seen, s, 1), 0, "catch-up counted as a push");
         }
-        // A second push is a second push.
-        assert_eq!(count_live(&mut seen, 7, 2), 1);
+        assert_eq!(count_live(&mut seen, s, 2), 1);
     }
 
-    /// TWO SESSIONS ARE COUNTED APART.
+    /// TWO TOPICS DO NOT RE-COUNT EACH OTHER'S TOTALS.
     ///
-    /// Metrics are per session, so one peer's pushes must not cancel another's.
-    /// Two phones and a laptop in one pool is the ordinary case, not the
-    /// exotic one.
+    /// **THE SECOND WRONG VERSION, AND THE PHONE SAID SO IN ARITHMETIC.** Keyed
+    /// on `session_id` alone this reported 17,128 live arrivals out of 8,103
+    /// operations received — not merely wrong but impossible. A replicator
+    /// streams a topic per subject and each manager numbers its own sessions,
+    /// so two topics run sessions numbered alike; interleaved, every switch
+    /// reads as a session starting over and counts the whole running total
+    /// again.
     #[test]
-    fn sessions_do_not_borrow_each_others_counts() {
+    fn sessions_numbered_alike_on_different_topics_are_different_sessions() {
         let mut seen = HashMap::new();
-        assert_eq!(count_live(&mut seen, 1, 1), 1);
-        assert_eq!(count_live(&mut seen, 2, 1), 1, "a second session started at its own zero");
-        assert_eq!(count_live(&mut seen, 1, 2), 1);
-        assert_eq!(count_live(&mut seen, 2, 2), 1);
+        let (a, b) = (session(1, 9, 4), session(2, 9, 4));
+        assert_eq!(count_live(&mut seen, a, 1), 1);
+        assert_eq!(count_live(&mut seen, b, 1), 1, "the second topic started at its own zero");
+        // Interleaved, each only counts its own increase.
+        for n in 2..20u32 {
+            assert_eq!(count_live(&mut seen, a, n), 1);
+            assert_eq!(count_live(&mut seen, b, n), 1);
+        }
+        let total: u32 = 19 + 19;
+        assert_eq!(total, 38, "two topics, nineteen pushes each");
+    }
+
+    /// AND NEITHER DO TWO PEERS ON ONE TOPIC.
+    ///
+    /// Two phones and a laptop carrying the same subject is the ordinary case.
+    #[test]
+    fn peers_do_not_borrow_each_others_counts() {
+        let mut seen = HashMap::new();
+        let (a, b) = (session(3, 1, 2), session(3, 2, 2));
+        assert_eq!(count_live(&mut seen, a, 1), 1);
+        assert_eq!(count_live(&mut seen, b, 1), 1);
+        assert_eq!(count_live(&mut seen, a, 2), 1);
+        assert_eq!(count_live(&mut seen, b, 2), 1);
+    }
+
+    /// A RESTARTED SESSION DOES NOT LOSE ITS PUSHES.
+    ///
+    /// A counter that went backwards is a session starting over, not a negative
+    /// number of operations. Saturating to zero would undercount silently for
+    /// the life of the new session.
+    #[test]
+    fn a_session_id_that_starts_over_starts_over() {
+        let mut seen = HashMap::new();
+        let s = session(4, 4, 3);
+        assert_eq!(count_live(&mut seen, s, 9), 9);
+        assert_eq!(count_live(&mut seen, s, 2), 2, "a restarted session lost its pushes");
+        assert_eq!(count_live(&mut seen, s, 3), 1);
+    }
+
+    /// THE BASELINE MAP IS BOUNDED, AND OVERFLOWS TOWARDS SILENCE.
+    ///
+    /// **THE DIRECTION MATTERS MORE THAN THE CAP.** Refusing new baselines
+    /// reports fewer pushes than happened, which causes somebody to go and
+    /// look. Clearing the map instead would report the next session's whole
+    /// running total as new — over-reporting, which HIDES a broken transport.
+    /// This counter has already over-reported twice; it must not be able to a
+    /// third time.
+    #[test]
+    fn a_full_baseline_map_undercounts_rather_than_inventing() {
+        let mut seen = HashMap::new();
+        for i in 0..KEEP_SESSIONS as u64 {
+            assert_eq!(count_live(&mut seen, session(0, 0, i), 1), 1);
+        }
+        assert_eq!(seen.len(), KEEP_SESSIONS);
+        // A session beyond the cap is not counted, and does not evict anybody.
+        assert_eq!(count_live(&mut seen, session(0, 0, 9_999), 500), 0);
+        assert_eq!(seen.len(), KEEP_SESSIONS, "the cap evicted a live session's baseline");
+        // And a session already known still counts, cap or no cap.
+        assert_eq!(count_live(&mut seen, session(0, 0, 0), 2), 1);
     }
 
     /// THE EVENT LOG DOES NOT GROW FOR EVER.
@@ -620,19 +732,5 @@ mod tests {
         // than growing: the tail is the only part a diagnostic ever asks for.
         assert_eq!(kept.last().unwrap(), &format!("event {}", super::KEEP_EVENTS * 3 - 1));
         assert_eq!(kept.first().unwrap(), &format!("event {}", super::KEEP_EVENTS * 2));
-    }
-
-    /// A RECYCLED SESSION ID DOES NOT LOSE ITS PUSHES.
-    ///
-    /// A counter that went backwards is a new session, not a negative number of
-    /// operations. Saturating to zero here would silently undercount for the
-    /// whole life of the new session, which is the failure that is hardest to
-    /// notice: a transport that works, reported as one that does not.
-    #[test]
-    fn a_session_id_that_starts_over_starts_over() {
-        let mut seen = HashMap::new();
-        assert_eq!(count_live(&mut seen, 3, 9), 9);
-        assert_eq!(count_live(&mut seen, 3, 2), 2, "a restarted session lost its pushes");
-        assert_eq!(count_live(&mut seen, 3, 3), 1);
     }
 }

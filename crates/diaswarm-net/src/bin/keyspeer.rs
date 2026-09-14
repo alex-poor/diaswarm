@@ -121,10 +121,12 @@ async fn main() -> Result<()> {
             }
         }
 
+        let (received, live) = (replicator.received(), replicator.live_received());
+        // An impossible number is one nobody can reason from, and this counter
+        // has reported two. Say so here rather than letting a test read it.
+        assert!(live <= received, "live {live} exceeds received {received}");
         println!(
-            "{{\"t\":{t},\"pool\":{pool_size},\"received\":{},\"live\":{},\"pushed\":{pushed}}}",
-            replicator.received(),
-            replicator.live_received(),
+            "{{\"t\":{t},\"pool\":{pool_size},\"received\":{received},\"live\":{live},\"pushed\":{pushed}}}"
         );
     }
     for e in replicator.events() {

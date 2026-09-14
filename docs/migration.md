@@ -2314,3 +2314,39 @@ answer and a clean negative control.
 `swarm: keys subject <hex>` is now logged at plugin startup. The keys subject is
 a different key from the core vault's and could not be read from a phone at
 all, which is what made a laptop-side check impossible without driving the UI.
+
+### ⚠️ And the live counter was wrong a second time, in arithmetic
+
+Keying the per-session baseline on `session_id` alone was not enough. A
+replicator streams a topic per subject, each topic manager numbers its own
+sessions, so two topics run sessions numbered alike. Interleaved, every switch
+between them reads as a session starting over — and counts the whole running
+total again.
+
+The phone said so in a way no interpretation survives:
+
+```
+sync: counts received=1107 live=1977
+sync: counts received=8103 live=17128
+```
+
+More pushed arrivals than arrivals. Not merely wrong: impossible.
+
+Three changes, in increasing order of how much they matter:
+
+1. the baseline is keyed on `(topic, peer, session_id)`, not the id alone;
+2. `live` is incremented in the same branch that stores the operation, so
+   `live <= received` is structural rather than something to remember — and
+   both the in-process and two-process tests now assert it;
+3. the baseline map is bounded, and **overflows towards undercounting**.
+
+(3) is the one worth arguing about. Refusing new baselines when full reports
+fewer pushes than happened, which sends somebody to look. Clearing the map
+instead would report the next session's whole running total as new — which
+**hides** a broken transport. This counter has now over-reported twice; the
+failure direction is not a detail.
+
+**Three wrong versions of one counter is itself the finding.** The reason is
+the same each time: cumulative metrics describe a session, and the question
+being asked is about an operation. It was believed twice because nothing
+asserted the one thing that cannot be true.
