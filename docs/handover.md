@@ -178,22 +178,66 @@ The consequence is for wording rather than code: a follower showing "3 minutes
 ago" during a sensor gap is telling the truth, and showing the age is what lets
 a person tell an old reading from a broken network.
 
-## Running right now: the overnight doze soak
+## Where the devices actually are, 2026-09-14 21:30
 
-Phone B is **unplugged, screen off**, on battery, reachable only over adb-wifi
-(`192.168.88.213:5555` — the USB transport went with the cable). A persistent
-monitor samples every 5 minutes into
-`scratchpad/doze-soak.log` and speaks only on a doze transition, on Ayni
-becoming network-restricted, or on a reading older than 600s.
+**All three on the D31 build**, installed in that order, signer verified on both
+phones, pump key intact, rollback saved.
 
-Baseline at 17:40: `deep=INACTIVE`, `effective=NONE`, `StayAwake` foreground
-service `isForeground=true`, newest reading 29s old.
+| | state |
+|---|---|
+| loop phone `2A28…AC` | publishing · `pushed 2` · `pool 4 peers` · looping throughout |
+| phone B AAPS `2C01…YL` | in the pool, carrying |
+| Ayni (phone B) | `pushed=yes` · newest reading **24s old** · holder `9eeeac47` |
 
-**This is the first time the overnight claim has been tested under known
-conditions.** Both previous attempts were invalidated — one by the phone being
-on charge (a charging phone never dozes), one by `force-idle`, which lies.
-Natural deep IDLE takes ~7 minutes here and `motion_inactive_to=30s`, so the
-phone must not be picked up.
+`pushed 2` is the subject topic plus the legacy bucket topic, which is the
+transition working. It is **not** a count of sends — see D31.
+
+The relabelled counter reads as intended, and is worth seeing once:
+
+```
+sync: counts stored=16 pushed=yes (p2panda's raw counter 5, not a count of anything)
+```
+
+Under the old label that was `received=16 live=5`, which invites "31% arrived
+pushed" — a sentence about two different units.
+
+**And a laptop was visible as a holder.** Minutes before the restart Ayni
+reported `keys holders for 552f688a: 3 (9eeeac47, b8e0c9ba, 122dc922)`, the last
+being `diaswarm-peer` run from this machine. A desktop carrying a phone's sealed
+records, offered to a follower as a fallback source — D15, D28 and D29's carrier
+composing on real hardware for the first time.
+
+## The overnight soak
+
+Phone B is to be left unplugged and untouched. The monitor samples every five
+minutes into `scratchpad/doze-soak.log` over the **wifi** transport
+(`192.168.88.213:5555` — the USB one goes with the cable) and speaks only on a
+doze transition, on Ayni becoming network-restricted, or on true staleness over
+900s.
+
+**Before it was interrupted for these installs it had already beaten the
+previous best.** 17:46→19:46, twenty-four samples:
+
+| | |
+|---|---|
+| deep IDLE | **2 hours uninterrupted** (previous best: 51 min) |
+| network-restricted | **0** — the actual overnight failure mode, never seen |
+| true staleness | min 32s · median 114s · max 247s |
+| over 10 min stale | **0** |
+| wake cadence | stretched 120s → **4–6 min**, never stopped |
+
+The median of 114s against a 4–6 minute wake cadence is the push working:
+operations arriving between wakes rather than being waited for.
+
+⚠️ **What is still unproven is the long idle windows.** Doze starts at an hour
+and grows toward six, and the failure that was never reproduced under known
+conditions — relay gone by morning — lives out there. That is what tonight is
+for.
+
+**Reading it tomorrow:** `true_age` already includes time elapsed since the
+follower last logged, so a worker that stopped shows as growing staleness rather
+than a frozen reassuring number. `doze=` and `effective=` are the two columns
+that matter; `effective` anything but `NONE` is the known failure.
 
 ## Still open
 
