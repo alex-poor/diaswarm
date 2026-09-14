@@ -460,6 +460,7 @@ dependencies = [
  "p2panda-store",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror",
  "tokio",
  "x25519-dalek",

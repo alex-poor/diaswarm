@@ -33,3 +33,7 @@ thiserror = "2"
 
 [dev-dependencies]
 x25519-dalek = { version = "2", features = ["static_secrets"] }
+# Only to reopen a keys store and assert its encryption-state tables stay empty
+# (tests/store_holds_no_key_material.rs). Same version/features p2panda-store
+# already pulls, so it unifies rather than adding a second sqlx.
+sqlx = { version = "=0.8.6", features = ["runtime-tokio", "sqlite"] }
