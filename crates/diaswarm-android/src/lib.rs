@@ -20,7 +20,7 @@
 //! does either), and keeping its own high-water marks.
 
 use jni::objects::{JClass, JString};
-use jni::sys::{jint, jlong, jboolean};
+use jni::sys::{jint, jlong};
 use jni::JNIEnv;
 
 use std::path::{Path, PathBuf};
