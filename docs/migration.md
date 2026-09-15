@@ -3111,3 +3111,37 @@ somebody donated. That is a deployment problem now, not a scaling problem later.
 *Not investigated further.* The variance — 400 MB in one run, 880 MB in another,
 for comparable work — means the driver has not been identified and per-operation
 arithmetic will keep producing wrong answers until it is.
+
+### 🧪 A/B running: does a larger active view reduce stalls?
+
+**Started 2026-09-15 13:52. Result not in.**
+
+Sessions are created only when a peer enters this node's HyParView active view
+(see the upstream draft). Default capacity is **5**. With a pool of four, raising
+it should mean every peer is always in view, so sampling stops deciding who we
+sync with — *if* that is what causes the stalls.
+
+**Baseline, default config, 09:54 → 13:52 (~4 h):**
+
+| | |
+|---|---|
+| passes | 238 |
+| stalled passes | **18 (7.6%)** |
+| re-subscribes triggered | 6 |
+
+**Test config:** `DIASWARM_ACTIVE_VIEW=24`, and **nothing else**.
+
+⚠️ **One variable, deliberately.** The previous attempt set
+`shuffle_interval=15s` at the same time, which broke announcement delivery
+outright — the peer sat at `heard 0 · carrying 1 · holding 0` for twenty minutes
+and had to be reverted. It also ran against a period when the fault was absent,
+so it could not have shown anything either way. Both mistakes are why this one
+has a measured baseline and a single knob.
+
+**What would settle it:** a comparable window with materially fewer stalled
+passes. If the rate is unchanged, sampling capacity is not the cause and the
+upstream ask is the only real fix — which is worth knowing before anyone spends
+time on configuration.
+
+**What it cannot show:** anything about pools larger than the active view, where
+this mitigation is unavailable by definition.
