@@ -50,7 +50,15 @@ jobs:
         include:
           - { os: ubuntu-latest,   target: x86_64-unknown-linux-gnu,  ext: "" }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, ext: "" }
-          - { os: macos-13,        target: x86_64-apple-darwin,       ext: "" }
+          # **NOT `macos-13`, WHICH GITHUB HAS RETIRED.** A job naming a removed
+          # image does not fail — it queues forever. `peer-v0.1.0` sat like that
+          # for fifteen hours on 2026-09-15 while the other four targets built
+          # fine, and because the release job waits for all five, nothing was
+          # ever published. A native Intel runner is kept rather than
+          # cross-compiling from arm64, because the smoke step below exists to
+          # catch a binary that links and then dies on start, and running it
+          # under emulation would be testing the emulator.
+          - { os: macos-15-intel,  target: x86_64-apple-darwin,       ext: "" }
           - { os: macos-latest,    target: aarch64-apple-darwin,      ext: "" }
           - { os: windows-latest,  target: x86_64-pc-windows-msvc,    ext: ".exe" }
 
