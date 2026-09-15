@@ -175,6 +175,28 @@ object SwarmNative {
      */
     external fun swarmTick(handle: Long, maxAdopt: Long): String
 
+    /**
+     * Tell iroh the network underneath it changed — because it cannot tell.
+     *
+     * **NOT CALLING THIS COST 71 MINUTES ON 2026-09-15.** The loop phone left
+     * the house, wifi became mobile data, and the relay connection went and
+     * stayed gone until wifi returned — while AAPS sealed 84 epochs into the
+     * hole with zero failures. The data was made and kept; it had nowhere to go.
+     *
+     * `netwatch` ships a deliberately empty route monitor on Android ("Very sad
+     * monitor. Android doesn't allow us to do this") and its wall-time poll is
+     * an hour on mobile and fires only on a clock jump. iroh's own docs say the
+     * remedy is exactly this: Android exposes network changes to Java, so Java
+     * must pass them down.
+     *
+     * Safe to call whenever in doubt — upstream says calling it needlessly does
+     * no harm — so [NetworkWatch] calls it on every callback rather than trying
+     * to be clever about which ones matter.
+     *
+     * Returns 1 if a swarm was notified, 0 if there was none.
+     */
+    external fun swarmNetworkChanged(handle: Long): Long
+
     /** Leave the pool and release the handle. Idempotent on 0. */
     external fun swarmLeave(handle: Long)
 

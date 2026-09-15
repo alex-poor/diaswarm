@@ -797,6 +797,101 @@ record. The thing the TODOs are about is the thing this decision removes.
 per record somewhere, which would mean the separation is less clean than both
 the API and those TODOs suggest.
 
+### D32 · Android must tell iroh the network changed, because iroh cannot see it
+
+**Settled and implemented 2026-09-15.** The measured cause of a 71-minute outage,
+and it is ours, not the carrier's.
+
+#### 1. What happened
+
+The loop phone left the house at 15:05 and came back at 16:16. From
+`AndroidAPS.log`, which is the only reason any of this is knowable — logcat's
+ring buffer had long since rolled past it:
+
+```
+15:04:24  pool 3 peers, 4 buckets, holding 3, relay=connected(1)
+15:05:25  pool 2 peers, 2 buckets, holding 3, relay=disconnected
+   ...    88 consecutive passes, 71 minutes
+16:16:23  pool 2 peers, 2 buckets, holding 3, relay=connected(1)
+```
+
+The laptop peer's `holding` froze at 2025 for 56 passes and then jumped `+44` in
+a single pass on recovery. Ayni's reading went to `3471s old` and was back to
+`52s` two passes later.
+
+**AAPS never faltered.** Into those 71 minutes it sealed **84 epochs**, `holds`
+climbed 1470 → 1560, and every pass said `missing 0, lost 0, failures 0`. The
+data was made and it was kept. It had nowhere to go.
+
+#### 2. It was not doze, not the carrier, and not the foreground service
+
+All three have been blamed for overnight failures before, and this was none of
+them. AAPS is on the battery-optimisation whitelist
+(`user,info.nightscout.androidaps,10310`), it runs at `targetSdk 32` and is
+exempt from the whole foreground-service timeout regime, and it went on doing
+its work throughout — a sealing app is not a sleeping one.
+
+`relay=disconnected` is not our inference either. It is iroh's own
+`home_relay_status()`, read straight out of the endpoint.
+
+#### 3. The cause: a notification we never sent
+
+`netwatch`'s Android route monitor is a stub. Its entire body is a comment:
+
+```rust
+// Very sad monitor. Android doesn't allow us to do this
+```
+
+and its wall-time poll is stretched to an hour on mobile to save battery — and
+fires on a *clock* jump, never a network one. **So on Android, nothing native
+ever learns that wifi became mobile data.** iroh's own documentation says so, and
+names the platform and the remedy:
+
+> On many systems iroh is able to detect network changes by itself, however some
+> systems like android do not expose this functionality to native code. Android
+> does however provide this functionality to Java code. This function allows for
+> notifying iroh of any potential network changes like this.
+
+`Endpoint::network_change()` is public, and we had never called it. What we lost
+by not calling it is everything in `handle_network_change`: the UDP **rebind**,
+`dns_resolver.reset()`, a fresh net report, and the QUIC stack being told to
+migrate. Our relay is `https://aps1-1.relay.n0.iroh.link.` — a **hostname** — so
+every reconnect needs DNS, and a resolver still pointing at the network the phone
+walked away from fails every time until it walks back.
+
+#### 4. Why a brief wifi toggle looks fine, which is how this hid
+
+Switching wifi off at home and on again keeps working, and that observation is
+what makes the mechanism specific rather than vague. Live QUIC connections keep
+flowing over the wildcard socket via cellular, and nothing needs to re-resolve
+anything. **The failure needs a network change that outlives its connections** —
+leaving, not toggling. That is why every short test passed and why the finding
+only appeared on a real errand.
+
+#### 5. The fix
+
+`Swarm::network_changed` → `swarmNetworkChanged` (JNI) → `NetworkWatch`, a
+`ConnectivityManager.registerDefaultNetworkCallback` in both apps. It notifies on
+every callback rather than guessing which ones matter, because upstream is
+explicit that a needless call does no harm and the failure it guards against is
+an hour of silence. Bursts coalesce to one in-flight notification. The logger is
+injected so the lines land in `AndroidAPS.log` rather than the buffer that lost
+the last one.
+
+*Reopens if:* a phone that genuinely leaves the house still loses the relay for
+longer than a reconnect takes. That would mean the notification is delivered and
+insufficient, and the next suspect is the endpoint rebuild `relay_state`'s
+doc comment has always declined to do.
+
+#### 6. What this corrects
+
+**"Off-LAN is proven" was recorded on weaker evidence than it sounded.** The
+2026-09-11 result had the phone on mobile data *while still at home*. The first
+time it genuinely left, sharing stopped. Off-LAN via relay is real and still
+holds — the relay reconnected and everything resumed — but it is now known to
+depend on a notification that was not being sent, so it was never as robust as
+the record claimed.
+
 ### D31 · A rendezvous that depends on a number nobody agrees on
 
 **Open, recorded 2026-09-14, not yet fixed.** Found by asking what happens with

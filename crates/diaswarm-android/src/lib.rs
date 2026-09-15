@@ -601,6 +601,31 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmOffer<'a>(
     }
 }
 
+/// Android says the network changed; tell iroh, which cannot see it itself.
+///
+/// **THE MISSING HALF OF A 71-MINUTE OUTAGE.** `netwatch` ships a deliberately
+/// empty route monitor on Android — "Very sad monitor. Android doesn't allow us
+/// to do this" — so nothing native ever learns that wifi became mobile data.
+/// iroh's own documentation says Java has to tell it. This is where Java tells
+/// it. See `Swarm::network_changed`.
+///
+/// Returns 1 if the notification was delivered, 0 if there is no swarm to
+/// notify. Cheap enough to call on every `ConnectivityManager` callback;
+/// upstream says calling it needlessly does no harm.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmNetworkChanged(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlong {
+    if handle == 0 {
+        return 0;
+    }
+    let pooled = unsafe { &*(handle as *const Pooled) };
+    pooled.runtime.block_on(pooled.swarm.network_changed());
+    1
+}
+
 /// One pass: say what we hold, hear what we should, take on a few of them.
 ///
 /// Returns `pool<TAB>buckets<TAB>held<TAB>wanted<TAB>adopted`, or empty.

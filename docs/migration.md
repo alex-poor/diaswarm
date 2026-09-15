@@ -3228,3 +3228,73 @@ the actual overnight case: a looping phone in somebody's pocket or beside a bed,
 on mobile data, sharing with a parent who is asleep. An hour-long silent gap in
 that scenario is the thing the follower's age display exists to make survivable —
 but survivable is not the same as working.
+
+---
+
+## The cause, established — and it was not doze
+
+**2026-09-15, same day, from `AndroidAPS.log`.** The durable log covers the
+window; logcat had rolled past it hours before, which is the whole reason AAPS
+keeping its own log on disk mattered here.
+
+The outage has a single, exact signature:
+
+```
+15:04:24  pool 3 peers, 4 buckets, holding 3, relay=connected(1)
+15:05:25  pool 2 peers, 2 buckets, holding 3, relay=disconnected
+   ...    88 consecutive passes
+16:16:23  pool 2 peers, 2 buckets, holding 3, relay=connected(1)
+```
+
+Seventy-one minutes, bracketing both readers' observations exactly.
+
+**The publisher never faltered.** Into that hole AAPS sealed **84 epochs**,
+`holds` climbed 1470 → 1560, and every single pass reported `missing 0, lost 0,
+failures 0`. The data was made and it was kept. It had nowhere to go — which is
+precisely why nothing was lost and the backlog arrived complete.
+
+⚠️ **Doze is ruled out, not merely doubted.** AAPS is on the battery
+optimisation whitelist (`user,info.nightscout.androidaps,10310`), it runs at
+`targetSdk 32` and is exempt from the foreground-service regime entirely, and it
+was demonstrably working throughout — a phone sealing an epoch a minute is not a
+phone Android has stopped. The previous entry's suspicion was reasonable and
+wrong. That makes **three** overnight failures now blamed on doze and caused by
+something else.
+
+`relay=disconnected` is not our inference either: it is iroh's own
+`home_relay_status()`.
+
+### Why it happened
+
+`netwatch`'s Android route monitor is a deliberate stub —
+
+```rust
+// Very sad monitor. Android doesn't allow us to do this
+```
+
+— and its wall-time poll is stretched to an hour on mobile for battery, and
+fires on a *clock* jump rather than a network one. **So on Android iroh cannot
+see a network change at all.** Its own docs name the platform and the remedy:
+`Endpoint::network_change()` is public and exists for exactly this. We had never
+called it.
+
+What that costs is everything in `handle_network_change`: the UDP rebind,
+`dns_resolver.reset()`, a fresh net report, and the QUIC stack being told to
+migrate. The relay is a **hostname**, so reconnecting needs DNS — and a resolver
+still aimed at the network the phone walked away from keeps failing until it
+walks back. Which is what 16:16 is.
+
+### Why every previous test passed
+
+Switching wifi off at home and on again keeps working, and that observation is
+what makes this specific rather than hand-waving. Live QUIC connections keep
+flowing over the wildcard socket via cellular, and nothing has to re-resolve
+anything. **The failure needs a network change that outlives its connections** —
+leaving, not toggling. Every off-LAN test so far was run from the house.
+
+### What was recorded too strongly
+
+"Off-LAN is proven" has been in the record since 2026-09-11. It was measured
+with the phone on mobile data **while still at home**. Off-LAN via relay is real
+and the relay did come back — but it depended on a notification that was never
+being sent, so it was never as robust as the record claimed. See D32.

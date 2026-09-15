@@ -61,6 +61,13 @@ object Endpoint {
             return
         }
         handle = h
+        // **AFTER THE HANDLE IS SET, SO THE FIRST CALLBACK FINDS ONE.** iroh
+        // cannot see an Android network change; without this the phone keeps
+        // sockets bound to the network it left. See [nz.diaswarm.jni.NetworkWatch].
+        nz.diaswarm.jni.NetworkWatch.start(
+            context.applicationContext,
+            { Log.i(SyncWorker.TAG, it) }
+        ) { handle }
         Log.i(SyncWorker.TAG, "in the pool as ${SwarmNative.swarmNodeId(h).take(16)}")
     }
 
@@ -83,6 +90,9 @@ object Endpoint {
         val app = context.applicationContext
         Thread {
             synchronized(this) {
+                // BEFORE THE HANDLE GOES ANYWHERE — `swarmLeave` frees it, and
+                // this returns only once no notification still holds it.
+                nz.diaswarm.jni.NetworkWatch.stop(app) { Log.i(SyncWorker.TAG, it) }
                 val old = handle
                 handle = 0L
                 if (old != 0L) {

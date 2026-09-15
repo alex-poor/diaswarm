@@ -464,6 +464,17 @@ class SwarmPlugin @Inject constructor(
             return
         }
         SwarmEndpoint.handle = serving
+        // **AFTER THE HANDLE IS SET, SO THE FIRST CALLBACK FINDS ONE.** iroh
+        // cannot see an Android network change; without this the phone keeps
+        // sockets bound to the network it left, which is what took the relay
+        // away for seventy-one minutes on 2026-09-15. See
+        // [nz.diaswarm.jni.NetworkWatch].
+        nz.diaswarm.jni.NetworkWatch.start(
+            context.applicationContext,
+            // THROUGH aapsLogger, so these land in AndroidAPS.log. logcat had
+            // already rolled past the outage that made this necessary.
+            { aapsLogger.info(LTag.CORE, "swarm: $it") }
+        ) { SwarmEndpoint.handle }
         servingWithKeys = preferences.get(SwarmBooleanKey.ShadowSpacesVault)
         SwarmEndpoint.rejoinIfPreferencesChanged = { rejoinIfKeysPreferenceChanged() }
         aapsLogger.info(LTag.CORE, "swarm: in the pool as ${SwarmNative.swarmNodeId(serving)}")
@@ -501,6 +512,12 @@ class SwarmPlugin @Inject constructor(
     }
 
     private fun stopServing() {
+        // **BEFORE THE HANDLE GOES ANYWHERE.** `swarmLeave` frees the pointer;
+        // this returns only once no network-change notification is still
+        // holding it, and stops any further one from starting.
+        nz.diaswarm.jni.NetworkWatch.stop(context.applicationContext) {
+            aapsLogger.info(LTag.CORE, "swarm: $it")
+        }
         SwarmEndpoint.handle = 0L
         SwarmEndpoint.rejoinIfPreferencesChanged = null
         if (serving == 0L) return

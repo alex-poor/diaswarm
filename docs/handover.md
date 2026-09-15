@@ -1,28 +1,52 @@
-# Handover — 2026-09-15 07:30
+# Handover — 2026-09-15 16:45
 
-Everything is committed and pushed. The only uncommitted files are
-`README.md` and `fdroid/nz.diaswarm.ayni.yml`, which carry **the user's own
-edits — do not commit them**.
+`README.md` and `fdroid/nz.diaswarm.ayni.yml` may carry **the user's own edits —
+check `git status` before committing anything.**
 
 ---
 
-## 1. What is running right now, and when it answers
+## 1. The headline: the off-LAN outage is explained and fixed
 
-**A soak on phone B, started 07:13.** It is the only thing with a clock on it.
+**A 71-minute outage on 2026-09-15 had one cause, and it was ours.** See D32 in
+[decisions.md](decisions.md) and the end of [migration.md](migration.md).
 
 ```
-scratchpad/fgs-soak.log      one line every ten minutes
+15:04:24  relay=connected(1)
+15:05:25  relay=disconnected      <- phone left the house, wifi -> mobile
+   ...    88 consecutive passes, 71 minutes
+16:16:23  relay=connected(1)      <- came home, wifi back
 ```
 
-**The question:** does Ayni's foreground service survive past **372 minutes**
-(~13:25), which is where the previous build died. Anything before that proves
-nothing.
+**AAPS never faltered**: 84 epochs sealed into the hole, `holds` 1470 → 1560,
+`missing 0, lost 0, failures 0`. Not doze (AAPS is whitelisted and at
+`targetSdk 32`), not the carrier, not the foreground service.
 
-Baseline at start: `pid 19707 · types=0x40000000 · effective=NONE`.
+**The cause:** on Android, `netwatch`'s route monitor is an empty stub — *"Very
+sad monitor. Android doesn't allow us to do this"* — and its wall-time poll is an
+hour on mobile and fires only on a *clock* jump. **iroh cannot see an Android
+network change.** Its own docs say Java must call `Endpoint::network_change()`.
+We never did.
 
-Phone B is screen-off and on USB. **Charging does not affect the thing being
-measured** — the foreground-service time limit is not a doze mechanism — and it
-isolates the variable. Unplug only if a combined doze test is wanted instead.
+**The fix:** `NetworkWatch` (in `nz/diaswarm/jni/`, duplicated in both apps) →
+`SwarmNative.swarmNetworkChanged` → `Swarm::network_changed`.
+
+⚠️ **A BRIEF WIFI TOGGLE DOES NOT REPRODUCE THIS**, which is why it hid for
+days. Live QUIC connections keep flowing over the wildcard socket via cellular
+and nothing has to re-resolve. It needs a network change that **outlives its
+connections** — leaving, not toggling.
+
+⚠️ **"Off-LAN is proven" was over-claimed** from 2026-09-11 onward: every such
+test had the phone on mobile data *while still at home*.
+
+---
+
+## 1a. The foreground-service soak: PASSED
+
+`specialUse` works. First process ran **8h03m** (07:19 → 15:22) against
+`dataSync`'s death at 6h12m, `effective=NONE` and `doze=IDLE` across all 60
+samples, two-minute cadence held. It then restarted and **came back**, which
+`dataSync` could not ("Time limit already exhausted"). The 15:22 restart is a
+separate question — most likely the known Ayni memory leak.
 
 ---
 

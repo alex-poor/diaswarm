@@ -365,6 +365,42 @@ impl Swarm {
         if connected > 0 { format!("connected({connected})") } else { "disconnected".into() }
     }
 
+    /// Tell iroh the network underneath us may have changed.
+    ///
+    /// **THIS IS THE 71-MINUTE OUTAGE OF 2026-09-15, AND IT IS OURS.** The loop
+    /// phone left the house at 15:05, moved from wifi to mobile data, and its
+    /// relay connection went and stayed gone until 16:16, when wifi came back.
+    /// AAPS never faltered: it sealed 84 epochs into that hole, `holds` climbed
+    /// 1470 -> 1560, `missing 0, lost 0, failures 0`. The data was made and
+    /// kept. It simply had nowhere to go.
+    ///
+    /// The reason is upstream, documented, and deliberate. `netwatch`'s Android
+    /// route monitor is a stub whose comment reads "Very sad monitor. Android
+    /// doesn't allow us to do this", and its wall-time poll is set to an hour on
+    /// mobile to save battery — and fires only on a *clock* jump, never a
+    /// network one. So on Android iroh cannot see a network change at all. Its
+    /// own docs say what to do instead:
+    ///
+    /// > some systems like android do not expose this functionality to native
+    /// > code. Android does however provide this functionality to Java code.
+    ///
+    /// So Java has to say so, and this is the way in. Not calling it means a
+    /// phone that changes network keeps sockets bound to the interface it just
+    /// left: not a carrier blocking us, not doze, not the foreground service —
+    /// a notification we never sent.
+    ///
+    /// Cheap and idempotent by upstream's own account — "even when the network
+    /// did not change [...] there is no harm in calling this function" — so the
+    /// callers err towards calling it.
+    pub async fn network_changed(&self) {
+        match self.iroh_endpoint().await {
+            Ok(ep) => ep.network_change().await,
+            // Nothing to notify yet. The endpoint takes its first look at the
+            // network when it starts, so a change before that is already seen.
+            Err(e) => eprintln!("diaswarm: no endpoint to notify of a network change ({e})"),
+        }
+    }
+
     pub async fn pool_members(&self) -> Result<Vec<String>> {
         let me = self.node_id().await?;
         let mut ids: Vec<String> = self
