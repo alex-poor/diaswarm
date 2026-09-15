@@ -1,7 +1,65 @@
-# Handover — 2026-09-15 16:45
+# Handover — 2026-09-16 11:40
 
-`README.md` and `fdroid/nz.diaswarm.ayni.yml` may carry **the user's own edits —
-check `git status` before committing anything.**
+`README.md` may carry **the user's own edits — check `git status` before
+committing anything.**
+
+---
+
+## 0. The memory leak is upstream, known, and worked around
+
+**Ayni grew until Android killed it — 120 MB to 5.2 GB overnight.** The cause is
+in iroh, not here, and it was already reported twice before we found it.
+
+`RemoteStateActor` re-queues a failed QUIC path-open into `pending_open_paths`.
+The 333 ms retry drains the queue and calls `open_path_on_all_conns` for each
+entry — which retries the address on **every** connection to that peer, and every
+connection still at the path-id cap pushes it back again. One entry becomes C
+entries per tick. No dedup, no cap.
+
+* [iroh#4390](https://github.com/n0-computer/iroh/issues/4390) — `bug`, milestone
+  Sprint P, open since July. 24 GB single allocation on macOS. Carries the
+  hot-fix we use.
+* [iroh#4509](https://github.com/n0-computer/iroh/issues/4509) — open, Windows,
+  RSS past 100 GB.
+
+⚠️ **iroh 1.2.0 is identical here** — one variable renamed. Upgrading does not
+help. Checked, not assumed.
+
+**Measured on Android** (heapprofd, follower up 54 minutes):
+
+```
+largest SINGLE allocation   834,695,168 bytes  (796 MB)
+total allocated               1.13 GB in 150 s
+net retained                  7.5 MB      <- why sum(size) misses it entirely
+```
+
+**Our workaround:** `vendor/iroh` — iroh 1.1.0 with one deduplicating, capped
+enqueue, verbatim from #4390 so it lifts out cleanly. `[patch.crates-io]` in
+`diaswarm-net` and `diaswarm-android`. See `vendor/iroh/DIASWARM-PATCH.md`.
+`diaswarm-peer` is deliberately left on stock iroh as a control.
+
+**Measured, phone B, same phone and hour, only iroh differing:**
+
+| | unpatched | patched |
+|---|---|---|
+| t+15m | 348 MB | — |
+| t+54m | 416 MB (+127 MB in one minute) | — |
+| t+61m | — | 144 MB |
+| t+69m | — | 126 MB, trending down |
+
+⚠️ **69 minutes is not a night.** The run ended when phone B left adb, not
+because it was finished. Re-run it longer before calling this closed.
+
+⚠️ **THE LOOP PHONE BARELY HAS THIS.** 130 MB native after 13h49m, against the
+follower's 348 MB in fifteen minutes. The trigger is network roaming, and a
+publisher on stable home wifi rarely hits the path-id cap. Do not rush the patch
+onto the pump phone on the follower's evidence.
+
+⚠️ **PROFILE AT 40+ MINUTES.** Every capture taken in the first fifteen minutes
+misread SQLite page-cache warm-up as the cause, and a fifteen-minute flat window
+produced a "fixed" claim that was wrong within the hour. The page-cache cap in
+`diaswarm_keys::open_bounded_store` was kept (it is correct hygiene, and a
+busy timeout p2panda never set) but it is **not** what fixes this.
 
 ---
 
@@ -50,10 +108,24 @@ separate question — most likely the known Ayni memory leak.
 
 ---
 
-## 1b. Device state, end of 2026-09-15
+## 1b. Device state, 2026-09-16 11:40
 
 | device | build | note |
 |---|---|---|
+| **loop phone** `2A28…AC` | D32 network-change fix, **stock iroh** | up 13h49m, 130 MB native — barely affected. Looping, sealing. Patched AAPS APK is **built but not installed**; see §0 for why that is deliberate. |
+| **phone B** `2C01…YL` | D32 + **patched iroh** + page-cache cap | ⚠️ unstripped diagnostic build, not a release build. Was holding 126 MB at t+69m when it left adb. **Needs replugging** to extend the soak. |
+
+**Open with F-Droid:** nothing. MR !48469 is green on `4bb1dc91` and mergeable;
+screenshots fixed, commit hash pinned, auto-update enabled. Waiting on them.
+
+**Open with iroh:** a comment is drafted and unposted at
+`scratchpad/iroh-4390-comment.md` — adds Android as a third platform, the
+`max(size)` vs `sum(size)` trap, and the roam correlation.
+
+**Also unshipped:** `peer-v0.1.0` can be re-tagged now the `macos-13` runner is
+fixed; four of five targets built last time.
+
+---|---|---|
 | **loop phone** `2A28…AC` | AAPS with D32, coalesced `NetworkWatch` | looping, sealing, relay connected. Pump key intact through two installs. |
 | **phone B** `2C01…YL` | ⚠️ **Ayni built UNSTRIPPED for profiling — NOT a release build**, carrying the page-cache fix (`cd8258a`) | `CARGO_PROFILE_RELEASE_STRIP=none` plus a temporary `keepDebugSymbols`. The gradle edit is reverted and NOT committed; the APK on the device still has it. Rebuild normally before testing anything about size or shipping. An overnight curve is running to `scratchpad/curve-overnight.log`: native heap should stay near 130 MB. The unfixed build passed 400 MB inside twenty minutes. |
 
