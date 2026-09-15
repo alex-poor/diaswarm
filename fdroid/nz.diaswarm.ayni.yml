@@ -68,7 +68,7 @@ Repo: https://github.com/alex-poor/diaswarm.git
 Builds:
   - versionName: 0.1.6
     versionCode: 71
-    commit: follower-v0.1.6
+    commit: 2e55f2bc1290f06d38ba71fcebfb00e26e5f381f
     subdir: follower
     sudo:
       - apt-get update
@@ -89,7 +89,7 @@ Builds:
 
   - versionName: 0.1.6
     versionCode: 72
-    commit: follower-v0.1.6
+    commit: 2e55f2bc1290f06d38ba71fcebfb00e26e5f381f
     subdir: follower
     sudo:
       - apt-get update
