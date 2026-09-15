@@ -3196,3 +3196,35 @@ taken over minutes rather than hours, which is why they read as a plateau.
 *Root cause not established.* What is known: it is not the foreground-service
 type, it is not catch-up size (measured: not proportional), and it grows for as
 long as the process lives.
+
+### 📉 A 70-minute publisher outage, off-LAN — and a clean recovery
+
+**2026-09-15, loop phone unattended on mobile data, wifi off, nobody touching
+it.** Sharing stopped at ~15:10 and resumed at 16:20 without intervention.
+
+Both readers saw it independently, which is what identifies the publisher rather
+than either reader as the cause:
+
+| | during | on recovery |
+|---|---|---|
+| laptop peer | `holding` frozen at 2025, 56 stalled passes, `pool` 3 → 1 | **+44 in one pass**, then steady +1/min |
+| Ayni (phone B) | `3471s old` and climbing by elapsed time | `113s` → `52s` within two passes |
+
+**Nothing was lost.** The backlog arrived complete on reconnect, which is the
+catch-up path doing exactly its job.
+
+**And Ayni showed `3471s old` the whole way through** rather than a stale number
+presented as current. That is the design decision about always displaying a
+reading's age earning itself — the dangerous failure for a follower was never an
+error on screen, it was a plausible value that is an hour out of date.
+
+⚠️ **Cause not established.** The phone was on mobile data, unattended, and
+recovered by itself — a pattern consistent with doze network-blocking, released
+at a maintenance window. It cannot be confirmed: the phone was off adb for the
+whole window, and `dumpsys netpolicy` is the only thing that names the flag.
+
+**If it is doze, it is the most important open question here**, because it is
+the actual overnight case: a looping phone in somebody's pocket or beside a bed,
+on mobile data, sharing with a parent who is asleep. An hour-long silent gap in
+that scenario is the thing the follower's age display exists to make survivable —
+but survivable is not the same as working.
