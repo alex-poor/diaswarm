@@ -55,7 +55,7 @@ separate question — most likely the known Ayni memory leak.
 | device | build | note |
 |---|---|---|
 | **loop phone** `2A28…AC` | AAPS with D32, coalesced `NetworkWatch` | looping, sealing, relay connected. Pump key intact through two installs. |
-| **phone B** `2C01…YL` | ⚠️ **Ayni built UNSTRIPPED for profiling — NOT a release build** | `CARGO_PROFILE_RELEASE_STRIP=none` plus a temporary `keepDebugSymbols`. The gradle edit is reverted and NOT committed; the APK on the device still has it. Rebuild normally before testing anything about size or shipping. |
+| **phone B** `2C01…YL` | ⚠️ **Ayni built UNSTRIPPED for profiling — NOT a release build**, carrying the page-cache fix (`cd8258a`) | `CARGO_PROFILE_RELEASE_STRIP=none` plus a temporary `keepDebugSymbols`. The gradle edit is reverted and NOT committed; the APK on the device still has it. Rebuild normally before testing anything about size or shipping. An overnight curve is running to `scratchpad/curve-overnight.log`: native heap should stay near 130 MB. The unfixed build passed 400 MB inside twenty minutes. |
 
 ⚠️ **The unstripped build is deliberate and worth keeping until the memory work
 is done** — it is what makes a heap profile name a function instead of an
