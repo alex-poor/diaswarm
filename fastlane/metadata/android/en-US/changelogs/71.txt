@@ -1,0 +1,6 @@
+Sharing now survives leaving the house.
+
+A phone that moved from wifi to mobile data could stop sharing until it came
+back — for over an hour in the case that found this. Android does not tell the
+networking layer when the network changes, so the connection was never rebuilt.
+Now it is told, and sharing continues across the switch.

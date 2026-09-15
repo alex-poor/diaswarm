@@ -60,15 +60,15 @@ Repo: https://github.com/alex-poor/diaswarm.git
 # about 10 MB of an architecture it would never run, so `assembleRelease`
 # produces one APK per ABI and each build entry below picks one with `output`.
 #
-# The versionCodes are the app's base versionCode (5, the number in
+# The versionCodes are the app's base versionCode (7, the number in
 # follower/build.gradle.kts) times ten, plus one per ABI — arm64 last, so that
 # a device offered both takes the 64-bit build. If that arithmetic ever drifts
 # from the numbers declared here, this build fails rather than publishing an APK
 # that claims a version it does not have.
 Builds:
-  - versionName: 0.1.4
-    versionCode: 51
-    commit: follower-v0.1.4
+  - versionName: 0.1.6
+    versionCode: 71
+    commit: follower-v0.1.6
     subdir: follower
     sudo:
       - apt-get update
@@ -87,9 +87,9 @@ Builds:
       - rustup target add aarch64-linux-android armv7-linux-androideabi
       - cargo install cargo-ndk@4.1.2 --locked
 
-  - versionName: 0.1.4
-    versionCode: 52
-    commit: follower-v0.1.4
+  - versionName: 0.1.6
+    versionCode: 72
+    commit: follower-v0.1.6
     subdir: follower
     sudo:
       - apt-get update
@@ -107,10 +107,10 @@ Builds:
 # CHECKED AUTOMATICALLY, WRITTEN BY HAND.
 #
 # `VercodeOperation` IS NOT OPTIONAL, even with auto-update off. The update
-# check reads the versionCode out of build.gradle.kts — the base, 4 — and
+# check reads the versionCode out of build.gradle.kts — the base, 7 — and
 # compares it with `CurrentVersionCode`. Without these two operations to
 # reproduce the per-ABI arithmetic it reports `current version is newer: old
-# vercode=52, new vercode=5` and fails on every run. Measured with
+# vercode=72, new vercode=7` and fails on every run. Measured with
 # `fdroid checkupdates`, not assumed.
 #
 # Auto-update is nevertheless off, because it would copy one build entry per
@@ -122,5 +122,5 @@ UpdateCheckMode: Tags ^follower-v
 VercodeOperation:
   - "%c * 10 + 1"
   - "%c * 10 + 2"
-CurrentVersion: 0.1.4
-CurrentVersionCode: 52
+CurrentVersion: 0.1.6
+CurrentVersionCode: 72
