@@ -113,11 +113,17 @@ Builds:
 # vercode=72, new vercode=7` and fails on every run. Measured with
 # `fdroid checkupdates`, not assumed.
 #
-# Auto-update is nevertheless off, because it would copy one build entry per
-# operation and every copy would carry the same `output` glob, so both builds
-# would pick the same ABI's APK. Two entries per release, added by hand, is the
-# honest version of that.
-AutoUpdateMode: None
+# **AUTO-UPDATE IS ON, AND THE REASON IT WAS OFF WAS WRONG.** This used to say
+# auto-update would copy one build entry per operation and give every copy the
+# same `output` glob, so both entries would publish the same ABI. It does not:
+# `fdroid` clones the trailing *set* of entries, one per `VercodeOperation`,
+# each keeping its own `output`. `rs.ruffle` in fdroiddata does exactly this
+# across four ABIs and 192 generated entries.
+#
+# That claim was written from inference rather than from an example, and an
+# F-Droid maintainer had to ask twice before anyone checked. Finding the
+# counter-example took two minutes.
+AutoUpdateMode: Version
 UpdateCheckMode: Tags ^follower-v
 VercodeOperation:
   - "%c * 10 + 1"
