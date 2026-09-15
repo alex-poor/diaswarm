@@ -466,10 +466,10 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_swarmJoin<'a>(
             }
             let url = format!("sqlite://{}", dir.join("keys.sqlite").display());
             match runtime.block_on(async {
-                let store = diaswarm_keys::SqliteStoreBuilder::new()
-                    .database_url(&url)
-                    .create_database(true)
-                    .build()
+                // A CAPPED PAGE CACHE — see `open_bounded_store`. An
+                // uncapped one is what put 85% of this app's steady-state
+                // allocation into SQLite page cache.
+                let store = diaswarm_keys::open_bounded_store(&url)
                     .await
                     .map_err(|e| e.to_string())?;
                 let (endpoint, gossip) = swarm.parts();

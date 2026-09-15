@@ -197,12 +197,10 @@ impl Swarm {
         // Done here rather than as a parameter because `Swarm` already owns a
         // directory and there are 47 call sites that should not have to care.
         let book_url = format!("sqlite://{}", store.join("addressbook.sqlite").display());
-        let book = match p2panda_store::SqliteStoreBuilder::new()
-            .database_url(&book_url)
-            .create_database(true)
-            .build()
-            .await
-        {
+        // Through the bounded opener, so this file's page cache has a
+        // ceiling like the keys store's. See
+        // `diaswarm_keys::open_bounded_store`.
+        let book = match diaswarm_keys::open_bounded_store(&book_url).await {
             Ok(db) => AddressBook::builder().store(db).spawn().await.context("address book")?,
             Err(e) => {
                 // A peer with an unpersisted address book still works; it just

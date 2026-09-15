@@ -219,10 +219,10 @@ async fn main() -> Result<()> {
     };
 
     let url = format!("sqlite://{}", dir.join("keys.sqlite").display());
-    let store = diaswarm_keys::SqliteStoreBuilder::new()
-        .database_url(&url)
-        .create_database(true)
-        .build()
+    // A desktop has memory to spare, but one behaviour to reason about is
+    // worth more — and a carrier left running for weeks is exactly where an
+    // uncapped page cache would show up next.
+    let store = diaswarm_keys::open_bounded_store(&url)
         .await
         .map_err(|e| anyhow::anyhow!("opening {url}: {e}"))?;
     let (endpoint, gossip) = swarm.parts();

@@ -24,6 +24,12 @@ publish = false
 p2panda-encryption = "=0.7.1"
 p2panda-core = "=0.7.1"
 p2panda-store = { version = "=0.7.1", features = ["macros"] }
+# NOT TEST-ONLY ANY MORE. `open_bounded_store` builds the pool itself so it can
+# cap `cache_size` and the connection count, which the p2panda builder does not
+# expose; `SqliteStore::from_pool` is the supported way in. Same version and
+# features p2panda-store already pulls, so it unifies rather than adding a
+# second sqlx.
+sqlx = { version = "=0.8.6", features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 diaswarm-core = { path = "../diaswarm-core" }
 serde = { version = "1", features = ["derive"] }
@@ -33,7 +39,4 @@ thiserror = "2"
 
 [dev-dependencies]
 x25519-dalek = { version = "2", features = ["static_secrets"] }
-# Only to reopen a keys store and assert its encryption-state tables stay empty
-# (tests/store_holds_no_key_material.rs). Same version/features p2panda-store
-# already pulls, so it unifies rather than adding a second sqlx.
-sqlx = { version = "=0.8.6", features = ["runtime-tokio", "sqlite"] }
+

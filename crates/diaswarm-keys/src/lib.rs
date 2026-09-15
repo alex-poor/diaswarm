@@ -78,6 +78,57 @@ pub use p2panda_encryption::Rng;
 /// being implemented for a type that visibly implements it.
 pub use p2panda_store::{SqliteStore, SqliteStoreBuilder};
 
+/// Open a file-backed store whose memory cost is bounded.
+///
+/// **BECAUSE THE DEFAULT ONE IS NOT, AND THAT IS THE OVERNIGHT KILL.** A heap
+/// profile of the follower on 2026-09-15 put **85% of steady-state allocation
+/// in SQLite's page cache** — about 14 MB a minute, which over a night is the
+/// several gigabytes that ends the process. It is not a connection leak: the
+/// `sqlx-sqlite-worker` threads sit flat while the caches behind them grow.
+///
+/// `SqliteStoreBuilder::default()` is `min_connections: 3, max_connections: 16`
+/// and sets **no pragmas at all** — no `cache_size`, no `journal_mode`. So each
+/// store can hold sixteen connections, each an OS thread with its own
+/// uncapped page cache, and this app opens two stores.
+///
+/// The count is fine; the missing ceiling is not. So the pool is built here and
+/// handed over through `SqliteStore::from_pool`, which p2panda exposes for
+/// exactly this — and the only things changed are a page-cache cap and a busy
+/// timeout.
+///
+/// `cache_size` is negative on purpose: SQLite reads a positive value as a
+/// number of PAGES and a negative one as KiB, so `-2000` is two megabytes
+/// whatever the page size turns out to be, and a positive 2000 would be eight.
+pub async fn open_bounded_store(url: &str) -> Result<SqliteStore, p2panda_store::SqliteError> {
+    use std::str::FromStr;
+    let options = sqlx::sqlite::SqliteConnectOptions::from_str(url)?
+        .create_if_missing(true)
+        // 2 MiB per connection rather than "whatever the btree walks into".
+        .pragma("cache_size", "-2000")
+        // **AND A BUSY TIMEOUT, WHICH p2panda SETS NOWHERE.** SQLite's default
+        // is zero: a connection that finds the write lock held gives up at once
+        // with SQLITE_BUSY rather than waiting. With more than one connection
+        // on a file — which the default pool very much has — that turns
+        // ordinary contention into an error the caller sees. Five seconds is
+        // long enough to outlast any write this app makes and short enough that
+        // a genuine deadlock still surfaces as one.
+        .busy_timeout(std::time::Duration::from_secs(5));
+    // **THE POOL SIZE IS LEFT ALONE ON PURPOSE.** Capping it to four was tried
+    // and measured: `keys_pool` went from passing in 4-5 s to taking 8-17 s and
+    // failing two runs in five. Fewer connections is fewer concurrent readers,
+    // and this is a pool whose whole job is concurrent readers. The memory
+    // problem was never the count — it was that each connection's page cache
+    // had no ceiling, and `cache_size` is the lever for that. Sixteen
+    // connections at 2 MiB each is 32 MiB per store, which is a number rather
+    // than a slope.
+    let pool = sqlx::sqlite::SqlitePoolOptions::new().connect_with(options).await?;
+    // **`from_pool` DOES NOT MIGRATE.** The builder ran migrations for us;
+    // taking the pool back means taking that job too, and a store without its
+    // tables fails later and less clearly.
+    p2panda_store::sqlite::run_pending_migrations(&pool).await?;
+    Ok(SqliteStore::from_pool(pool))
+}
+
 /// The reader's half of a pairing, as it travels in an invite.
 ///
 /// Re-exported because callers that decode one have to name it: the two grant
