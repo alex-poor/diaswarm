@@ -50,6 +50,19 @@ separate question — most likely the known Ayni memory leak.
 
 ---
 
+## 1b. Device state, end of 2026-09-15
+
+| device | build | note |
+|---|---|---|
+| **loop phone** `2A28…AC` | AAPS with D32, coalesced `NetworkWatch` | looping, sealing, relay connected. Pump key intact through two installs. |
+| **phone B** `2C01…YL` | ⚠️ **Ayni built UNSTRIPPED for profiling — NOT a release build** | `CARGO_PROFILE_RELEASE_STRIP=none` plus a temporary `keepDebugSymbols`. The gradle edit is reverted and NOT committed; the APK on the device still has it. Rebuild normally before testing anything about size or shipping. |
+
+⚠️ **The unstripped build is deliberate and worth keeping until the memory work
+is done** — it is what makes a heap profile name a function instead of an
+address. See [[ayni-memory-burst]] in memory for the whole recipe.
+
+---
+
 ## 2. The finding this soak exists to verify
 
 **Ayni could not watch overnight, and the cause was not doze.**
