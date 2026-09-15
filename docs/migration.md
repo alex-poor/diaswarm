@@ -3049,3 +3049,27 @@ network, no mDNS, data still arriving.
 
 The phone's wifi state is the user's report — adb was gone, so it could not be
 read off the device. They confirmed it directly: *"it's definitely off."*
+
+### ✅ CLOSED — `specialUse` survives the night, 2026-09-15 13:29
+
+The soak passed the mark that killed the old build.
+
+| | old (`dataSync`) | new (`specialUse`) |
+|---|---|---|
+| lifetime | **killed at 372m** | **376m and counting, same pid** |
+| after the kill | restarts refused, dead 220m until a human opened it | n/a |
+| `effective=` | `DOZE\|APP_BACKGROUND` once the process died | `NONE` throughout |
+| timeout exceptions | `ForegroundServiceDidNotStopInTimeException` | **zero** |
+
+`pid 19707` from 07:13 to 13:29 — never killed, never restarted, `doze=IDLE`
+throughout, cadence still running. Verified on the device rather than inferred:
+process id unchanged, `types=0x40000000`, and a `logcat -T` bounded to after the
+fix went on showing **no** timeout of any kind.
+
+**So the flagship use case works.** A follower can watch somebody's glucose
+overnight, which it could not do yesterday and had never been tested for long
+enough to discover.
+
+And the rule that found it stands: *never conclude anything about overnight
+behaviour from a run shorter than the claim.* A 51-minute measurement and a
+2-hour one had both been read as proving the foreground service sufficient.
