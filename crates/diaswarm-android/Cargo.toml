@@ -46,3 +46,12 @@ strip = true
 lto = true
 codegen-units = 1
 opt-level = "z"
+
+# **IROH IS VENDORED AND PATCHED HERE.** Not a fork for its own sake: upstream
+# grows `pending_open_paths` geometrically until the allocator fails, which is
+# what has been killing the follower overnight. One deduplicating function,
+# taken verbatim from the maintainer-facing hot-fix in iroh#4390, both of whose
+# issues are still open. `vendor/iroh/DIASWARM-PATCH.md` has the measurements
+# and the instructions for removing this again.
+[patch.crates-io]
+iroh = { path = "../../vendor/iroh" }
