@@ -3073,3 +3073,41 @@ enough to discover.
 And the rule that found it stands: *never conclude anything about overnight
 behaviour from a run shorter than the claim.* A 51-minute measurement and a
 2-hour one had both been read as proving the foreground service sufficient.
+
+### 📏 Catch-up memory, measured properly — and my earlier ratio was wrong
+
+An earlier entry here put peak memory at "roughly 250 KB per operation caught
+up… 35x" and projected half a million operations as ruinous. **Measured against
+a control, that is not the shape of it.**
+
+| operations caught up | retained RSS |
+|---|---|
+| **0** — carries only its own subject, nothing to fetch | **42 MB** |
+| 1,042 | **881 MB** |
+| 1,962 | **835 MB** |
+| the long-running service, before its catch-up | 119 MB |
+| the same service, after | **400 MB** |
+
+**It is not proportional to operation count.** Half the operations cost slightly
+*more* memory. So the per-operation ratio was an artefact of dividing by a
+number that was not the driver, and the "200 GB for a year of Libre 3"
+projection that followed from it is withdrawn.
+
+**What is solid, and is still a problem:**
+
+* a peer that performs any substantial catch-up allocates **hundreds of
+  megabytes** — 400 to 880 MB across these runs;
+* **it is never released.** RSS sits flat at the high-water mark for as long as
+  the process lives. This is not a transient spike;
+* a peer that fetches *nothing* stays at **42 MB**, so the cost belongs entirely
+  to catch-up and not to being a peer.
+
+**Why it matters, in the form that is actually true:** the natural hosts for a
+volunteer carrier are a Pi, a NAS, an old laptop — 1 to 4 GB of RAM. One
+adoption of a single subject can take most of a gigabyte and keep it. Several
+subjects, or an unlucky restart, and the thing is a memory hog on a machine
+somebody donated. That is a deployment problem now, not a scaling problem later.
+
+*Not investigated further.* The variance — 400 MB in one run, 880 MB in another,
+for comparable work — means the driver has not been identified and per-operation
+arithmetic will keep producing wrong answers until it is.
