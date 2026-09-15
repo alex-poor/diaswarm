@@ -184,11 +184,15 @@ impl Swarm {
         // which can be automatically healed". A peer that syncs with one node
         // and never another is that last sentence exactly.
         //
-        // **ITS OWN FILE, NOT THE KEYS STORE.** `p2panda-store` builds its pool
-        // with `max_connections(1)` and no busy timeout, so two pools on one
-        // SQLite file is a writer-contention bug rather than an untidiness —
-        // the note on `Pooled` in `diaswarm-android` says so at length. A
-        // separate file costs nothing and shares nothing.
+        // **ITS OWN FILE, NOT THE KEYS STORE.** Two pools on one SQLite file is
+        // a writer-contention bug rather than an untidiness — the note on
+        // `Pooled` in `diaswarm-android` says so at length. A separate file
+        // costs nothing and shares nothing.
+        //
+        // That note used to justify this with `max_connections(1)`, which is
+        // not what `p2panda-store` does: its default is `min 3, max 16`, with
+        // no pragmas set. Each connection carries a page cache, so this file
+        // has a memory cost as well as a correctness one.
         //
         // Done here rather than as a parameter because `Swarm` already owns a
         // directory and there are 47 call sites that should not have to care.

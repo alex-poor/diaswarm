@@ -380,13 +380,22 @@ struct Pooled {
     node_id: String,
     /// **THE ONE KEYS STORE ON THIS PHONE, AND IT LIVES HERE FOR A REASON.**
     ///
-    /// `p2panda-store` builds its pool with `max_connections(1)` and sets no
-    /// busy timeout. Two independent pools on one SQLite file is therefore not
-    /// a tidiness question but a writer-contention bug: sealing and replication
-    /// would take turns failing, on a phone that may be driving an insulin
-    /// pump. So there is exactly one, shared by cloning the handle — and it
-    /// belongs to the pool because the pool is the long-lived object. Every
-    /// other keys handle is opened and closed within a pass.
+    /// Two independent pools on one SQLite file is not a tidiness question but
+    /// a writer-contention bug: sealing and replication would take turns
+    /// failing, on a phone that may be driving an insulin pump. So there is
+    /// exactly one, shared by cloning the handle — and it belongs to the pool
+    /// because the pool is the long-lived object. Every other keys handle is
+    /// opened and closed within a pass.
+    ///
+    /// **THIS USED TO SAY `p2panda-store` BUILDS ITS POOL WITH
+    /// `max_connections(1)`. IT DOES NOT.** `SqliteStoreBuilder::default()` is
+    /// `min_connections: 3, max_connections: 16`; only `memory()` sets one. It
+    /// also sets no pragmas at all — no `cache_size`, no `journal_mode`. So
+    /// this store and the address book between them hold up to thirty-two
+    /// connections, each an OS thread with its own page cache, and a heap
+    /// profile on 2026-09-15 put **85% of steady-state allocation in that page
+    /// cache** at about 14 MB a minute. The conclusion above survives the
+    /// correction; the reason given for it did not.
     ///
     /// `None` when the phone joined without a keys directory, which is what a
     /// build with the keys vault switched off looks like.
