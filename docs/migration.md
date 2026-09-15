@@ -3145,3 +3145,54 @@ time on configuration.
 
 **What it cannot show:** anything about pools larger than the active view, where
 this mitigation is unavailable by definition.
+
+### 🔴 Ayni leaks, and the low-memory killer takes it at ~8 hours
+
+**2026-09-15 15:21:51**, phone B, 482 minutes into the `specialUse` soak:
+
+```
+lowmemorykiller: Kill 'nz.diaswarm.ayni' (19707), uid 10253, oom_score_adj 200
+    to free 5249980kB rss, 15764kB swap;
+    reason: min watermark is breached and swap is low
+ActivityManager: Process nz.diaswarm.ayni (pid 19707) has died: prcp FGS
+```
+
+**5.2 GB resident**, on a device with 7.6 GB. A fresh process is **120 MB**. So
+it grew by a factor of forty over eight hours.
+
+#### This does not undo the `specialUse` fix — it is a different bug
+
+Worth being exact, because the claim made this morning was "the fix is proven"
+and it still is, for what it claimed:
+
+| | `dataSync` (yesterday) | `specialUse` (today) |
+|---|---|---|
+| cause of death | foreground-service **time limit** | **low-memory killer** |
+| timeout exceptions in log | `ForegroundServiceDidNotStopInTime` | **none, at 8 hours** |
+| after death | restarts **refused** — dead 220m until a human opened it | **restarted automatically**, `effective=NONE`, back in a second |
+| recovers alone | ❌ | ✅ |
+
+The foreground-service type was the right diagnosis and the right fix: no
+timeout fired in eight hours where the old build died at six. **The overnight
+test simply surfaced a second, independent bug underneath the first** — which is
+what happens when a thing is run for longer than it has ever been run before.
+
+#### But the flagship use case still does not work
+
+A follower that is killed every eight hours is better than one that dies at six
+and stays dead, and it is still not a thing somebody can rely on overnight. The
+severity is lower — it self-heals, and the app shows the *age* of a reading so a
+stale value never masquerades as current — but the honest statement is: **Ayni
+cannot yet watch through a night without being killed.**
+
+#### And it connects to the carrier measurement
+
+The laptop peer measurements recorded above — 42 MB with nothing to fetch,
+400–880 MB after a catch-up, never released — looked like retention that
+plateaued. Over eight hours on a phone it plainly does not plateau. **They are
+the same defect seen over different durations**, and the laptop numbers were
+taken over minutes rather than hours, which is why they read as a plateau.
+
+*Root cause not established.* What is known: it is not the foreground-service
+type, it is not catch-up size (measured: not proportional), and it grows for as
+long as the process lives.
