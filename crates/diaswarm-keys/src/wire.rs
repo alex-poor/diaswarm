@@ -193,6 +193,228 @@ pub async fn segments_tail(
     collect(entries)
 }
 
+/// What [`segments_covering`] was last asked, so the readers that ask it four
+/// times a refresh pay once.
+#[derive(PartialEq, Eq)]
+struct CacheKey {
+    author: VerifyingKey,
+    /// The log height. This is what makes the entry self-invalidating.
+    tip: u64,
+    from_epoch: i64,
+    tail_days: u64,
+}
+
+/// **BOUNDED TWICE, ON PURPOSE.** An unbounded cache is how this project has
+/// spent two nights already — `pending_open_paths` growing to gigabytes, and a
+/// `StringBuilder` that accumulated every record ever drained because the
+/// feature it belonged to was switched off.
+///
+/// A count alone is not a bound here. A `tail_days == 0` entry is the whole
+/// log, which is megabytes for a subject with a year of history and grows
+/// every day, so "four entries" could mean forty megabytes without anything
+/// looking wrong. The byte cap is the real limit; the count stops a lot of
+/// tiny windows accumulating.
+///
+/// Entries hold ciphertext, not plaintext or keys: the same bytes already on
+/// disk, for a window a caller is actively reading. Overshooting the cap costs
+/// a re-read, which is the thing this exists to avoid but is never wrong.
+const CACHE_ENTRIES: usize = 8;
+const CACHE_BYTES: usize = 24 * 1024 * 1024;
+
+fn entry_bytes(segments: &[Segment]) -> usize {
+    segments.iter().map(|s| s.ciphertext.len()).sum()
+}
+
+#[allow(clippy::type_complexity)]
+static SEGMENT_CACHE: std::sync::Mutex<Vec<(CacheKey, std::sync::Arc<Vec<Segment>>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn cache_get(key: &CacheKey) -> Option<Vec<Segment>> {
+    // A poisoned lock is not a reason to fail a read — the cache is an
+    // optimisation and the log is the truth. Clear it and carry on.
+    let mut guard = match SEGMENT_CACHE.lock() {
+        Ok(g) => g,
+        Err(poisoned) => {
+            let mut g = poisoned.into_inner();
+            g.clear();
+            g
+        }
+    };
+    let found = guard.iter().position(|(k, _)| k == key)?;
+    // Most-recently-used to the back, so eviction takes the coldest.
+    let entry = guard.remove(found);
+    let out = entry.1.as_ref().clone();
+    guard.push(entry);
+    Some(out)
+}
+
+fn cache_put(key: CacheKey, value: &[Segment]) {
+    let mut guard = match SEGMENT_CACHE.lock() {
+        Ok(g) => g,
+        Err(poisoned) => {
+            let mut g = poisoned.into_inner();
+            g.clear();
+            g
+        }
+    };
+    guard.retain(|(k, _)| k != &key);
+    // A single window larger than the whole budget is not worth evicting
+    // everything else for, and caching it would break the bound on its own.
+    if entry_bytes(value) > CACHE_BYTES {
+        return;
+    }
+    guard.push((key, std::sync::Arc::new(value.to_vec())));
+    while guard.len() > CACHE_ENTRIES
+        || guard.iter().map(|(_, v)| entry_bytes(v)).sum::<usize>() > CACHE_BYTES
+    {
+        // Never evict the entry just inserted: the caller is using it now, and
+        // dropping it would make a large window cost a re-read every time.
+        if guard.len() <= 1 {
+            break;
+        }
+        guard.remove(0);
+    }
+}
+
+/// Forget everything cached. For tests that want a cold read, and for any
+/// caller that has reason to believe the log was rewritten under it — pruning
+/// removes entries without moving the tip, which is the one thing the tip
+/// cannot notice.
+pub fn forget_cached_segments() {
+    if let Ok(mut g) = SEGMENT_CACHE.lock() {
+        g.clear();
+    }
+}
+
+/// The segments covering the newest `tail_days` epochs, and no more of the log
+/// than that needs.
+///
+/// **WHY THIS EXISTS: `segments_tail` FETCHES 20,000 OPERATIONS TO USE ABOUT A
+/// HUNDRED.** A follower wanting today asked for `tail_days * 320` entries
+/// capped at 20,000, and `AnyHeader::decode` runs an Ed25519 verification on
+/// every one of them before the caller throws away the epochs it did not want.
+/// `follow.rs` predicted the bill in its own comment — "the thing to revisit
+/// first if replication gets expensive" — and on 2026-09-17 it was paid: a
+/// profile of the follower put 96% of its asymmetric crypto under
+/// `Header<KeysArgs>::decode`, reached from the `keys*` readers, at 349 ms a
+/// read over a real 9,564-operation log. Four of those per refresh is most of
+/// a core.
+///
+/// So walk BACK from the tip in chunks and stop as soon as the wanted epochs
+/// are whole, rather than guessing a width in operations and over-fetching to
+/// be safe.
+///
+/// **THE STOPPING RULE IS "WE HAVE SEEN SOMETHING OLDER", NOT "WE HAVE ENOUGH
+/// EPOCHS".** Deltas, not supersets, are what gets published — `seal_delta` is
+/// what the publisher hands to [`publish`], and the merged day lives only on
+/// the subject's own disk — so one epoch is spread across every flush that
+/// touched it and a reader needs all of them. Stopping at the moment the
+/// oldest wanted epoch first appears would silently truncate that epoch to its
+/// newest few flushes. We are only done when an operation OLDER than the
+/// oldest wanted epoch has been seen, which proves nothing further back belongs
+/// to it.
+///
+/// Epochs are not assumed to be monotonic in seq_num: a re-drain can publish an
+/// older epoch late. Walking back until something older appears tolerates that
+/// where a binary search would not.
+pub async fn segments_covering(
+    store: &SqliteStore,
+    author: &VerifyingKey,
+    from_epoch: i64,
+    tail_days: u64,
+    chunk: u64,
+) -> Result<Vec<Segment>, Error> {
+    let chunk = chunk.max(1);
+
+    let heights = <SqliteStore as LogStore<
+        KeysOperation,
+        VerifyingKey,
+        LogId,
+        SeqNum,
+        Hash,
+    >>::get_log_heights(store, author, &[LOG_ID])
+    .await?;
+    let tip = heights.and_then(|h| h.get(&LOG_ID).copied()).unwrap_or(0) as u64;
+
+    // **FOUR READERS ASK THIS SAME QUESTION PER REFRESH.** The profile that
+    // started this put 216 samples under `keysProfile`, 200 under
+    // `keysTempTarget`, 45 under `keysGlucose` and 28 under `keysTreatments` —
+    // four separate JNI reads, each re-fetching and re-verifying the same
+    // window, because each wants one different field out of it.
+    //
+    // Keyed on the log TIP, so it cannot go stale: a tip that has not moved is
+    // a log that has not been appended to, and the answer cannot have changed.
+    // A new flush moves the tip and the entry is simply never hit again.
+    let key = CacheKey { author: *author, tip, from_epoch, tail_days };
+    if let Some(hit) = cache_get(&key) {
+        return Ok(hit);
+    }
+
+    // **`tail_days == 0` MEANS "EVERY EPOCH", AND IT IS THE EXPENSIVE CALLER,
+    // NOT THE CHEAP ONE.** This used to return here before the cache was even
+    // consulted, which is how the first version of this fix measured a 96×
+    // improvement on a bench and nothing at all on a phone: `keysProfile` and
+    // `keysTempTarget` — 416 of the 496 samples that started this — both ask
+    // for every epoch, because a profile is published only when it changes and
+    // a tail window would report "no profile" for somebody whose settings are
+    // simply stable. They took this early return and skipped both fixes.
+    //
+    // Reading the whole log is inherent to that question and is left alone.
+    // Being asked it four times per refresh is not, which is what the cache
+    // above is for: once per new flush instead of once per reader.
+    if tail_days == 0 {
+        let all = segments_from(store, author, from_epoch).await?;
+        cache_put(key, &all);
+        return Ok(all);
+    }
+
+    let mut collected: Vec<Segment> = Vec::new();
+    // `until` is inclusive of the entry at that seq; `after` is exclusive. We
+    // walk the window [lo, hi] downwards.
+    let mut hi = tip;
+    loop {
+        let lo = hi.saturating_sub(chunk.saturating_sub(1));
+        let after = if lo == 0 { None } else { Some((lo - 1) as SeqNum) };
+        let entries = <SqliteStore as LogStore<
+            KeysOperation,
+            VerifyingKey,
+            LogId,
+            SeqNum,
+            Hash,
+        >>::get_log_entries(store, author, &LOG_ID, after, Some(hi as SeqNum))
+        .await?;
+        let mut batch = collect(entries)?;
+        batch.append(&mut collected);
+        collected = batch;
+
+        // The epochs we would keep if we stopped now: the newest `tail_days`
+        // of those at or after `from_epoch`.
+        let mut epochs: Vec<i64> =
+            collected.iter().map(|s| s.epoch).filter(|e| *e >= from_epoch).collect();
+        epochs.sort_unstable();
+        epochs.dedup();
+        let oldest_wanted = epochs.iter().rev().take(tail_days as usize).next_back().copied();
+
+        let done = match oldest_wanted {
+            // Something strictly older than the oldest epoch we want is in
+            // hand, so that epoch cannot continue further back.
+            Some(oldest) => {
+                epochs.len() >= tail_days as usize
+                    && collected.iter().any(|s| s.epoch < oldest)
+            }
+            // Nothing at or after `from_epoch` yet — keep walking back only
+            // while there is log left, because there may be none at all.
+            None => false,
+        };
+        if done || lo == 0 {
+            break;
+        }
+        hi = lo - 1;
+    }
+    cache_put(key, &collected);
+    Ok(collected)
+}
+
 /// Every segment in a log from `from_epoch` onwards.
 ///
 /// Reads the whole log and filters, so it is linear in the log's length. Use

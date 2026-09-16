@@ -119,24 +119,42 @@ pub async fn read(
     tail_days: u64,
     from_epoch: i64,
 ) -> Result<(Vec<Record>, usize, crate::Skipped), String> {
-    // **ONE EPOCH IS MANY OPERATIONS, AND ONLY THE LAST ONE MATTERS.**
+    // **ONE EPOCH IS MANY OPERATIONS, AND A READER NEEDS ALL OF THEM.**
     //
-    // A subject publishes on every flush — every five minutes — and each flush
-    // re-seals the whole accumulated day, so the operations for one epoch are a
-    // sequence of supersets and the newest contains all of them. That breaks
-    // the invariant `segments_tail` was written under, which was "the last N
-    // entries are the last N days": at a five-minute cadence the last two
-    // entries are ten minutes of today.
+    // A subject publishes on every flush, so the operations for one epoch are
+    // spread across every drain that touched it. That breaks the invariant
+    // `segments_tail` was written under, which was "the last N entries are the
+    // last N days": at a per-minute cadence the last two entries are two
+    // minutes of today.
+    //
+    // **THIS PARAGRAPH USED TO SAY "ONLY THE LAST ONE MATTERS", AND IT WAS A
+    // FORTNIGHT OUT OF DATE.** It described flushes as re-sealing the whole
+    // accumulated day, so that the operations for an epoch were a sequence of
+    // supersets and the newest contained the rest. That was true, it was the
+    // bug `publishing_the_merged_day_costs_the_cadence` was written against —
+    // 23 MB for a 160 kB day — and it was fixed: `seal_delta` is what the
+    // publisher hands to `wire::publish` now, and the merged day never leaves
+    // the subject's own disk. Deltas do not contain each other. A reader that
+    // believed this comment and took only the newest operation per epoch would
+    // show a fraction of the day and no error, which is why it is corrected
+    // here rather than deleted.
     //
     // So the tail is asked for in *operations* rather than days — 288 flushes
     // to a day, plus slack for a re-drain — and then reduced by epoch.
     //
-    // The cost is fetching supersets that are then discarded. It is the price
-    // of a follower seeing today as it happens rather than after midnight, and
-    // it is the thing to revisit first if replication gets expensive.
+    // **THAT WIDTH USED TO BE A GUESS, AND THE GUESS WAS THE BILL.** It asked
+    // for `tail_days * 320` capped at 20,000 and discarded whatever it did not
+    // want, which cost an Ed25519 verification per operation fetched: 349 ms a
+    // read over a real 9,564-operation log, and 96% of the follower's
+    // asymmetric crypto on 2026-09-17. `segments_covering` walks back from the
+    // tip instead and stops when the wanted epochs are whole, so the width is
+    // discovered rather than assumed. The paragraph above is still why the
+    // question is asked in operations; it is no longer answered by guessing.
+    //
+    // The chunk is one flush-heavy day's worth. Too small and a quiet log
+    // costs several round trips; too large and we are back to over-fetching.
     let segments: Vec<Segment> = if tail_days > 0 {
-        let entries = tail_days.saturating_mul(320).min(20_000);
-        let tail = wire::segments_tail(store, subject, entries)
+        let tail = wire::segments_covering(store, subject, from_epoch, tail_days, 320)
             .await
             .map_err(|e| format!("segments {e}"))?;
         // **AND THEN THE NEWEST `tail_days` OF THEM.** Asking the log for 320

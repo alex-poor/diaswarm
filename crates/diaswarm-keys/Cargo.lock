@@ -455,6 +455,7 @@ name = "diaswarm-keys"
 version = "0.1.0"
 dependencies = [
  "diaswarm-core",
+ "ed25519-dalek",
  "p2panda-core",
  "p2panda-encryption",
  "p2panda-store",

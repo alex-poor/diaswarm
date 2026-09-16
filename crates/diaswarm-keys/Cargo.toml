@@ -39,4 +39,8 @@ thiserror = "2"
 
 [dev-dependencies]
 x25519-dalek = { version = "2", features = ["static_secrets"] }
+# Only so `tailcost` can price Ed25519 verification on its own, which is the
+# part of a header decode a fix would remove. Same version p2panda-core already
+# pulls, so it unifies rather than adding a second curve implementation.
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 
