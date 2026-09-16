@@ -562,10 +562,47 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * day as it happens, and there is no reason to withhold it once re-sealing
      * is safe — but note nothing publishes these bytes anywhere yet.
      */
+    /**
+     * Rotate the group secret once a day, so a scoped grant can mean a day.
+     *
+     * **WITHOUT THIS, EVERY WINDOW IS ALL OR NOTHING.** `Vault::grant_since`
+     * filters the bundle by when each secret was minted, and secrets are minted
+     * per group operation. A subject that never rotates holds one secret
+     * covering everything — so "share the last 90 days" would hand over every
+     * day ever sealed, which is precisely the untruth D29 exists to prevent.
+     * The cadence here is the finest window any grant can offer.
+     *
+     * **DAILY, BECAUSE THE FLAGSHIP NEEDS A DAY.** D11's parent needs 24 hours.
+     * D26 measured the cost of a year of it: a 366-secret bundle and a 0.76 ms
+     * welcome. There is no performance argument for coarser, and finer would
+     * buy precision nothing asks for at the price of a control message every
+     * reader must receive.
+     *
+     * **BEFORE SEALING, NOT AFTER.** Rotating first means today's records are
+     * sealed under today's secret. Rotating after would leave a day split
+     * across two, so a window boundary would land mid-day.
+     */
+    private fun rotateIfDue(shadow: Long) {
+        if (shadow == 0L) return
+        val last = preferences.get(SwarmLongKey.KeysLastRotated)
+        val now = System.currentTimeMillis()
+        // Not "is it a new calendar day": a phone that opens once a week should
+        // rotate once, not six times catching up on boundaries nobody sealed in.
+        if (last != 0L && now - last < 24 * 60 * 60 * 1000L) return
+        val held = SwarmNative.keysRotate(shadow)
+        if (held < 0) {
+            aapsLogger.error(LTag.CORE, "swarm: rotating the group secret failed with $held")
+            return
+        }
+        preferences.put(SwarmLongKey.KeysLastRotated, now)
+        aapsLogger.info(LTag.CORE, "swarm: rotated the group secret — holding $held")
+    }
+
     private fun sealPending() {
         val vault = SwarmPaths.vault(context, this::class.java).absolutePath
         val identity = SwarmPaths.identity(context).absolutePath
         val shadow = openShadow()
+        rotateIfDue(shadow)
         ensureEachDayCarriesItsProfile()
         // **NOTHING ACCUMULATES WHILE THE SHADOW IS OFF, AND IT USED TO.**
         //

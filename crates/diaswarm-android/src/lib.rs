@@ -1676,7 +1676,38 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSubject<'a>(
     to_jstring(env, v.vault.signer().to_hex())
 }
 
-/// Seal a batch into one epoch, read it back, and say whether it survived.
+/// Rotate the group secret, so what is sealed next is under a new one.
+///
+/// **THIS IS WHAT MAKES A SCOPED GRANT MEAN ANYTHING.** `Vault::grant_since`
+/// filters the bundle by when each secret was minted, and secrets are minted per
+/// group operation. A subject that never rotates holds one secret covering
+/// everything, so every `since` hands over all of it or none — "share the last
+/// 90 days" is a scheduling feature before it is a UI one, and the cadence sets
+/// the finest window any grant can express.
+///
+/// Rotate daily and windows land to the day. D26 measured the cost: a year of
+/// daily rotation is a 366-secret bundle and a 0.76 ms welcome, so there is no
+/// performance argument for doing it less often.
+///
+/// ⚠️ **IT IS NOT FREE ON THE WIRE.** Each rotation is a group operation and a
+/// control message every reader must receive, so this belongs on a schedule the
+/// caller owns rather than on every pass.
+///
+/// Returns the number of secrets held after rotating, or a negative code.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRotate(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlong {
+    let Some(v) = keys_vault(handle) else { return -1 };
+    match v.vault.rotate() {
+        Ok(_) => v.vault.secrets() as jlong,
+        Err(_) => -2,
+    }
+}
+
+/// Seal a batch into one epoch, read it back, and say whether it survived./// Seal a batch into one epoch, read it back, and say whether it survived.
 ///
 /// **THE READ-BACK IS THE WHOLE POINT.** Sealing returns a count of what it was
 /// given, which is a statement about the argument and not about the vault. This

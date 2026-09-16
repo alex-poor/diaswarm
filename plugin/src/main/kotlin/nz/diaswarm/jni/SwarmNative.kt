@@ -219,6 +219,19 @@ object SwarmNative {
      */
     external fun swarmNetworkChanged(handle: Long): Long
 
+    /**
+     * Rotate the group secret. Returns the number of secrets held, or negative.
+     *
+     * **THE CADENCE SETS THE FINEST SCOPE ANY GRANT CAN EXPRESS.** A scoped
+     * grant filters secrets by when they were minted, so a subject that never
+     * rotates holds one secret covering everything and every window hands over
+     * all of it or none. Daily rotation makes "the last 90 days" mean 90 days.
+     *
+     * ⚠️ Each rotation is a control message every reader must receive, so it
+     * belongs on a schedule, not on every pass.
+     */
+    external fun keysRotate(handle: Long): Long
+
     /** Leave the pool and release the handle. Idempotent on 0. */
     external fun swarmLeave(handle: Long)
 

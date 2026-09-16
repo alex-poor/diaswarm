@@ -15,6 +15,17 @@ enum class SwarmLongKey(
     override val exportable: Boolean = true
 ) : LongNonPreferenceKey {
 
+    /**
+     * When the group secret was last rotated, in epoch millis. 0 means never.
+     *
+     * **THE CADENCE IS WHAT A SCOPED GRANT CAN EXPRESS.** Secrets are minted
+     * per group operation, and a scoped grant filters them by age — so without
+     * a rotation schedule "the last 90 days" can only mean everything or
+     * nothing. Daily makes a window land to the day; D26 measured a year of it
+     * at a 366-secret bundle and a 0.76 ms welcome.
+     */
+    KeysLastRotated("swarm_keys_last_rotated", 0L),
+
     GlucoseValueLastSyncedId("swarm_glucose_value_last_synced_id", 0L),
     BolusLastSyncedId("swarm_bolus_last_synced_id", 0L),
     CarbsLastSyncedId("swarm_carbs_last_synced_id", 0L),
