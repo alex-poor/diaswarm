@@ -186,3 +186,42 @@ reversed what 15 minutes concluded. **Every time the window has been extended
 here, the answer has changed** — the page cache, the burst, the residual, and
 now this. The handover's rule was "read hours, not samples"; the sharper version
 is **read several hours, and check the thirds before believing the slope.**
+
+
+---
+
+## 5. At four hours: real, sustained, and **stepwise** — so a slope is the wrong summary
+
+118 samples, 234 minutes:
+
+```
+alloc (live)  +0.485 MB/min   SE 0.037   t = 13.0     89 -> 182 MB
+free          +0.095 MB/min              t =  6.1     19 ->  52 MB
+```
+
+The leak is not in doubt any more. **But the quarters are the finding:**
+
+| window | slope | t | mean alloc |
+|---|---|---|---|
+| t+0…56 | +0.18 | 0.8 | 103 MB |
+| t+58…114 | **+0.91** | 5.7 | 121 MB |
+| t+116…172 | **−0.75** | −3.0 | 146 MB |
+| t+174…234 | −0.45 | −1.4 | 196 MB |
+
+🔴 **TWO QUARTERS HAVE NEGATIVE SLOPES WHILE THE LEVEL NEARLY DOUBLES.** That is
+not noise — Q3 is t = −3.0. The process **steps up between windows and decays
+within them**: sawtooth, not a ramp.
+
+**So growth is driven by discrete events, not continuous accumulation.** That is
+exactly the shape a per-pass allocation makes — and the suspect from the
+heapprofd profile is a `broadcast::channel(1024)` ring re-created per sync pass.
+A continuous leak would not decay inside a window.
+
+⚠️ **AND IT MEANS EVERY SLOPE IN THIS DOCUMENT, INCLUDING THE GOOD ONES, IS A
+SUMMARY OF SOMETHING THAT IS NOT A LINE.** Fitting a line to a staircase gives a
+number that is true on average and describes no moment. Quote **89 → 182 MB over
+four hours**, and the staircase; not a rate.
+
+At the overall fit the process reaches ~264 MB at 6 h — comfortably inside what
+Android allows before the foreground service is killed anyway, which is why this
+is a defect and not an outage.
