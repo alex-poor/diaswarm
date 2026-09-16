@@ -19,6 +19,7 @@
 //! not exist.
 
 mod agp;
+mod demo;
 mod fhir;
 mod nightscout;
 mod report;
@@ -235,6 +236,33 @@ enum Cmd {
         /// no scripts, no network, prints to a sheet of paper.
         #[arg(long, value_name = "FILE")]
         report: Option<PathBuf>,
+    },
+
+    /// Publish invented glucose, so somebody can actually try a follower.
+    ///
+    /// **A FOLLOWER ALONE DOES NOTHING**, and the only real subject is the AAPS
+    /// add-on, which is deliberately not distributed. Without this, anyone
+    /// evaluating Ayni installs it, sees "Not following anyone yet", and stops.
+    ///
+    /// 🔴 The readings are invented. Granting a stranger access to a real
+    /// person's vault to save them a setup step is not a trade worth making.
+    Demo {
+        /// Grant a follower, so they can read what this publishes.
+        ///
+        /// Repeatable. Take the invite from Ayni's menu → "Show my invite", or
+        /// pass the bare keys identity `diaswarm-peer identity` prints — either
+        /// is accepted, because a person should not have to know which of two
+        /// formats their app handed them. A bare identity opens the keys vault
+        /// only; it carries no core reader key to wrap for.
+        #[arg(long = "grant", value_name = "INVITE")]
+        grant: Vec<String>,
+        /// Seconds between publishes.
+        #[arg(long, default_value_t = 60, value_name = "SECS")]
+        every: u64,
+        /// Minutes of history to seal on the first pass, so a follower has a
+        /// graph rather than a single dot.
+        #[arg(long, default_value_t = 360, value_name = "N")]
+        backfill: u64,
     },
 
     /// Nightscout `entries.json` and `treatments.json`, for the ecosystem.
@@ -729,6 +757,228 @@ async fn cmd_nightscout(dir: &Path, subject: &str, days: u64, out: &Path) -> Res
     Ok(())
 }
 
+/// Load the demo's core identity, minting one the first time.
+fn demo_identity(path: &Path) -> Result<diaswarm_core::vault::Identity> {
+    if let Ok(raw) = std::fs::read(path) {
+        let bytes: [u8; 64] = raw
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("{} is not a 64-byte identity", path.display()))?;
+        return Ok(diaswarm_core::vault::Identity::from_bytes(&bytes));
+    }
+    let id = diaswarm_core::vault::Identity::generate();
+    std::fs::write(path, id.to_bytes()).with_context(|| format!("writing {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(id)
+}
+
+/// The key the demo's keys vault publishes under, minted on first use.
+fn demo_keys_key(path: &Path) -> Result<p2panda_core::SigningKey> {
+    match std::fs::read(path) {
+        Ok(b) if b.len() == 32 => {
+            Ok(p2panda_core::SigningKey::from_bytes(&b.try_into().expect("checked length")))
+        }
+        _ => {
+            let k = p2panda_core::SigningKey::generate();
+            std::fs::write(path, k.as_bytes())
+                .with_context(|| format!("writing {}", path.display()))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            }
+            Ok(k)
+        }
+    }
+}
+
+/// Run a synthetic subject anyone can follow, and print its invite.
+///
+/// **THE OTHER HALF OF A FOLLOWER-ONLY APP.** Ayni ships alone; the publisher is
+/// an AndroidAPS add-on that is deliberately not distributed, so somebody
+/// evaluating the follower has nothing to point it at. This is a subject they
+/// can point it at, over the real pool, with invented readings.
+///
+/// It is an ordinary subject in every respect that matters: its own identity,
+/// its own two vaults, sealed and granted and announced through the same code
+/// the phone runs. The only thing that is not real is the glucose.
+#[allow(clippy::too_many_arguments)]
+async fn cmd_demo(
+    dir: &Path,
+    swarm: &Swarm,
+    store: &SqliteStore,
+    replicator: &KeysReplicator,
+    grants: &[String],
+    every: u64,
+    backfill: u64,
+    adopt: usize,
+    carry: &[String],
+) -> Result<()> {
+    let identity = demo_identity(&demo::identity_path(dir))?;
+    let subject_hex = diaswarm_core::vault::hex(&identity.enc_public());
+    let signing = demo_keys_key(&demo::keys_signing_path(dir))?;
+    let keys_subject = signing.verifying_key().to_hex();
+
+    // THE CORE VAULT, UNDER THE SUBJECT'S OWN NAME — see `demo::core_dir`.
+    let core_root = demo::core_dir(dir, &subject_hex);
+    let core = if core_root.join("meta.json").exists() {
+        diaswarm_core::vault::Vault::open(&core_root)
+            .map_err(|e| anyhow::anyhow!("opening the demo core vault: {e:?}"))?
+    } else {
+        diaswarm_core::vault::Vault::create(&core_root, &identity, PEER_OFFSET_MS)
+            .map_err(|e| anyhow::anyhow!("creating the demo core vault: {e:?}"))?
+    };
+
+    let keys_root = demo::keys_dir(dir);
+    std::fs::create_dir_all(&keys_root)
+        .with_context(|| format!("creating {}", keys_root.display()))?;
+    let mut keys = diaswarm_keys::Vault::open(&keys_root, PEER_OFFSET_MS, &signing)
+        .map_err(|e| anyhow::anyhow!("opening the demo keys vault: {e}"))?;
+
+    // **THE CREATE OPERATION IS PUBLISHED, NOT DISCARDED.** A control log that
+    // starts at the first grant cannot show that nothing came before it, and
+    // this is the exact shape of the bug that blacked out a follower for an
+    // afternoon: a `Message` returned and dropped.
+    if !keys.is_welcomed() {
+        let rng = diaswarm_keys::Rng::default();
+        let (manager, _bundle) = diaswarm_keys::Vault::key_bundle(&rng)
+            .map_err(|e| anyhow::anyhow!("generating the demo's identity: {e}"))?;
+        let create = keys
+            .create(manager)
+            .map_err(|e| anyhow::anyhow!("creating the demo's group: {e}"))?;
+        let op = diaswarm_keys::wire::publish_control(store, &signing, &create)
+            .await
+            .map_err(|e| anyhow::anyhow!("publishing the demo's identity: {e}"))?;
+        replicator.broadcast(&keys_subject, op);
+        eprintln!("created the demo subject in {}", keys_root.display());
+    }
+
+    // **CARRY BEFORE GRANTING.** `broadcast` only reaches topics this peer is
+    // already associated with, so a welcome published before the first
+    // `carry_share` goes into the store and onto no wire. It would still arrive
+    // eventually, on the next pass — but "the reviewer's first grant is the one
+    // that takes a minute to land" is exactly the impression this command
+    // exists to avoid.
+    let _ = diaswarm_net::share::carry_share(swarm, replicator, dir, &keys_subject, adopt, carry)
+        .await;
+
+    for invite in grants {
+        match demo::grant_reader(
+            &core,
+            &identity,
+            &mut keys,
+            store,
+            &signing,
+            Some(replicator),
+            invite,
+        )
+        .await
+        {
+            Ok(tag) => eprintln!("granted {tag}"),
+            // One bad invite on the command line must not stop the demo: the
+            // other grants are still good and the subject is still worth
+            // running. Say which one, and carry on.
+            Err(e) => eprintln!("could not grant {}: {e}", short(invite)),
+        }
+    }
+
+    let endpoint = swarm.node_id().await?;
+    // Both shapes, because the people this command exists for are the ones most
+    // likely to be on a published build older than this tree — see
+    // `demo::invites_for`.
+    let (named, older) = demo::invites_for(&core, &keys, &endpoint)?;
+    println!("{named}");
+    println!("{older}");
+    eprintln!();
+    eprintln!("The first line is the demo subject's invite. Scan or paste it into Ayni.");
+    eprintln!("The second is the same subject without the name, for a follower too old");
+    eprintln!("to read the first — it shows hex where \"{}\" would be.", demo::HANDLE);
+    eprintln!();
+    eprintln!("  core vault  {}", core_root.display());
+    eprintln!("  keys vault  {keys_subject}");
+    eprintln!("  readings    invented here, one a minute — nobody's real glucose");
+    eprintln!();
+    eprintln!("To let a follower in, pass the invite their own app shows:");
+    eprintln!("  diaswarm-peer {} demo --grant diaswarm:…", dir.display());
+    eprintln!();
+
+    // **FIRST PASS BACKFILLS SO THE FOLLOWER HAS A GRAPH, NOT A DOT.** A
+    // reviewer who follows this and sees one reading cannot tell a working app
+    // from a broken one.
+    let mut minutes = backfill.max(1) as i64;
+    let mut last_epoch: Option<i64> = None;
+    loop {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let epoch = demo::epoch_of(now, PEER_OFFSET_MS);
+
+        // **ROTATE ON THE DAY BOUNDARY, LIKE THE PHONE DOES.** A demo that
+        // never rotated would be a demo of a vault whose forward secrecy has
+        // never been exercised — and rotation is where this project's worst
+        // bug lived.
+        if last_epoch.is_some_and(|e| e != epoch) {
+            match keys.rotate() {
+                Ok(message) => {
+                    match diaswarm_keys::wire::publish_control(store, &signing, &message).await {
+                        Ok(op) => {
+                            replicator.broadcast(&keys_subject, op);
+                            eprintln!("rotated into epoch {epoch}");
+                        }
+                        // ROTATED BUT UNANNOUNCED IS THE DANGEROUS STATE, so it
+                        // is named rather than swallowed: readers cannot open
+                        // anything sealed from here until this lands.
+                        Err(e) => eprintln!("⚠️  rotated but could not announce it: {e}"),
+                    }
+                }
+                Err(e) => eprintln!("could not rotate: {e}"),
+            }
+            let _ = core.rotate();
+        }
+        last_epoch = Some(epoch);
+
+        match demo::publish_window(
+            &core,
+            &mut keys,
+            store,
+            &signing,
+            Some(replicator),
+            now,
+            minutes,
+            PEER_OFFSET_MS,
+        )
+        .await
+        {
+            Ok(n) => eprintln!(
+                "sealed {n} reading(s) up to {} mg/dL, epoch {epoch}, carrying {}",
+                demo::reading_at(now).round(),
+                replicator.carried().len()
+            ),
+            Err(e) => eprintln!("could not publish: {e}"),
+        }
+
+        // Afterwards, only the minutes since the last pass — enough to cover the
+        // sleep, and at least one so a pass is never a no-op.
+        minutes = ((every / 60).max(1) + 1) as i64;
+
+        let _ = swarm.tick().await;
+        let _ =
+            diaswarm_net::share::carry_share(swarm, replicator, dir, &keys_subject, adopt, carry)
+                .await;
+        tokio::time::sleep(Duration::from_secs(every.max(5))).await;
+    }
+}
+
+/// An invite, short enough to name in an error without filling the terminal.
+fn short(s: &str) -> String {
+    let s = s.trim();
+    if s.len() <= 32 { s.to_string() } else { format!("{}…", &s[..32]) }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -767,6 +1017,9 @@ async fn main() -> Result<()> {
         Some(Cmd::Nightscout { subject, days, out }) => {
             return cmd_nightscout(&dir, &subject, days, &out).await;
         }
+        // **NOT HERE.** Demo needs the swarm, the store and the replicator, so
+        // it runs after they are built rather than duplicating the setup.
+        Some(Cmd::Demo { .. }) => {}
         None => {}
     }
 
@@ -806,6 +1059,14 @@ async fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("opening {url}: {e}"))?;
     let (endpoint, gossip) = swarm.parts();
     let replicator = KeysReplicator::keys(store.clone(), endpoint, gossip).await?;
+
+    // **THE DEMO SUBJECT, ONCE THERE IS A NETWORK TO PUBLISH ONTO.**
+    if let Some(Cmd::Demo { grant, every, backfill }) = &args.cmd {
+        return cmd_demo(
+            &dir, &swarm, &store, &replicator, grant, *every, *backfill, args.adopt, &args.carry,
+        )
+        .await;
+    }
 
     let node = swarm.node_id().await?;
     if args.json {
