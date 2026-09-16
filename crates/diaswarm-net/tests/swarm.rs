@@ -144,10 +144,34 @@ async fn a_follower_survives_the_subject_leaving_without_a_second_address() {
     // While everyone is up: the relay takes a copy because the pool says it
     // should, and the follower — which only ever refreshes what it follows —
     // hears the relay announce holding it.
+    // **THIS TEST IS FLAKY, AND THE CEILING IS A GUESS UNTIL THE NEXT FAILURE
+    // REPORTS ITS NUMBER.** It failed six CI runs up to 2026-09-17, always here,
+    // always "the relay never took a copy".
+    //
+    // What is measured. Convergence is 4-12s on an idle machine, over twelve
+    // runs. A failing run exhausts the whole budget instead. So a failure is not
+    // a near miss against a tight ceiling — there was 3-10x of headroom — and it
+    // is either genuinely wedged or dramatically slower under contention. Those
+    // two have NOT been told apart: doing it means running under load, and the
+    // machine this was written on had somebody working on it.
+    //
+    // What is NOT the cause, both checked rather than assumed. It is not the
+    // vendored iroh: two of the six failures predate that commit, and timing the
+    // test with and against the patch gives the same convergence. It is not a
+    // topic mismatch: the D31 probe below prints all three peers agreeing on
+    // pool and depth in the failures too.
+    //
+    // So 180 is insurance, not a fix. If failures are contention, a slow run now
+    // reports "converged in 75s" and passes, and that number is the finding. If
+    // it is wedged, the only cost is a failure taking longer to arrive. Either
+    // way the next failure answers the question, which the old cliff could not:
+    // six failures got attributed to the wrong commit precisely because no run
+    // said how long it had taken.
     let relay_id = relay.node_id().await.unwrap();
     let mut relay_holds = false;
     let mut heard_relay = false;
-    for _ in 0..40 {
+    let began = std::time::Instant::now();
+    for _ in 0..180 {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let _ = publisher.tick().await;
         if let Ok((_, took)) = relay.tick_and_adopt(4).await {
@@ -174,6 +198,11 @@ async fn a_follower_survives_the_subject_leaving_without_a_second_address() {
         follower.tick().await.map(|t| (t.pool, t.depth)).unwrap_or((0, 99)),
     );
     println!("  D31 probe — publisher {dp:?}  relay {dr:?}  follower {df:?}  (pool, depth)");
+    // ALWAYS PRINTED, PASS OR FAIL. 29s is normal here and 40s used to be a
+    // failure; without the number in the log there is no way to tell a run that
+    // was close from one that was comfortable, which is how six failures got
+    // attributed to the wrong commit.
+    println!("  converged in {:.1}s", began.elapsed().as_secs_f64());
     assert!(relay_holds, "the relay never took a copy, so there is nothing to fall back to");
     assert!(
         heard_relay,
