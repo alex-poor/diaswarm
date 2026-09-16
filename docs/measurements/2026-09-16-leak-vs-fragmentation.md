@@ -1,5 +1,9 @@
 # The leak is three things, and PSS was adding them up — 2026-09-16 16:45
 
+> ⚠️ **Revised 16:55**: §3 originally reported a live leak of +0.235 MB/min.
+> That slope sits inside its own error bars and is withdrawn — see the table
+> there. What survives is arena growth and in-heap free growth.
+
 78 minutes on phone B (Ayni 0.1.7, fresh process, past warm-up), sampling
 `Heap Alloc`, `Heap Size`, `Heap Free` **and the sqlx connection count**
 together for the first time. That last column is what makes this readable.
@@ -55,25 +59,50 @@ schedule. The measurement that separates them is `malloc_info` or a forced
 `mallopt(M_PURGE)` — neither has been run. Do not call it fragmentation in a
 commit message until one of them has.
 
-## 3. And there is still a real live leak, about half what was claimed
+## 3. 🔴 A LIVE LEAK IS NOT PROVEN BY THIS RUN — AND I NEARLY CLAIMED ONE
 
-**+0.235 MB/min of live, outstanding allocation with the pool pinned at its
-ceiling.** Nothing about connections explains it. This is where the p2panda
-broadcast rings from
-`2026-09-16-residual-leak-profiled.md` live.
+The first version of this note reported "+0.235 MB/min of live allocation" as a
+finding. **It does not survive its own error bars**, and this project has
+withdrawn five claims for exactly that.
 
-🔴 **THE +0.52 MB/min FIGURE IS WITHDRAWN.** It came from native-heap **PSS**,
-which sums live allocation, in-heap free space, and pool churn into one number
-and cannot tell them apart. The honest live-leak rate on this run is
-**+0.24 MB/min**, under half of it. The arena figure, +0.51, is the one that
-matches the old PSS curves — which is the coincidence that made the wrong number
-look right.
+Every trend above, tested against the scatter it sits in:
+
+| | slope | SE | t | R² | resid sd | verdict |
+|---|---|---|---|---|---|---|
+| `free` (in-heap) | +0.281 | 0.049 | **5.7** | 0.58 | 5.9 MB | solid |
+| `size` (arena) | +0.514 | 0.147 | **3.5** | 0.35 | 17.5 MB | solid |
+| `alloc` (live) | +0.235 | 0.150 | **1.6** | 0.10 | 17.9 MB | **not separated from noise** |
+
+`alloc` scatters by ±18 MB between consecutive samples — and the entire
+78-minute trend is +18 MB. The trend is the same size as the noise. Watched
+directly: `alloc` read 119.6 MB at 16:37 and 103.9 MB ten minutes later, a
+16 MB *fall*.
+
+**So the honest statement is: live allocation may be growing at ~0.24 MB/min, or
+may be flat. 78 minutes cannot tell.** Separating it needs roughly 2.5× the
+spread in time — about **4–5 hours** at this cadence. The sampler is still
+running.
+
+The per-connection coefficients in §1 *do* survive (`alloc` +1.70 MB, t=3.0;
+`free` −2.81 MB, t=−12.8), which is why the cap conclusion stands while the
+trend conclusion does not. `size` per connection (−1.12, t=−2.1) does not
+survive either and is not claimed.
+
+### What is withdrawn
+
+🔴 **+0.52 MB/min as a "residual leak" is withdrawn.** It came from native-heap
+**PSS**, which sums live allocation, in-heap free space and pool churn into one
+number. The part of it that is real and measurable is **arena growth, +0.51
+MB/min** — which is why the old PSS curves matched it so well, and exactly why
+the wrong number looked right for so long.
 
 | claim | status |
 |---|---|
-| +0.7 MB/min residual | withdrawn 2026-09-16 (pool confound) |
-| +0.52 MB/min residual | **withdrawn now** (PSS conflates three things) |
-| +0.24 MB/min live, +0.51 arena | current, 78 min, pool-controlled |
+| +0.7 MB/min residual | withdrawn (pool confound) |
+| +0.52 MB/min residual leak | **withdrawn** — it was arena growth, not live growth |
+| +0.51 MB/min arena growth | holds, t=3.5 |
+| +0.28 MB/min in-heap free growth | holds, t=5.7 |
+| any live leak | **unproven at 78 min**; needs 4–5 h |
 
 ⚠️ **RATES ARE NOT PORTABLE BETWEEN RUNS.** The heapprofd capture measured
 +2.0 MB/min on a 6.5-hour-old process under `block_client`. This is +0.24 on an
@@ -85,8 +114,10 @@ rate". Quote the conditions or do not quote the number.
 ## What this changes
 
 1. **Stop looking at SQLite.** The cap holds, measured per connection.
-2. **The live leak is the rings**, and it is ~0.24 MB/min, not 0.52.
-3. **Half the footprint problem is not a leak at all** and would not be fixed by
-   fixing the rings — it needs the allocator question answered first.
-4. **Always log the pool count.** Three of this project's withdrawn memory
-   claims came from a number that silently contained it.
+2. **The growth that is actually proven is the arena, not live objects.** Fixing
+   the p2panda rings might change nothing about the footprint curve — they are
+   live allocations, and live allocation growth is not yet demonstrated.
+3. **Do not quote a live-leak rate until the long run is in.** 4–5 hours.
+4. **Always log the pool count**, and **always publish the error bars.** Three of
+   this project's withdrawn claims came from a number that silently contained the
+   pool; this one nearly came from a slope inside its own noise.
