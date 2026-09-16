@@ -128,6 +128,33 @@ peer carries by default. **Neither surfaces what is held.**
 **Today.** The protocol can do this as of 2026-09-16 (`grant_since` +
 `scoped_grant.rs`). There is no application.
 
+🔴 **A CLINICIAN WILL NOT TAKE CSV, AND WILL NOT TAKE RAW READINGS.** Settled
+2026-09-16 by the owner, and it changes the shape of this role rather than its
+scope:
+
+* **The format is FHIR**, which [feasibility §10.7](feasibility.md) already
+  decided and this section had not connected to — `Observation` for glucose,
+  `MedicationAdministration` for insulin, `NutritionIntake` for carbs, computed
+  **at the reader**. CSV is the *researcher's* format, not this one.
+* **The view is a DIGEST, not a record dump.** The CGM here is a Libre 3
+  reporting every minute — ~1,586 readings a day, so a 90-day window is ~143,000
+  observations. Handing that to a clinician is handing them nothing. What a
+  diabetes clinic actually reads is the AGP-style summary: time in range, time
+  above and below, mean glucose, GMI, variability, and how much of the window
+  the sensor was actually active for.
+
+⚠️ **THIS CONTRADICTS [roles.md](roles.md)'s "the clinician and researcher
+screens are the same screen at different scopes".** They are not. A clinician
+wants a *summary in a clinical format*; a researcher wants *rows*. Those differ
+in shape, not scope, and the sequencing argument that followed from it — build
+the clinician first because the general case gets the specific one wrong —
+survives, but for a different reason than the one written down.
+
+⚠️ **Unverified and to be checked before building:** HL7 publishes a CGM
+implementation guide covering exactly these summary observations. Read the
+current version rather than inventing a profile; the point of choosing FHIR is
+that an institution can ingest it, which a hand-rolled shape defeats.
+
 **Changes.** This is D29 step 3 and it is a product, not a change. What it needs
 from the roles work:
 

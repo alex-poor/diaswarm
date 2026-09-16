@@ -246,9 +246,16 @@ between a withdrawal that leaves somebody a day and one that leaves them a life.
    between what is decided and what is shipped.
 2. **Every reading role is also a carrying role**, so there is no "viewer" UI to
    design that does not also answer "and here is what you hold".
-3. **The clinician and researcher screens are the same screen at different
-   scopes** — both are "a window, honestly described" — which is why D29 made
+3. ~~**The clinician and researcher screens are the same screen at different
+   scopes**~~ — both are "a window, honestly described" — which is why D29 made
    the grant model the blocker rather than the UI.
+
+   🔴 **WITHDRAWN 2026-09-16.** They differ in *shape*, not only scope: a
+   clinician wants an AGP-style **digest in FHIR** (§10.7), a researcher wants
+   rows. A Libre 3 reports every minute, so a 90-day window is ~143,000
+   readings — a "scope" difference cannot turn that into something a clinic
+   reads. The conclusion that follows — build the clinician first — still
+   holds, but because the two are different products, not one generalised.
 4. **Three of the five roles can be served by one desktop application.** Subject,
    carrier and clinician differ in what they are granted, not in what they run.
    That is the argument for D29 step 1 being one product.
