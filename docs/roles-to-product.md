@@ -204,8 +204,9 @@ specific one gets it wrong.
    built**: `diaswarm-peer summary --subject … --days 90 --patient …` emits an
    HL7 CGM v1.0.0 FHIR bundle — times in ranges, mean glucose, GMI, CV, days of
    wear, sensor active — and states the window it actually holds plus whether
-   the period meets the consensus minimum. ⚠️ **Not yet validated against a
-   FHIR server**, which is the condition §10.7 sets for reopening the
+   the period meets the consensus minimum. ✅ **Validates against HL7's own validator**
+   (`validator_cli` + `hl7.fhir.uv.cgm#1.0.0`, R4): 0 errors. ⚠️ Still not a
+   *server* accepting it, which is the condition §10.7 sets for reopening the
    interoperability verdict.
 
 ⚠️ **1–3 are built but not installed on either phone**, and the loop phone's
