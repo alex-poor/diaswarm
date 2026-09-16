@@ -894,8 +894,15 @@ the record claimed.
 
 ### D31 · A rendezvous that depends on a number nobody agrees on
 
-**Open, recorded 2026-09-14, not yet fixed.** Found by asking what happens with
+**Fixed 2026-09-14, recorded the same day.** Found by asking what happens with
 a million subjects and two million carriers — and then observed at three.
+`pool::subject_topic` hashes the subject key and nothing else, so the rendezvous
+has no parameters to disagree about. Both phones and the desktop peer run it.
+
+⚠️ **The old bucket topic is still carried alongside**, deliberately, in
+`share.rs` — a peer left on the old one would simply never meet the new ones,
+which looks identical to a quiet network. It goes when no peer remains on it,
+and `pushed` drops from 2 to 1 when it does.
 
 #### 1. The bug: a rendezvous that depends on a locally-guessed number
 
