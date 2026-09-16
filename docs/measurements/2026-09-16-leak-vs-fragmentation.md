@@ -1,8 +1,12 @@
 # The leak is three things, and PSS was adding them up — 2026-09-16 16:45
 
 > ⚠️ **Revised 16:55**: §3 originally reported a live leak of +0.235 MB/min.
-> That slope sits inside its own error bars and is withdrawn — see the table
-> there. What survives is arena growth and in-heap free growth.
+> That slope sits inside its own error bars and was withdrawn.
+>
+> 🔴 **REVISED AGAIN 18:30, AND THIS TIME THE LEAK IS REAL.** At 188 minutes the
+> live trend is unmistakable and the "mostly free space" reading was an artifact
+> of a window dominated by the quietest hour of the run. **Read §4 first; §1–3
+> are kept for the record and §3's conclusion is wrong.**
 
 78 minutes on phone B (Ayni 0.1.7, fresh process, past warm-up), sampling
 `Heap Alloc`, `Heap Size`, `Heap Free` **and the sqlx connection count**
@@ -121,3 +125,64 @@ rate". Quote the conditions or do not quote the number.
 4. **Always log the pool count**, and **always publish the error bars.** Three of
    this project's withdrawn claims came from a number that silently contained the
    pool; this one nearly came from a slope inside its own noise.
+
+
+---
+
+## 4. 🔴 At three hours: the leak is LIVE, and §3 was measured over the quiet hour
+
+95 samples, 188 minutes, same process. With the pool pinned at its ceiling of 20
+(75 of the 95 samples):
+
+```
+alloc (live)     +0.436 MB/min   SE 0.059   t = 7.4    SIGNIFICANT
+size  (arena)    +0.565 MB/min   SE 0.054   t = 10.5   SIGNIFICANT
+free  (in-heap)  +0.117 MB/min   SE 0.015   t = 7.8    small
+```
+
+**Live allocation went 89.1 → 173.1 MB. It nearly doubled in three hours, and
+in-heap free space did not grow with it** — 36 MB at the start, 43 MB at the
+end. So the growth is objects that are still reachable, not an arena filling
+with holes.
+
+### Why the 78-minute answer was wrong
+
+The rate is not constant. In thirds:
+
+| window | slope | t |
+|---|---|---|
+| t+0…60 | +0.13 MB/min | 0.7 |
+| t+62…122 | **+1.32** MB/min | 6.8 |
+| t+124…188 | **+0.95** MB/min | 2.9 |
+
+**§3 analysed a window that was mostly the first third** — the one hour in the
+run where almost nothing accumulated. That is why the slope looked like noise
+and why free space looked dominant: it was, *in that hour*. Extending the run
+did not refine the estimate, it reversed the conclusion.
+
+⚠️ **SO DO NOT QUOTE A SINGLE MB/min FOR THIS.** The rate varies by a factor of
+ten depending on the window. What is defensible is the total and the shape:
+**live allocation roughly doubled over three hours, free space did not.** A
+slope is a summary of a curve that is not a line.
+
+### What this restores and what stays dead
+
+| claim | status |
+|---|---|
+| +0.7 MB/min residual | still withdrawn — pool confound, and a PSS number |
+| +0.52 MB/min | **closer to right than the correction that replaced it.** It was PSS, so it still conflated three things, but its magnitude was not the error |
+| "live growth is unproven" (§3) | 🔴 **withdrawn** — it was 78 minutes over the quiet hour |
+| "more than half the growth is in-heap free space" (§2) | 🔴 **withdrawn** — free space is ~20% of it over three hours |
+| the SQLite cap works, +1.70 MB/connection | **holds** — §1 is unaffected |
+
+**The p2panda broadcast rings are back to being the prime suspect**, and for the
+right reason this time: the growth is live, retained allocation, which is what
+heapprofd attributed to them.
+
+### The lesson, which this project keeps paying for
+
+Three hours reversed what 78 minutes concluded, and 78 minutes had already
+reversed what 15 minutes concluded. **Every time the window has been extended
+here, the answer has changed** — the page cache, the burst, the residual, and
+now this. The handover's rule was "read hours, not samples"; the sharper version
+is **read several hours, and check the thirds before believing the slope.**
