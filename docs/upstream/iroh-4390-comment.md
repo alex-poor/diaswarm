@@ -1,7 +1,9 @@
 <!-- DRAFT, NOT POSTED. Prepared 2026-09-16 for iroh#4390.
      Outward-facing under the repository owner's name, so it waits for them.
-     If the residual-leak profile (see handover §1) finds anything relevant,
-     fold it in before posting. -->
+     Updated 2026-09-16 14:40: the 13-minute patch claim is replaced by the
+     6-hour soak, and the residual drift is now attributed away from iroh
+     (an unpatched build leaks at the same rate) -- so nothing here asks
+     maintainers to account for a leak that is ours. -->
 
 Third platform, with a symbolised Android stack and a measurement of the
 doubling itself — in case it helps this off the backlog.
@@ -58,9 +60,30 @@ the path-id cap. Anyone trying to reproduce on a desktop may find it easier by
 forcing interface changes than by waiting.
 
 **We are running @cbenhagen's hot-fix from this thread** (dedup + cap at 64),
-vendored, and it is holding: native heap flat at ~87 MB at t+13m where the
-unpatched build was at 200 MB by t+6m. We'll report back with a longer run,
-since short windows have misled us on this more than once.
+vendored, and it held for a **six-hour soak** — no bursts at all, where the
+unpatched build on the same phone was at 348 MB by t+15m, 416 MB by t+54m and
+then killed:
+
+```
+unpatched   348 MB at t+15m, 416 MB at t+54m (+127 MB in one minute), killed
+patched     263 MB at t+6h,  no burst of any kind
+```
+
+To be clear about what that does *not* say: the patched build still drifts
+**+0.5 MB/min**, but that drift is **not this bug**. We have a second phone
+running an unpatched build that drifts at the same rate, so it is our own code,
+and we mention it only so the number is not read against the fix.
+
+For anyone else measuring: our `Native Heap` figures above come from `dumpsys
+meminfo`'s App Summary, which reports **Pss** and therefore excludes pages
+swapped into zram — on our device the allocator's outstanding total is roughly
+double the PSS figure. The comparison is still apples to apples, but the
+absolute numbers understate.
+
+**So from our side the hot-fix is the fix**, and the open question is a
+maintainer decision rather than a fourth patch: #4398 and #4414 were closed by
+their own authors (one for want of "a clearer review path"), and #4522 is open
+with conflicts and no review.
 
 Happy to supply the raw perfetto trace or re-run with different instrumentation
 if that's useful.
