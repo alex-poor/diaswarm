@@ -3049,23 +3049,12 @@ pub fn seal_checked(
         skipped.lost()
     )
 }
-
-/// Join a subject's group from a control log somebody else replicated to us.
+/// Join a subject's group using a welcome that has already replicated.
 ///
-/// **ONE IDENTITY, SEVERAL VAULTS — WHICH IS WHY THIS TAKES TWO DIRECTORIES.**
-/// A `Vault` holds exactly one group state, so following three people means
-/// three vaults. But the bundle this device published — the one each subject
-/// granted against — belongs to *one* key manager, in this device's own vault.
-/// A joined vault that minted its own would be a different member to the one
-/// that was granted, and would read nothing while looking perfectly healthy: no
-/// error, no crash, an empty graph. So `own_dir` supplies the identity and
-/// `joined_dir` holds the group.
-///
-/// **AND THE READER FINDS ITS OWN WELCOME BY TRYING.** Nothing in a control
-/// message says in clear who it is for — a grant that announced its recipient
-/// would undo [D13](../../docs/decisions.md) — so every message in the log is
-/// offered to `join` and the one that opens is ours. `join` refuses anything
-/// that does not actually welcome us, which is what makes trying safe.
+/// **A WRAPPER NOW, AND DELIBERATELY THIN.** The logic moved to
+/// `diaswarm_keys::follow` so the desktop peer can read what it was granted
+/// without a second copy of the rule that decides which segments a reader is
+/// shown. This crate keeps the blocking signature the JNI calls with.
 pub fn join_subject(
     own_dir: &Path,
     joined_dir: &Path,
@@ -3076,63 +3065,18 @@ pub fn join_subject(
     purpose: &str,
     offset_ms: i64,
 ) -> Result<(diaswarm_keys::Vault, p2panda_core::VerifyingKey), String> {
-    // **ONE FIELD, BOTH KEYS.** Taking the author and the bundle separately let
-    // a caller pair one subject's log with another's bundle — a mismatch that
-    // produces no error, just a reader that never finds a welcome. They arrive
-    // together in the invite and they stay together here.
-    let identity =
-        diaswarm_keys::decode_identity(keys_hex).map_err(|e| format!("identity {e}"))?;
-    let subject = &identity.signer;
-    let subject_bundle = identity.bundle.clone();
-
-    // The identity this device published, not a fresh one.
-    let own = diaswarm_keys::Vault::open(own_dir, offset_ms, signing)
-        .map_err(|e| format!("own vault {e}"))?;
-    let manager = own.manager_state().map_err(|e| format!("own identity {e}"))?;
-    drop(own);
-
-    let control = runtime
-        .block_on(diaswarm_keys::wire::control_from(store, subject, None))
-        .map_err(|e| format!("control log {e}"))?;
-    if control.is_empty() {
-        return Err("no grant has arrived yet".to_string());
-    }
-
-    let registry = diaswarm_keys::Vault::registry(&[(
-        diaswarm_keys::group::GrantTag::own(subject),
-        subject_bundle.clone(),
-    )])
-    .map_err(|e| format!("registry {e}"))?;
-
-    for message in &control {
-        let Ok(mut candidate) = diaswarm_keys::Vault::open(joined_dir, offset_ms, signing) else {
-            continue;
-        };
-        if candidate
-            .join(manager.clone(), registry.clone(), &subject_bundle, purpose, message)
-            .is_ok()
-        {
-            return Ok((candidate, *subject));
-        }
-    }
-    Err(format!("none of the {} control messages welcome us", control.len()))
+    runtime.block_on(diaswarm_keys::follow::join(
+        own_dir, joined_dir, store, signing, keys_hex, purpose, offset_ms,
+    ))
 }
 
-/// What a joined vault can open, as NDJSON.
+/// What a joined vault can open, as NDJSON, with the counts that say how much
+/// it could not.
 ///
-/// **SEGMENTS COME FROM THE LOG, NOT A DIRECTORY.** A follower's arrive as
-/// operation bodies over `p2panda-net` and never touch the filesystem, which is
-/// the whole shape of D26 — so this reads them out of the store rather than
-/// calling `read_from`. What it cannot open it counts; a short answer must
-/// never be a silent one.
-///
-/// **`tail_days` IS THE FLAGSHIP'S PARAMETER, AND 0 IS NOT.** A parent needs 24
-/// hours (D11), and `segments_tail` answers that by sequence number so the
-/// store does the skipping — measured flat in `diaswarm-keys/tests/wire.rs` as
-/// the log grows. `segments_from` reads the whole log and filters, which is
-/// linear in everything the subject ever sealed: the right primitive for a
-/// research export and the wrong one for a follower refreshing every two
-/// minutes. Passing 0 asks for that linear read deliberately.
+/// **A WRAPPER NOW** — see `diaswarm_keys::follow::read`, which owns the tail
+/// arithmetic, the dedup and the "unreadable is access control working"
+/// distinction. NDJSON is assembled here because it is this crate's wire format
+/// to Kotlin and not something a shared reader should know about.
 pub fn read_followed(
     vault: &diaswarm_keys::Vault,
     store: &diaswarm_keys::SqliteStore,
@@ -3141,86 +3085,14 @@ pub fn read_followed(
     tail_days: u64,
     from_epoch: i64,
 ) -> Result<(String, usize, usize), String> {
-    // **ONE EPOCH IS MANY OPERATIONS, AND ONLY THE LAST ONE MATTERS.**
-    //
-    // A subject publishes on every flush — every five minutes — and each flush
-    // re-seals the whole accumulated day, so the operations for one epoch are a
-    // sequence of supersets and the newest contains all of them. That breaks
-    // the invariant `segments_tail` was written under, which was "the last N
-    // entries are the last N days": at a five-minute cadence the last two
-    // entries are ten minutes of today.
-    //
-    // So the tail is asked for in *operations* rather than days — 288 flushes
-    // to a day, plus slack for a re-drain — and then reduced to one segment per
-    // epoch, keeping the last, which is the complete one.
-    //
-    // The cost is fetching supersets that are then discarded. It is the price
-    // of a follower seeing today as it happens rather than after midnight, and
-    // it is the thing to revisit first if replication gets expensive.
-    let segments: Vec<diaswarm_keys::Segment> = if tail_days > 0 {
-        let entries = tail_days.saturating_mul(320).min(20_000);
-        let tail = runtime
-            .block_on(diaswarm_keys::wire::segments_tail(store, subject, entries))
-            .map_err(|e| format!("segments {e}"))?;
-        // **AND THEN THE NEWEST `tail_days` OF THEM.** Asking the log for 320
-        // operations a day is how many entries to *fetch*; it says nothing
-        // about how many days those entries cover, and on a quiet log they
-        // cover far more. A follower asking for one day must get one day —
-        // `a_tail_read_returns_the_newest_days_and_no_others` caught this
-        // returning thirty.
-        let run: Vec<diaswarm_keys::Segment> =
-            tail.into_iter().filter(|s| s.epoch >= from_epoch).collect();
-        // Keep every segment belonging to the newest `tail_days` epochs.
-        let epochs = epochs_of(&run);
-        let keep: std::collections::HashSet<i64> =
-            epochs.iter().rev().take(tail_days as usize).copied().collect();
-        run.into_iter().filter(|s| keep.contains(&s.epoch)).collect()
-    } else {
-        runtime
-            .block_on(diaswarm_keys::wire::segments_from(store, subject, from_epoch))
-            .map_err(|e| format!("segments {e}"))?
-    };
-
+    let (records, opened, unreadable) =
+        runtime.block_on(diaswarm_keys::follow::read(vault, store, subject, tail_days, from_epoch))?;
     let mut out = String::new();
-    let mut opened = 0usize;
-    let mut unreadable = 0usize;
-    // **DEDUPED, BECAUSE A RE-DRAIN REPUBLISHES.** Deltas do not normally
-    // overlap, but a subject that re-reads its whole database seals the same
-    // records again, and a follower must not show a reading twice.
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for segment in &segments {
-        match vault.open_segment(segment) {
-            Ok((records, bad)) => {
-                opened += 1;
-                unreadable += bad;
-                for record in records {
-                    let line = record.to_canonical_json();
-                    if seen.insert(line.clone()) {
-                        out.push_str(&line);
-                        out.push('\n');
-                    }
-                }
-            }
-            // NOT AN ERROR. A segment sealed before this reader was granted, or
-            // after it was revoked, is access control working.
-            Err(_) => unreadable += 1,
-        }
+    for record in &records {
+        out.push_str(&record.to_canonical_json());
+        out.push('\n');
     }
     Ok((out, opened, unreadable))
-}
-
-/// The distinct epochs a run of segments covers, newest last.
-///
-/// **ONE EPOCH IS MANY SEGMENTS AND THEY ALL COUNT.** Each publish carries only
-/// the records added since the last one, so a day is the concatenation of its
-/// segments rather than the last of them. An earlier version kept only the
-/// newest per epoch, which was right when each publish carried the whole day
-/// and silently discards 99% of it now.
-fn epochs_of(segments: &[diaswarm_keys::Segment]) -> Vec<i64> {
-    let mut seen: Vec<i64> = segments.iter().map(|s| s.epoch).collect();
-    seen.sort_unstable();
-    seen.dedup();
-    seen
 }
 
 /// Join if we have not yet, then read everything we can from `from_epoch`.

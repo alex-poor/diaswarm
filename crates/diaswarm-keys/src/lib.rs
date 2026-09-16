@@ -58,6 +58,11 @@
 //! not.
 
 pub mod auth;
+/// Joining somebody else's group and reading what they granted you.
+///
+/// Lifted out of `diaswarm-android` so the desktop peer can read too, rather
+/// than carrying a second copy of the rule that decides what a reader is shown.
+pub mod follow;
 pub mod group;
 pub mod wire;
 

@@ -18,7 +18,7 @@
 //! new grant semantics; the research gateway needs time-scoped grants and does
 //! not exist.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -93,6 +93,10 @@ struct Args {
     #[arg(long)]
     json: bool,
 
+    /// What to do instead of carrying. Omit to run the carrier loop.
+    #[command(subcommand)]
+    cmd: Option<Cmd>,
+
     /// Print the last N sync events each pass.
     ///
     /// **THE DIAGNOSTIC THAT TOOK A DAY TO BUILD FOR THE PHONES AND WAS NOT
@@ -104,6 +108,56 @@ struct Args {
     /// the numbers printed said which of those it was.
     #[arg(long, default_value_t = 0, value_name = "N")]
     events: usize,
+}
+
+
+/// The things this peer does that are not "hold a share and wait".
+///
+/// **THE DEFAULT IS STILL THE CARRIER LOOP**, with no subcommand, because that
+/// is what is already running under systemd and in people's shell history.
+/// Adding a subcommand must not change what `diaswarm-peer --carry X` does.
+///
+/// This is D29 step 1: the desktop stops being only a carrier and becomes a
+/// reader for yourself and your family. It needs no new grant semantics — the
+/// reading rule is `diaswarm_keys::follow`, the same one the phones use.
+#[derive(clap::Subcommand, Debug)]
+enum Cmd {
+    /// Print the identity a subject grants, to paste into "Share with someone".
+    ///
+    /// Creates this peer's encryption identity on first use and publishes it to
+    /// the local control log, which replicates the next time the carrier loop
+    /// runs. **Nothing is readable until a subject grants this string.**
+    Identity,
+
+    /// Read what a subject has granted this peer.
+    ///
+    /// Reads what has already replicated into `keys.sqlite`; it does not go on
+    /// the network, so run the carrier loop if nothing is arriving.
+    Read {
+        /// The subject's identity, from their invite — not their 64-hex key.
+        #[arg(long, value_name = "IDENTITY-HEX")]
+        subject: String,
+        /// Only the newest N days. 0 reads everything, which is linear in the
+        /// subject's whole history.
+        #[arg(long, default_value_t = 1, value_name = "N")]
+        days: u64,
+        /// One JSON object per record instead of a summary.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Write what a subject has granted this peer to a CSV file.
+    Export {
+        /// The subject's identity, from their invite — not their 64-hex key.
+        #[arg(long, value_name = "IDENTITY-HEX")]
+        subject: String,
+        /// Where to write. `-` writes to stdout.
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        /// Only the newest N days. 0 exports everything.
+        #[arg(long, default_value_t = 0, value_name = "N")]
+        days: u64,
+    },
 }
 
 /// Operations actually in the store for the subjects this peer carries.
@@ -182,6 +236,209 @@ fn human(bytes: u64) -> String {
     if i == 0 { format!("{bytes} B") } else { format!("{v:.1} {}", U[i]) }
 }
 
+
+/// Where this peer's encryption identity lives.
+///
+/// **SEPARATE FROM `node.key`, AND DELIBERATELY.** The node key is how the
+/// network ranks and finds this peer; the keys identity is what subjects grant
+/// against. D13 keeps a grant log that names nobody, and reusing one key for
+/// both would tie "who carries" to "who reads" in exactly the way the design
+/// spends effort avoiding.
+fn keys_identity_key(dir: &Path) -> Result<p2panda_core::SigningKey> {
+    let path = dir.join("keys-identity.key");
+    match std::fs::read(&path) {
+        Ok(b) if b.len() == 32 => {
+            Ok(p2panda_core::SigningKey::from_bytes(&b.try_into().expect("checked length")))
+        }
+        _ => {
+            let k = p2panda_core::SigningKey::generate();
+            std::fs::write(&path, k.as_bytes())
+                .with_context(|| format!("writing {}", path.display()))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            }
+            Ok(k)
+        }
+    }
+}
+
+/// **UTC, AND IT BARELY MATTERS HERE.** The offset decides how a vault buckets
+/// its *own* sealing into days. A reader opens segments the subject already
+/// stamped, so this only affects how a local export would group them, and a
+/// carrier has no business asserting the subject's timezone.
+const PEER_OFFSET_MS: i64 = 0;
+
+fn own_vault_dir(dir: &Path) -> PathBuf {
+    dir.join("keys-vault")
+}
+
+/// Create this peer's encryption identity if it has none, and print it.
+async fn cmd_identity(dir: &Path) -> Result<()> {
+    let signing = keys_identity_key(dir)?;
+    let own = own_vault_dir(dir);
+    std::fs::create_dir_all(&own).with_context(|| format!("creating {}", own.display()))?;
+    let url = format!("sqlite://{}", dir.join("keys.sqlite").display());
+    let store = diaswarm_keys::open_bounded_store(&url)
+        .await
+        .map_err(|e| anyhow::anyhow!("opening {url}: {e}"))?;
+
+    let mut vault = diaswarm_keys::Vault::open(&own, PEER_OFFSET_MS, &signing)
+        .map_err(|e| anyhow::anyhow!("own vault: {e}"))?;
+
+    // No group on disk means this is the first open. Creating one generates the
+    // encryption identity and writes it out; a vault that came back without it
+    // would be a new member and every grant to it would be dead.
+    if !vault.is_welcomed() {
+        let rng = diaswarm_keys::Rng::default();
+        let (manager, _bundle) = diaswarm_keys::Vault::key_bundle(&rng)
+            .map_err(|e| anyhow::anyhow!("generating an identity: {e}"))?;
+        let create = vault.create(manager).map_err(|e| anyhow::anyhow!("create: {e}"))?;
+        // **PUBLISHED, NOT DISCARDED.** The control log is D13's grant log, and
+        // one that starts at the first grant cannot show that nothing came
+        // before it. It leaves here on the next carrier pass.
+        diaswarm_keys::wire::publish_control(&store, &signing, &create)
+            .await
+            .map_err(|e| anyhow::anyhow!("publishing the identity: {e}"))?;
+        eprintln!("created this peer's encryption identity in {}", own.display());
+    }
+
+    let identity = vault.identity().map_err(|e| anyhow::anyhow!("identity: {e}"))?;
+    let text = diaswarm_keys::encode_identity(&identity)
+        .map_err(|e| anyhow::anyhow!("encoding: {e}"))?;
+    println!("{text}");
+    eprintln!();
+    eprintln!("Paste that into the subject's Swarm sharing → \"Share with someone\".");
+    eprintln!("Nothing is readable until they do, and it replicates on the next carrier pass.");
+    Ok(())
+}
+
+/// Join if needed and read. Shared by `read` and `export` so they cannot differ.
+async fn granted_records(
+    dir: &Path,
+    subject_identity: &str,
+    days: u64,
+) -> Result<(Vec<diaswarm_core::Record>, usize, usize)> {
+    let signing = keys_identity_key(dir)?;
+    let own = own_vault_dir(dir);
+    if !own.join("group.cbor").exists() {
+        anyhow::bail!(
+            "this peer has no encryption identity yet — run `diaswarm-peer identity` first"
+        );
+    }
+    let url = format!("sqlite://{}", dir.join("keys.sqlite").display());
+    let store = diaswarm_keys::open_bounded_store(&url)
+        .await
+        .map_err(|e| anyhow::anyhow!("opening {url}: {e}"))?;
+
+    let decoded = diaswarm_keys::decode_identity(subject_identity)
+        .map_err(|e| anyhow::anyhow!("that is not a subject identity: {e}"))?;
+    let joined = dir.join("joined").join(decoded.signer.to_hex());
+    std::fs::create_dir_all(&joined)?;
+
+    // **JOIN ONCE.** `join` replaces the group state, so doing it on every read
+    // would throw away a secret bundle that took a replication round trip to
+    // get. An already-welcomed vault goes straight to reading.
+    let vault = match diaswarm_keys::Vault::open(&joined, PEER_OFFSET_MS, &signing) {
+        Ok(v) if v.is_welcomed() => v,
+        _ => {
+            let (v, _subject) = diaswarm_keys::follow::join(
+                &own, &joined, &store, &signing, subject_identity, "follow", PEER_OFFSET_MS,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            v
+        }
+    };
+
+    diaswarm_keys::follow::read(&vault, &store, &decoded.signer, days, i64::MIN)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+async fn cmd_read(dir: &Path, subject: &str, days: u64, json: bool) -> Result<()> {
+    let (records, opened, unreadable) = granted_records(dir, subject, days).await?;
+    if json {
+        for r in &records {
+            println!("{}", r.to_canonical_json());
+        }
+    } else {
+        let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
+        for r in &records {
+            *kinds.entry(r.kind()).or_default() += 1;
+        }
+        let span = match (records.first(), records.last()) {
+            (Some(a), Some(b)) => format!("{} … {}", a.t(), b.t()),
+            _ => "nothing".to_string(),
+        };
+        println!("{} record(s) over {span}", records.len());
+        for (k, n) in kinds {
+            println!("  {k:<16} {n}");
+        }
+        // **SAY WHAT COULD NOT BE OPENED.** A short answer must never be a
+        // silent one: segments sealed before this peer was granted, or after a
+        // rotation it was not told about, land here and look like nothing.
+        println!("segments: {opened} opened, {unreadable} not readable by this peer");
+    }
+    Ok(())
+}
+
+async fn cmd_export(dir: &Path, subject: &str, out: &Path, days: u64) -> Result<()> {
+    let (records, opened, unreadable) = granted_records(dir, subject, days).await?;
+
+    // **THE UNION OF WHAT ARRIVED, NOT A FIXED LIST.** A record is open by
+    // design, so a fixed header silently drops whatever a device started
+    // reporting last week — see `Record::fields`.
+    let mut columns: std::collections::BTreeSet<&str> = Default::default();
+    for r in &records {
+        for (k, _) in r.fields() {
+            columns.insert(k);
+        }
+    }
+    // `t` and `k` first; they are the two every record has.
+    let mut header: Vec<&str> = vec!["t", "k"];
+    header.extend(columns.iter().copied().filter(|c| *c != "t" && *c != "k"));
+
+    let mut csv = String::new();
+    csv.push_str(&header.join(","));
+    csv.push('\n');
+    for r in &records {
+        let row: Vec<String> = header
+            .iter()
+            .map(|c| match r.get(c) {
+                Some(v) => {
+                    let text = v.to_string();
+                    let text = text.trim_matches('"').to_string();
+                    if text.contains(',') || text.contains('"') {
+                        format!("\"{}\"", text.replace('"', "\"\""))
+                    } else {
+                        text
+                    }
+                }
+                None => String::new(),
+            })
+            .collect();
+        csv.push_str(&row.join(","));
+        csv.push('\n');
+    }
+
+    if out == Path::new("-") {
+        print!("{csv}");
+    } else {
+        std::fs::write(out, csv.as_bytes())
+            .with_context(|| format!("writing {}", out.display()))?;
+        eprintln!(
+            "{} record(s), {} column(s) → {}",
+            records.len(),
+            header.len(),
+            out.display()
+        );
+        eprintln!("segments: {opened} opened, {unreadable} not readable by this peer");
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -190,6 +447,21 @@ async fn main() -> Result<()> {
         None => default_dir()?,
     };
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+
+    // **THE SUBCOMMANDS RUN WITHOUT TOUCHING THE NETWORK.** They read what has
+    // already replicated into `keys.sqlite`. That keeps them fast, keeps them
+    // safe to run while the carrier loop is up in another process, and makes
+    // "nothing arrived" a separate problem from "I cannot open it".
+    match args.cmd {
+        Some(Cmd::Identity) => return cmd_identity(&dir).await,
+        Some(Cmd::Read { subject, days, json }) => {
+            return cmd_read(&dir, &subject, days, json).await;
+        }
+        Some(Cmd::Export { subject, out, days }) => {
+            return cmd_export(&dir, &subject, &out, days).await;
+        }
+        None => {}
+    }
 
     // The same node key file a phone uses, so a peer keeps the identity it had
     // across restarts. Everything that ranks peers ranks them by it, and a new
@@ -336,5 +608,97 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use diaswarm_core::{EPOCH_MS, Record};
+    use diaswarm_keys::{Vault, wire};
+
+    fn tmp(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "diaswarm-peertest-{tag}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// THE WHOLE POINT OF D29 STEP 1: A DESKTOP READS WHAT IT WAS GRANTED.
+    ///
+    /// **THIS IS THE PATH `cargo check` CANNOT SEE.** The reading rule is
+    /// tested in `diaswarm-keys`; what is only tested here is this binary's
+    /// wiring — that the identity it prints is the one a grant lands on, that
+    /// the joined vault goes in its own directory, and that an export names the
+    /// columns that actually arrived rather than a fixed list.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_peer_reads_and_exports_what_a_subject_granted_it() {
+        let dir = tmp("read");
+        let rng = diaswarm_keys::Rng::default();
+
+        // ---- the peer publishes an identity, exactly as `identity` does ----
+        cmd_identity(&dir).await.expect("identity");
+        let peer_signing = keys_identity_key(&dir).unwrap();
+        let peer_vault = Vault::open(&own_vault_dir(&dir), PEER_OFFSET_MS, &peer_signing).unwrap();
+        let peer_identity = peer_vault.identity().expect("peer identity");
+        drop(peer_vault);
+
+        // ---- a subject, sealing a day ----
+        let subject_key = p2panda_core::SigningKey::generate();
+        let subject_dir = tmp("subject");
+        let mut subject = Vault::open(&subject_dir, PEER_OFFSET_MS, &subject_key).unwrap();
+        let (mgr, subject_bundle) = Vault::key_bundle(&rng).unwrap();
+        let create = subject.create(mgr).unwrap();
+
+        // The peer's store is what replication would have filled.
+        let url = format!("sqlite://{}", dir.join("keys.sqlite").display());
+        let store = diaswarm_keys::open_bounded_store(&url).await.unwrap();
+        wire::publish_control(&store, &subject_key, &create).await.unwrap();
+
+        let epoch = 20_000i64;
+        let records = vec![
+            Record::new(epoch * EPOCH_MS + 60_000, "cgm").set("mgdl", Some(101.0.into())),
+            Record::new(epoch * EPOCH_MS + 120_000, "bolus").set("units", Some(1.5.into())),
+        ];
+        let segment = subject.seal(epoch, &records).unwrap();
+        wire::publish(&store, &subject_key, &segment).await.unwrap();
+
+        // ---- and granting the peer, by the string the peer printed ----
+        let (welcome, _tag) = subject.grant(peer_identity.bundle.clone(), "follow").unwrap();
+        wire::publish_control(&store, &subject_key, &welcome).await.unwrap();
+
+        let subject_identity_hex = diaswarm_keys::encode_identity(&diaswarm_keys::KeysIdentity {
+            signer: subject_key.verifying_key(),
+            bundle: subject_bundle,
+        })
+        .unwrap();
+
+        // ---- the claim ----
+        let (got, opened, unreadable) =
+            granted_records(&dir, &subject_identity_hex, 0).await.expect("read");
+        assert_eq!(unreadable, 0, "a freshly granted peer could not open {unreadable} segment(s)");
+        assert!(opened >= 1, "no segment was opened at all");
+        assert_eq!(got.len(), 2, "expected both records, got {}", got.len());
+        assert!(got.iter().any(|r| r.kind() == "cgm"), "the cgm record is missing");
+        assert!(got.iter().any(|r| r.kind() == "bolus"), "the bolus record is missing");
+
+        // ---- reading twice must not re-join and lose the secret bundle ----
+        let (again, _, _) = granted_records(&dir, &subject_identity_hex, 0).await.expect("reread");
+        assert_eq!(again.len(), 2, "the second read lost records — it probably re-joined");
+
+        // ---- and the export names the columns that arrived ----
+        let out = dir.join("export.csv");
+        cmd_export(&dir, &subject_identity_hex, &out, 0).await.expect("export");
+        let csv = std::fs::read_to_string(&out).unwrap();
+        let header = csv.lines().next().unwrap();
+        assert!(header.starts_with("t,k"), "header does not lead with t,k: {header}");
+        assert!(header.contains("mgdl"), "a column that arrived is missing: {header}");
+        assert!(header.contains("units"), "a column that arrived is missing: {header}");
+        assert_eq!(csv.lines().count(), 3, "expected a header and two rows:\n{csv}");
     }
 }

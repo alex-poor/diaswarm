@@ -20,6 +20,8 @@ path = "src/main.rs"
 [dependencies]
 diaswarm-net = { path = "../diaswarm-net" }
 diaswarm-keys = { path = "../diaswarm-keys" }
+# For `Record`, which is what a read hands back and an export writes out.
+diaswarm-core = { path = "../diaswarm-core" }
 p2panda-core = "=0.7.1"
 # For asking the store what it actually holds, rather than trusting a counter.
 p2panda-store = { version = "=0.7.1", features = ["macros"] }

@@ -935,6 +935,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "diaswarm-core",
  "diaswarm-keys",
  "diaswarm-net",
  "p2panda-core",

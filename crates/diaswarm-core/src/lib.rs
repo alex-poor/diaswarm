@@ -106,6 +106,16 @@ impl Record {
         self.0.get("k").and_then(Value::as_str).unwrap_or("")
     }
 
+    /// Every field this record carries, in canonical (sorted) order.
+    ///
+    /// **FOR EXPORTERS, WHICH CANNOT KNOW THE COLUMNS IN ADVANCE.** A record is
+    /// deliberately open — a device reports what it has — so anything writing a
+    /// table has to take the union of what actually arrived rather than a fixed
+    /// list that silently drops the field somebody added last week.
+    pub fn fields(&self) -> impl Iterator<Item = (&str, &Value)> {
+        self.0.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.0.get(key)
     }
