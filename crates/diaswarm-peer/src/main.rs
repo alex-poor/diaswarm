@@ -35,12 +35,15 @@ use p2panda_core::{Hash, VerifyingKey};
 use p2panda_store::logs::LogStore;
 use p2panda_store::SqliteStore;
 
+/// The default pass interval, overridable with `--pass-secs`.
+///
 /// How often a pass runs.
 ///
 /// **NOT A FRESHNESS KNOB.** Operations arrive by live push between passes
 /// (D21), so this is only how often the *share* is recomputed — how quickly
 /// this peer notices a subject it ought to be carrying. Freshness is measured
 /// elsewhere and is dominated by the sensor, not by this.
+#[allow(dead_code)]
 const PASS: Duration = Duration::from_secs(60);
 
 #[derive(Parser, Debug)]
@@ -102,6 +105,17 @@ struct Args {
     /// What to do instead of carrying. Omit to run the carrier loop.
     #[command(subcommand)]
     cmd: Option<Cmd>,
+
+    /// Seconds between passes. Default 60, which is what PASS has always been.
+    ///
+    /// **EXISTS TO TEST WHETHER MEMORY GROWTH SCALES WITH PASSES.** The
+    /// heapprofd profile put the leak in a per-topic broadcast ring that
+    /// `p2panda-net` re-creates for topics already subscribed; if that is right,
+    /// halving this halves the leak and the relationship is the proof. Changing
+    /// it does not change freshness — operations arrive by live push between
+    /// passes (D21).
+    #[arg(long, default_value_t = 60, value_name = "SECS")]
+    pass_secs: u64,
 
     /// Print the last N sync events each pass.
     ///
@@ -874,7 +888,7 @@ async fn main() -> Result<()> {
         // file somebody has to reason about; ^C and `systemctl stop` should
         // both end a pass cleanly rather than in the middle of one.
         tokio::select! {
-            _ = tokio::time::sleep(PASS) => {}
+            _ = tokio::time::sleep(Duration::from_secs(args.pass_secs)) => {}
             _ = tokio::signal::ctrl_c() => {
                 if !args.json {
                     println!("stopping — {} held, {} on disk", replicator.carried().len(), human(bytes));
