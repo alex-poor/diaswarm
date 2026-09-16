@@ -158,31 +158,78 @@ deltas with status.
 
 ## 3. Open, in the order I would take it
 
-1. **Profile the residual leak** (§1). The soak has already told us it exists;
-   more hours only refine the rate.
-2. **Install today's work.** Phone B first for Ayni, then the loop phone for the
-   plugin. **Rotation has never run on a device** — it fires once a day, so the
-   first real one is tomorrow.
-3. **Post the iroh comment.** Drafted at `docs/upstream/iroh-4390-comment.md`. Its
-   value is no longer "a third platform" but *"three PRs exist, none merged,
-   this needs a decision"*.
-4. **Two small gaps** from `roles-to-product.md`: the readers list does not say
-   what scope each reader got, and the withdrawal copy is still unwritten. The
-   true sentence is in `roles.md` — *"they lose today and keep every day that
-   already finished"*.
-5. **D29 step 1**, the desktop peer UI. Three of five roles differ only in what
-   they are granted, not in what they run.
-6. **D29 step 3**, the clinician gateway — honest for the first time, because
-   "90 days" can now mean 90 days.
+**Rewritten 2026-09-16 17:00.** Items 1–4 of the original list are closed; what
+follows is what is actually left.
+
+### Closed today
+
+| | |
+|---|---|
+| ~~Profile the residual leak~~ | done — and it turned out there may be no residual leak. See §3a. |
+| ~~Install today's work~~ | both phones. Loop verified running after. |
+| ~~Post the iroh comment~~ | **decided: not posting.** Draft kept as a record. |
+| ~~Readers' scope + withdrawal copy~~ | done, opened on a phone, and shortened because of what that showed. |
+
+### 1. D29 step 1 — the desktop peer UI
+
+**Unblocked, and the reason has nothing to do with clinicians.** D15 promises a
+subject stays readable while their phone sleeps because somebody else holds the
+bytes — and every holder today is a phone, subject to the doze and the ~6 h
+foreground-service kill that this week has spent its time measuring. **One
+mains-powered peer with a disk makes that promise structural rather than
+probabilistic.**
+
+It is a UI over crates that already exist, with no JNI, no NDK and no
+cross-compilation: `diaswarm-peer` already runs headless on the laptop. Three of
+five roles differ only in what they are granted, not in what they run.
+
+### 2. D29 step 3 — the clinician gateway
+
+🆕 **NEWLY UNBLOCKED, today.** D29 blocked this on time-scoped grants, quoting
+the seam comment *"a grant reaches back over everything, and cannot be asked not
+to."* `Vault::grant_since` plus daily rotation mean **"share the last 90 days"
+can now mean 90 days** — so the screen D29 refused to let anyone build is
+buildable and honest for the first time. Needs step 1 first; it is the same
+screen at a different scope.
+
+### 3. Prove the rotation fix on a device
+
+`9ebbf69` is installed and **has never had a successful rotation run through
+it.** The next one is ~15:34 on 2026-09-17. Watch for
+`swarm: rotated the group secret` on the loop phone and for the follower's
+`unreadable` count staying at 0. Until then the fix is tested only by
+`rotation_reaches_readers.rs`.
+
+### 4. Carried over from before today
+
+* `peer-v0.1.0` can be re-tagged now the `macos-13` runner is fixed — four of
+  five targets built last time.
+* **The four-phone redundancy test remains the largest untested claim**, and
+  there are two phones.
+
+---
+
+## 3a. The memory question, as it actually stands
+
+**Do not describe this as "a leak" without reading
+`docs/measurements/2026-09-16-leak-vs-fragmentation.md` first.**
+
+* ✅ The **SQLite cap works** — +1.70 MB live per connection against a 2 MB
+  ceiling, measured. Stop looking there.
+* ✅ The **arena grows** at +0.51 MB/min (t=3.5), and **in-heap free space** at
+  +0.28 (t=5.7). Both solid.
+* 🔴 **A live leak is NOT proven.** +0.24 MB/min at t=1.6 is inside its own
+  noise. Needs 4–5 h; a sampler has been running on phone B since 15:19.
+* 🔴 **Fragmentation vs lazy decommit is unresolved** — `am send-trim-memory` is
+  refused on a foreground service, so `malloc_info` is the remaining route.
+
+⚠️ **+0.7 and +0.52 MB/min are both withdrawn.** So is "there is a residual
+leak", pending the long run.
 
 **Not doing, deliberately:** deleting the legacy bucket-carry in `share.rs`.
 Establishing that no peer is still on the old topic costs more than the tidier
 counter is worth, and the failure mode is a silent partition on the pump phone's
 data path.
-
-**Also still open from before today:** `peer-v0.1.0` can be re-tagged now the
-`macos-13` runner is fixed (four of five targets built last time), and the
-four-phone redundancy test remains the largest untested claim.
 
 ---
 
