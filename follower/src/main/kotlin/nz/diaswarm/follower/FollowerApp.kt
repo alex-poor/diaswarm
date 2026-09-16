@@ -164,53 +164,61 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             }
             Spacer(Modifier.height(16.dp))
         }
-    }
 
-    if (showInvite) InviteDialog(Endpoint.invite(context)) { showInvite = false }
-    if (showPaste) PasteInviteDialog(
-        onFollow = { Invites.queue(context, it); Sync.now(context); tick++ },
-        onClose = { showPaste = false }
-    )
-    if (showCarrying) CarryingDialog(carrying, Prefs.carryingAt(context)) { showCarrying = false }
-    if (showPeople) PeopleSheet(
-        followed = followed,
-        onScan = { showPeople = false; onScan() },
-        onPaste = { showPeople = false; showPaste = true },
-        onShowInvite = { showPeople = false; Endpoint.expectOffer(); showInvite = true },
-        onChoose = { Prefs.setGraphSubject(context, it.key); tick++; showPeople = false },
-        onUnits = { Prefs.setMmol(context, !Prefs.mmol(context)); tick++ },
-        // The endpoint has to come back for this: see [Endpoint.restart].
-        onKeysVault = {
-            Prefs.setKeysVault(context, !Prefs.keysVault(context))
-            // Turning the vault off must take the keys-only mode with it, or
-            // the app would be left reading nothing at all.
-            if (!Prefs.keysVault(context)) Prefs.setKeysOnly(context, false)
-            Endpoint.restart(context)
-            tick++
-        },
-        keysVault = Prefs.keysVault(context),
-        onKeysOnly = { Prefs.setKeysOnly(context, !Prefs.keysOnly(context)); tick++ },
-        keysOnly = Prefs.keysOnly(context),
-        // Applied immediately rather than at next launch: a switch that takes
-        // effect later is the defect this app already had once.
-        onStayReachable = {
-            Prefs.setStayReachable(context, !Prefs.stayReachable(context))
-            // Applied now, not at next launch. Starting the service IS the
-            // setting — there is nothing else it does.
-            StayAwake.apply(context)
-            tick++
-        },
-        stayReachable = Prefs.stayReachable(context),
-        // Read every tick rather than remembered: the user grants this in
-        // Android's settings, outside this app, and comes back expecting the
-        // row to have noticed.
-        dozeExempt = StayAwake.exemptFromDoze(context),
-        onFixDoze = { StayAwake.ask(context) },
-        onBand = { Prefs.cycleBand(context); tick++ },
-        bandLabel = Prefs.bandLabel(context),
-        mmol = Prefs.mmol(context),
-        onClose = { showPeople = false }
-    )
+        // **INSIDE THE THEME, AND THIS IS NOT COSMETIC.** These used to sit
+        // after the `MaterialTheme` block closed, so every dialog rendered
+        // against Material's DEFAULT light scheme while the labels inside
+        // them are hardcoded near-white for a dark one. The result was
+        // white text on a white sheet: "Scan an invite", "Paste an invite",
+        // "Units" and the rest were all present, all tappable, and all
+        // invisible — the settings looked like an empty list titled
+        // "People you follow".
+        if (showInvite) InviteDialog(Endpoint.invite(context)) { showInvite = false }
+        if (showPaste) PasteInviteDialog(
+            onFollow = { Invites.queue(context, it); Sync.now(context); tick++ },
+            onClose = { showPaste = false }
+        )
+        if (showCarrying) CarryingDialog(carrying, Prefs.carryingAt(context)) { showCarrying = false }
+        if (showPeople) PeopleSheet(
+            followed = followed,
+            onScan = { showPeople = false; onScan() },
+            onPaste = { showPeople = false; showPaste = true },
+            onShowInvite = { showPeople = false; Endpoint.expectOffer(); showInvite = true },
+            onChoose = { Prefs.setGraphSubject(context, it.key); tick++; showPeople = false },
+            onUnits = { Prefs.setMmol(context, !Prefs.mmol(context)); tick++ },
+            // The endpoint has to come back for this: see [Endpoint.restart].
+            onKeysVault = {
+                Prefs.setKeysVault(context, !Prefs.keysVault(context))
+                // Turning the vault off must take the keys-only mode with it, or
+                // the app would be left reading nothing at all.
+                if (!Prefs.keysVault(context)) Prefs.setKeysOnly(context, false)
+                Endpoint.restart(context)
+                tick++
+            },
+            keysVault = Prefs.keysVault(context),
+            onKeysOnly = { Prefs.setKeysOnly(context, !Prefs.keysOnly(context)); tick++ },
+            keysOnly = Prefs.keysOnly(context),
+            // Applied immediately rather than at next launch: a switch that takes
+            // effect later is the defect this app already had once.
+            onStayReachable = {
+                Prefs.setStayReachable(context, !Prefs.stayReachable(context))
+                // Applied now, not at next launch. Starting the service IS the
+                // setting — there is nothing else it does.
+                StayAwake.apply(context)
+                tick++
+            },
+            stayReachable = Prefs.stayReachable(context),
+            // Read every tick rather than remembered: the user grants this in
+            // Android's settings, outside this app, and comes back expecting the
+            // row to have noticed.
+            dozeExempt = StayAwake.exemptFromDoze(context),
+            onFixDoze = { StayAwake.ask(context) },
+            onBand = { Prefs.cycleBand(context); tick++ },
+            bandLabel = Prefs.bandLabel(context),
+            mmol = Prefs.mmol(context),
+            onClose = { showPeople = false }
+        )
+    }
 }
 
 @Composable
