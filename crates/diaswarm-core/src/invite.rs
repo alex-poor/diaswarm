@@ -59,7 +59,7 @@ use crate::vault::{hex, unhex, VaultError};
 const PREFIX: &str = "diaswarm";
 /// The newest version this build *emits*, which is only reached when there is a
 /// bundle to carry. See [`Invite::encode`].
-const VERSION: &str = "3";
+const VERSION: &str = "4";
 pub const DEFAULT_PURPOSE: &str = "follow";
 
 /// Where a peer is reachable when it is not on your wifi.
@@ -109,6 +109,30 @@ pub struct Invite {
     /// a subject only publishes one once it actually has a keys vault to grant
     /// against.
     pub keys: String,
+    /// What the subject calls themselves, for a follower to show instead of hex.
+    ///
+    /// **A LABEL, NOT AN IDENTITY.** It is whatever the subject typed, carried
+    /// in the invite so a follower has something to show at the moment of
+    /// pairing — before which it would have nothing but sixteen hex characters.
+    /// The key is the identity; this is the name on the front of the folder.
+    ///
+    /// ⚠️ **SO IT IS SELF-ASSERTED AND MUST NEVER BE TRUSTED AS PROOF.** An
+    /// invite can be forwarded, and anyone can build one claiming any handle
+    /// over their own key. A follower that displays this without the person
+    /// having confirmed it at pairing time is a spoofing surface: "Mum" next to
+    /// a stranger's key. The rule is that a follower stores it **locally, once,
+    /// at pairing**, shows it thereafter, and lets the person change it —
+    /// exactly how a phone treats a contact name.
+    ///
+    /// ⚠️ **AND IT IS NEVER PUBLISHED.** It travels in the invite, which is
+    /// scanned or sent person to person, and stops at the follower's device.
+    /// Putting it on the swarm would attach a name to a subject key for every
+    /// carrier to see, which is precisely the social-graph leak
+    /// [D13](../../docs/decisions.md) exists to avoid.
+    ///
+    /// Empty means the subject did not set one, which is the normal case for
+    /// every invite issued before this field existed.
+    pub handle: String,
 }
 
 fn check_of(body: &str) -> String {
@@ -184,6 +208,7 @@ impl Invite {
             purpose: purpose.to_string(),
             relay,
             keys: String::new(),
+            handle: String::new(),
         })
     }
 
@@ -192,6 +217,38 @@ impl Invite {
     /// Separate from [`Invite::new_via`] rather than a parameter on it, because
     /// every existing caller wants the invite it already got and adding an
     /// argument would silently make all of them emit v3.
+    /// Attach the name the subject chose, for a follower to show.
+    ///
+    /// **BOUNDED, BECAUSE IT GOES IN A QR CODE AND ONTO A SMALL SCREEN.** Forty
+    /// characters is more than any name needs and little enough that the code
+    /// stays scannable; the alternative is an invite that will not photograph.
+    ///
+    /// **CONTROL CHARACTERS ARE REFUSED, INCLUDING THE BIDIRECTIONAL ONES.** A
+    /// handle is displayed next to a key, and an override character can make
+    /// what is drawn differ from what is stored — which is the one thing a
+    /// label sitting beside an identity must not do. Everything else is
+    /// allowed: names have accents, spaces and scripts this project cannot
+    /// enumerate.
+    pub fn with_handle(mut self, handle: &str) -> Result<Self, VaultError> {
+        let handle = handle.trim();
+        if handle.is_empty() {
+            self.handle = String::new();
+            return Ok(self);
+        }
+        if handle.chars().count() > 40 {
+            return Err(VaultError::Malformed(
+                "a name is at most 40 characters".into(),
+            ));
+        }
+        if handle.chars().any(|c| c.is_control() || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')) {
+            return Err(VaultError::Malformed(
+                "a name cannot contain control or text-direction characters".into(),
+            ));
+        }
+        self.handle = handle.to_string();
+        Ok(self)
+    }
+
     pub fn with_keys(mut self, keys: &str) -> Result<Self, VaultError> {
         let keys = keys.trim().to_ascii_lowercase();
         if !keys.is_empty() && !keys_ok(&keys) {
@@ -219,14 +276,26 @@ impl Invite {
                 self.purpose,
                 esc(&self.relay)
             )
-        } else {
+        } else if self.handle.is_empty() {
+            // v3: a keys bundle but no handle. Still what most installed builds
+            // expect, so it stays the default shape when there is nothing to add.
             format!(
-                "{PREFIX}:{VERSION}:{}:{}:{}:{}:{}",
+                "{PREFIX}:3:{}:{}:{}:{}:{}",
                 self.subject,
                 self.endpoint,
                 self.purpose,
                 esc(&self.relay),
                 self.keys
+            )
+        } else {
+            format!(
+                "{PREFIX}:{VERSION}:{}:{}:{}:{}:{}:{}",
+                self.subject,
+                self.endpoint,
+                self.purpose,
+                esc(&self.relay),
+                self.keys,
+                esc(&self.handle)
             )
         };
         let check = check_of(&body);
@@ -254,6 +323,12 @@ impl Invite {
                 7usize,
                 "2",
             ),
+            // v4 is v3 plus the subject's chosen handle.
+            Some("4") => (
+                unesc(&parts.get(5).copied().unwrap_or_default().to_ascii_lowercase()),
+                9usize,
+                "4",
+            ),
             // v3 is v2 plus the subject's keys bundle.
             Some("3") => (
                 unesc(&parts.get(5).copied().unwrap_or_default().to_ascii_lowercase()),
@@ -276,6 +351,7 @@ impl Invite {
             // advice that would have made it wrong in a second way.
             let shape = match shown {
                 "1" => "diaswarm:1:<subject>:<endpoint>:<purpose>:<check>",
+                "4" => "diaswarm:4:<subject>:<endpoint>:<purpose>:<relay>:<bundle>:<handle>:<check>",
                 "3" => "diaswarm:3:<subject>:<endpoint>:<purpose>:<relay>:<bundle>:<check>",
                 _ => "diaswarm:2:<subject>:<endpoint>:<purpose>:<relay>:<check>",
             };
@@ -283,8 +359,14 @@ impl Invite {
         }
         let mut invite =
             Invite::new_via(parts[2], parts[3], &parts[4].to_ascii_lowercase(), &relay)?;
-        if shown == "3" {
+        if shown == "3" || shown == "4" {
             invite = invite.with_keys(parts[6])?;
+        }
+        if shown == "4" {
+            // UNESCAPED, BUT NOT LOWERCASED. The relay is a URL and case
+            // carries nothing; a person's name is not, and "alice" is not what
+            // they typed.
+            invite = invite.with_handle(&unesc(parts[7]))?;
         }
 
         // CHECK LAST, so the specific complaints above are what a person sees.
@@ -296,6 +378,17 @@ impl Invite {
         // its own checksum, which is the kind of error nobody could act on.
         let body = if shown == "1" {
             format!("{PREFIX}:1:{}:{}:{}", invite.subject, invite.endpoint, invite.purpose)
+        } else if shown == "4" {
+            format!(
+                "{PREFIX}:4:{}:{}:{}:{}:{}:{}",
+                invite.subject,
+                invite.endpoint,
+                invite.purpose,
+                parts[5].to_ascii_lowercase(),
+                invite.keys,
+                // As it appeared: escaped, and with its case intact.
+                parts[7]
+            )
         } else if shown == "3" {
             format!(
                 "{PREFIX}:3:{}:{}:{}:{}:{}",
@@ -375,11 +468,15 @@ mod tests {
 
     #[test]
     fn a_future_version_says_so_rather_than_looking_like_a_typo() {
-        // 4 rather than 3: 3 is a format this build emits now, so using it
-        // here stopped testing the future and started testing the present.
-        let e = Invite::parse(&format!("diaswarm:4:{S}:{E}:follow:x:00000000")).unwrap_err();
+        // **ONE AHEAD OF WHATEVER THIS BUILD EMITS, AND THAT KEEPS MOVING.**
+        // This said 4 until 4 became the handle format, at which point it
+        // stopped testing the future and started testing the present — the same
+        // drift the previous comment here recorded about 3. Derived from
+        // `VERSION` so the next field to be added does not have to notice.
+        let future: u32 = VERSION.parse::<u32>().expect("VERSION is a number") + 1;
+        let e = Invite::parse(&format!("diaswarm:{future}:{S}:{E}:follow:x:00000000")).unwrap_err();
         let msg = format!("{e:?}");
-        assert!(msg.contains("version 4"), "unhelpful message: {msg}");
+        assert!(msg.contains(&format!("version {future}")), "unhelpful message: {msg}");
     }
 
     /// A v3 INVITE CARRIES THE BUNDLE AND SURVIVES BEING SHOUTED.
