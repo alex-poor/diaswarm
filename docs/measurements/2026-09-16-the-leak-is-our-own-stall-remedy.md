@@ -15,29 +15,47 @@ SLOW  --pass-secs 120   535 MB → peaked 899 MB → settled at ~150 MB
 
 ---
 
+## 🔴 CORRECTION, 19:45 — the first version of this got the trigger wrong
+
+I wrote that a *quiet carried stranger* trips the stall detector, because
+`worst = stale.maxOf { … }` takes the worst case across subjects. **That is not
+what is happening.** `Follower.following()` filters to subjects whose keys we
+hold — the ones we *follow* — so a stranger we merely carry is never in that
+list at all.
+
+**What is actually stale is one subject, and the number says everything:**
+
+```
+keys newest for 552f688a: 14908s old
+```
+
+552f688a is the loop phone. 14,908 seconds before 19:43 is **15:34** — the exact
+minute [the unannounced rotation](../decisions.md) made everything sealed
+afterwards unreadable to this follower.
+
 ## The chain, end to end
 
-1. **Ayni carries strangers' ciphertext.** That is not incidental, it is the
-   product — the app is named for it.
-2. **A carried stranger who is not publishing is perfectly normal.** They are
-   quiet; there is nothing to receive.
-3. **The stall test takes the worst case across every subject:**
-   `val worst = stale.maxOf { it.second }` (`SyncWorker.kt`). One quiet stranger
-   puts `worst` permanently over the threshold.
-4. **So the remedy fires forever.** On phone B, right now: *"keys stalled for
-   14702s — re-subscribed 11 topic(s)"*, every fifteen minutes, having been
-   "stalled" for four hours.
-5. **`restream()` is not a refresh — it is a teardown and a rebuild.** It aborts
-   the task, drops the handle (which is what unsubscribes), then calls
-   `stream()` again for every topic.
-6. **Each re-subscribe makes p2panda-net allocate a fresh
-   `broadcast::channel(1024)` ring**, ~176 KB, and the previous one is not
-   reclaimed. That is exactly what heapprofd found: rings created for topics
-   *already subscribed*.
+1. **The rotation blackout froze the newest *readable* record at 15:34.**
+   Ciphertext keeps arriving — the `unreadable` counter climbs all afternoon —
+   but nothing opens, so "age of newest record" stops advancing.
+2. **The stall detector reads that as a transport stall**, because from where it
+   stands the two look identical: no new data.
+3. **So the remedy fires every fifteen minutes**, and has for four hours.
+4. **`restream()` is a teardown and rebuild, not a refresh.** It aborts the task
+   and drops the handle — dropping is what unsubscribes — then `stream()`s every
+   topic again.
+5. **Each re-subscribe makes p2panda-net allocate a fresh
+   `broadcast::channel(1024)`** (~176 KB) and the old is not reclaimed. Exactly
+   what heapprofd found: rings for topics *already subscribed*.
+6. **It can never succeed.** The fault is cryptographic; re-subscribing a
+   transport that is working fixes nothing. So it retries forever, and leaks
+   forever.
 
-**So the memory does not leak while it works. It leaks while it is trying to fix
-itself** — and it is always trying, because carrying a quiet stranger is
-indistinguishable from being broken.
+⚠️ **AND PART OF TODAY'S LEAK IS AN ARTEFACT OF TODAY'S BUG.** The rotation
+defect I shipped at 15:34 is what has been driving this phone's re-subscribes
+since. **But the leak predates it** — the morning soak grew 138 → 263 MB from
+08:00, long before any rotation — so the mechanism is general and some *other*
+stall was driving it then. Do not let the tidy story hide that.
 
 ## Why the shape finally makes sense
 
@@ -48,7 +66,8 @@ Everything that did not fit now does:
 * **The rate varies tenfold between windows.** Stalls are bursty.
 * **The fast peer at 8× the pass rate ran its stall check 8× as often** and grew
   catastrophically rather than 8× — because each re-subscribe also re-triggers
-  catch-up over everything it holds.
+  catch-up over everything it holds. Its stall was real and ordinary: three
+  passes with nothing new, which at 15 s is 45 seconds.
 * **The slow peer recovered**, settling at ~150 MB after catch-up.
 
 ## The arithmetic, which is close but not exact
@@ -62,24 +81,26 @@ account for it, so something else is probably retained per re-subscribe as well
 write "the rings are the leak" as though it were settled; the mechanism is
 established and the accounting is not.**
 
-## The fix is ours, not upstream
+## The fix, which is sharper than "re-subscribe less"
 
-p2panda-net not reclaiming a torn-down subscription is a real upstream defect and
-worth reporting. But **we should not be tearing them down every fifteen minutes
-in the first place.**
+**Ayni already knows the difference and is not using it.** As of this afternoon
+`follow::read` reports `not_ours` separately from `lost()` — segments arriving
+and refusing to open is *access control working*, and it means the transport is
+fine.
 
-`worst = max(staleness)` is the bug. A subject this phone merely *carries* going
-quiet is not a stall — it is Tuesday. The test should be per-topic, and should
-only fire for a topic we have reason to expect data from.
+> **If ciphertext is arriving and failing to open, that is not a transport
+> stall, and re-subscribing is the wrong remedy.**
 
-**That single change would stop the leak at its source** without waiting on
-anyone, and would also stop a pointless full re-subscribe of eleven topics every
-quarter of an hour.
+That single test would have stopped this afternoon's four hours of pointless
+re-subscribes dead, and it is exactly the distinction the clinician work needed
+for a different reason.
 
-⚠️ **AND THE REMEDY IS NOT REMEDYING.** Four hours "stalled", re-subscribing
-every fifteen minutes, still stalled. Whatever it was written to fix, it is not
-fixing that either — so this is currently pure cost. Worth establishing what it
-was supposed to do before deciding whether to keep it at all.
+**Defence in depth, because a remedy that never works should not run forever:**
+back off or cap. Four hours of fifteen-minute retries that cannot possibly
+succeed is a design gap independent of why they could not succeed.
+
+p2panda-net not reclaiming a torn-down subscription is still a real upstream
+defect and still worth reporting — but we would stop hitting it.
 
 ## What this was measured with
 
