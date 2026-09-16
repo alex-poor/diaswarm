@@ -150,7 +150,22 @@ object Follower {
                 MAX_READINGS
             )
         )
-        if (fromKeys.isEmpty()) return fromCore
+        // **A SILENT ZERO IS THE ONE THING THIS HAD TO SAY, AND IT RETURNED
+        // BEFORE SAYING IT.** The treatments merge below carries a comment
+        // explaining that a keys read returning nothing looks exactly like a
+        // day with nothing in it, and logs unconditionally for that reason.
+        // This one returned early, so the case it most needed to report —
+        // readings, the flagship datum, arriving from the old vault only —
+        // was the single case that produced no line at all. Found while
+        // reading the log for evidence that a cutover is safe, which is
+        // exactly when the missing line would have mattered.
+        if (fromKeys.isEmpty()) {
+            android.util.Log.i(
+                SyncWorker.TAG,
+                "merged ${fromCore.size} core + 0 keys = ${fromCore.size} for ${subject.short}"
+            )
+            return fromCore
+        }
 
         val byTime = sortedMapOf<Long, Reading>()
         for (r in fromCore) byTime[r.at] = r
