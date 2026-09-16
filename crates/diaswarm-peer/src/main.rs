@@ -52,8 +52,18 @@ const PASS: Duration = Duration::from_secs(60);
 /// is three minutes at a 60 s cadence and forty-five seconds at 15 s.
 const STALL_AFTER_SECS: u64 = 180;
 
-/// How many times to try re-subscribing before accepting it will not help.
-const MAX_RESTREAMS: u32 = 5;
+/// The longest gap between re-subscribe attempts, once backing off.
+///
+/// **BACKOFF RATHER THAN A CAP, BECAUSE A CAP IS A CLIFF.** The first version of
+/// this stopped after five attempts, which bounds the leak and creates a worse
+/// failure: a peer that gives up permanently and stays stuck. Ayni falls back to
+/// restarting the endpoint; this binary has no such fallback, so "stop trying"
+/// means "stay broken until somebody notices".
+///
+/// Doubling the interval keeps trying forever while making the cost converge —
+/// the leak per hour falls away to nothing, and a stall that does eventually
+/// clear is still recovered from.
+const MAX_RESTREAM_GAP_SECS: u64 = 3600;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -810,9 +820,9 @@ async fn main() -> Result<()> {
     let mut was_held = 0u64;
     let mut stalled_for = 0u32;
     let mut restreams = 0u32;
-    // How many passes make up one re-subscribe interval, so the cadence is the
-    // same wall-clock whatever `--pass-secs` is.
-    let restream_every = (STALL_AFTER_SECS / args.pass_secs.max(1)).max(1) as u32;
+    // Seconds-of-stall at which the next re-subscribe is allowed. Doubles each
+    // time, so the cadence is wall-clock and independent of `--pass-secs`.
+    let mut next_restream_at = STALL_AFTER_SECS;
 
     loop {
         let tick = swarm.tick().await;
@@ -829,6 +839,7 @@ async fn main() -> Result<()> {
         if stored > was_held {
             stalled_for = 0;
             restreams = 0;
+            next_restream_at = STALL_AFTER_SECS;
         } else if stored > 0 {
             stalled_for += 1;
         }
@@ -884,20 +895,21 @@ async fn main() -> Result<()> {
                 // missing key rather than a broken link — otherwise costs a
                 // leak every interval, forever.
                 let stalled_secs = stalled_for as u64 * args.pass_secs;
-                if stalled_secs >= STALL_AFTER_SECS
-                    && stalled_for % restream_every == 0
-                    && restreams < MAX_RESTREAMS
-                {
+                if stalled_secs >= STALL_AFTER_SECS && stalled_secs >= next_restream_at {
                     restreams += 1;
                     match replicator.restream().await {
                         Ok(n) => println!(
-                            "    stalled {stalled_secs}s — re-subscribed {n} topic(s) ({restreams}/{MAX_RESTREAMS})"
+                            "    stalled {stalled_secs}s — re-subscribed {n} topic(s) (attempt {restreams})"
                         ),
                         Err(e) => println!("    stalled — re-subscribe failed: {e:#}"),
                     }
-                    if restreams == MAX_RESTREAMS {
+                    // Double the wait each time, to a ceiling. Keeps trying
+                    // forever; costs almost nothing after the first few.
+                    let gap = (STALL_AFTER_SECS << (restreams.min(6) - 1)).min(MAX_RESTREAM_GAP_SECS);
+                    next_restream_at = stalled_secs + gap;
+                    if restreams >= 4 {
                         println!(
-                            "    re-subscribing has not helped {MAX_RESTREAMS} times — stopping. \
+                            "    re-subscribing has not helped {restreams} times — next attempt in {gap}s. \
                              A stall this cannot fix is a missing key, not a broken link."
                         );
                     }
