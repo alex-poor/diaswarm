@@ -94,7 +94,15 @@ What the bump carries beyond those two fixes:
   a synthetic publisher instead of nobody, with no real glucose involved.
 * `3792fd6`, `063c1c7` — the follower's read path stops re-fetching and
   re-decrypting on every refresh. 63.1% of a core to 38.0% on phone B, same
-  protocol either side. A battery fix for whoever installs this, not just for us.
+  protocol either side.
+
+  ⚠️ **THAT IS A CPU FIGURE FROM A PLUGGED-IN PHONE, AND IT WAS BRIEFLY WRITTEN
+  HERE AS "a battery fix".** Both test phones were on USB for every measurement
+  taken on 2026-09-17, and `dumpsys deviceidle` read `ACTIVE` throughout —
+  a charging device never dozes. The A/B holds, because both sides were measured
+  the same way. What does not follow is any claim about battery life, which is
+  governed by the idle behaviour none of it exercised. Say "less CPU", measured
+  on charge; do not say "less battery" until something has run on one.
 
 What it does NOT carry, and should be said plainly on the MR if asked: **no
 overnight run.** 0.1.7 has run on a phone — installed from a clean tree at
