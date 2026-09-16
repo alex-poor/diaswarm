@@ -1744,7 +1744,37 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRotate(
 ) -> jlong {
     let Some(v) = keys_vault(handle) else { return -1 };
     match v.vault.rotate() {
-        Ok(_) => v.vault.secrets() as jlong,
+        // 🔴 **PUBLISH IT, OR THE ROTATION IS A SILENT BLACKOUT.**
+        // `Vault::rotate` mints a new group secret AND returns the control
+        // message that tells every member about it. This used to discard that
+        // message with `Ok(_)`. The secret changed locally, nobody was told,
+        // and every segment sealed afterwards was ciphertext no follower could
+        // open — while the publisher looked perfectly healthy.
+        //
+        // Measured on 2026-09-16: within three minutes of the first rotation a
+        // granted follower's `unreadable` count went 0 -> 1 -> 2 -> ... one per
+        // sealing pass, with readable rows falling in step. The data was
+        // arriving; only the key was missing.
+        //
+        // The grant path had this right all along — see `grant_and_publish`,
+        // which this now mirrors exactly.
+        Ok(update) => {
+            match v.handle.block_on(diaswarm_keys::wire::publish_control(
+                &v.store,
+                &v.signing,
+                &update,
+            )) {
+                Ok(op) => {
+                    push_live(v.push.as_ref(), &v.signing, op);
+                    v.vault.secrets() as jlong
+                }
+                // **-3 IS NOT -2.** A rotation that happened but could not be
+                // announced is the dangerous case, and the caller must be able
+                // to tell it from one that never happened: the secret has moved
+                // on either way, so this needs re-announcing, not re-rotating.
+                Err(_) => -3,
+            }
+        }
         Err(_) => -2,
     }
 }

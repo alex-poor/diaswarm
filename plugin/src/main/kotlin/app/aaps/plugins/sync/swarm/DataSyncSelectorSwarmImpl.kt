@@ -590,6 +590,22 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         // rotate once, not six times catching up on boundaries nobody sealed in.
         if (last != 0L && now - last < 24 * 60 * 60 * 1000L) return
         val held = SwarmNative.keysRotate(shadow)
+        // **-3 MEANS IT ROTATED AND COULD NOT SAY SO**, which is the one case
+        // that must not be retried. The secret has already moved; rotating
+        // again would mint a second secret nobody has been told about either,
+        // and every pass would do it. Stamp the clock so this stops at one, and
+        // say loudly what is actually wrong — readers need the announcement
+        // re-published, not another rotation. Re-granting a reader republishes
+        // a welcome carrying the current secrets and repairs them.
+        if (held == -3L) {
+            preferences.put(SwarmLongKey.KeysLastRotated, now)
+            aapsLogger.error(
+                LTag.CORE,
+                "swarm: rotated the group secret but could not publish the update — " +
+                    "readers cannot open anything sealed from now until they are re-granted"
+            )
+            return
+        }
         if (held < 0) {
             aapsLogger.error(LTag.CORE, "swarm: rotating the group secret failed with $held")
             return
