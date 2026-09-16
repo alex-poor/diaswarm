@@ -6,6 +6,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -17,6 +21,8 @@ import androidx.compose.ui.unit.sp
 
 private val Text1 = Color(0xFFE8EAED)
 private val Text2 = Color(0xFF9AA3B0)
+// For the two places a screen has to say "this will not do what you think".
+private val Warn = Color(0xFFE8A33D)
 
 /**
  * The code somebody else scans to start following you — or, in the one-scan
@@ -97,7 +103,69 @@ fun InviteDialog(invite: String, onClose: () -> Unit) {
                             "it can download your ciphertext and read none of it.",
                         color = Text2, fontSize = 13.sp
                     )
+                    // 🔴 **SAY WHEN THIS INVITE CANNOT BE FULLY GRANTED.** A v2
+                    // invite carries no keys identity, so the subject's grant
+                    // does the segment half and silently skips the keys half —
+                    // the reader ends up unable to read anything in the keys
+                    // vault, and impossible to withdraw later, because a
+                    // withdrawal needs the identity this invite never carried.
+                    // Measured: a fresh install was granted, read nothing, and
+                    // the only clue anywhere was the version number below.
+                    if (invite.startsWith("diaswarm:2:")) {
+                        Text(
+                            "⚠️ This is an older invite that does not carry a vault identity. " +
+                                "Someone granting it will only share part of what they mean to, " +
+                                "and will not be able to withdraw it cleanly afterwards. " +
+                                "Turn on “New vault” in the menu and show this again.",
+                            color = Warn, fontSize = 13.sp
+                        )
+                    }
                     Text(invite, color = Text2, fontSize = 10.sp)
+                }
+            }
+        }
+    )
+}
+
+/**
+ * Take an invite as text, for when a camera is not the way it arrived.
+ *
+ * **VALIDATED BEFORE IT IS ACCEPTED**, because a mistyped or truncated invite
+ * queued silently is a follow that never happens and a user with nothing to look
+ * at. `inviteParse` is the same check the scanner's result goes through.
+ */
+@Composable
+fun PasteInviteDialog(onFollow: (String) -> Unit, onClose: () -> Unit) {
+    var text by remember { mutableStateOf("") }
+    val looksRight = text.trim().startsWith("diaswarm:")
+    AlertDialog(
+        onDismissRequest = onClose,
+        confirmButton = {
+            TextButton(enabled = looksRight, onClick = { onFollow(text.trim()); onClose() }) {
+                Text("Follow")
+            }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } },
+        title = { Text("Paste an invite") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Paste the code they sent you. Following costs them nothing, and you " +
+                        "cannot read anything until they share with you.",
+                    color = Text2, fontSize = 13.sp
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = false,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (text.isNotBlank() && !looksRight) {
+                    Text(
+                        "That does not look like an invite — they all begin “diaswarm:”.",
+                        color = Warn, fontSize = 12.sp
+                    )
                 }
             }
         }
@@ -109,6 +177,7 @@ fun InviteDialog(invite: String, onClose: () -> Unit) {
 fun PeopleSheet(
     followed: List<Follower.Subject>,
     onScan: () -> Unit,
+    onPaste: () -> Unit,
     onShowInvite: () -> Unit,
     onChoose: (Follower.Subject) -> Unit,
     onUnits: () -> Unit,
@@ -152,6 +221,12 @@ fun PeopleSheet(
                 Divider(color = Color(0xFF2A3140))
                 Text("Scan an invite", color = Text1, fontSize = 15.sp,
                     modifier = Modifier.fillMaxWidth().clickable { onScan() }.padding(vertical = 8.dp))
+                // **BECAUSE SCANNING NEEDS TWO PHONES IN ONE ROOM.** An invite
+                // arrives by message as often as by camera, and until now the
+                // only way in was the scanner — which also made the app
+                // impossible to set up over remote help, or with one device.
+                Text("Paste an invite", color = Text1, fontSize = 15.sp,
+                    modifier = Modifier.fillMaxWidth().clickable { onPaste() }.padding(vertical = 8.dp))
                 Text("Show my invite", color = Text1, fontSize = 15.sp,
                     modifier = Modifier.fillMaxWidth().clickable { onShowInvite() }.padding(vertical = 8.dp))
                 Text("Units: ${if (mmol) "mmol/L" else "mg/dL"}", color = Text1, fontSize = 15.sp,

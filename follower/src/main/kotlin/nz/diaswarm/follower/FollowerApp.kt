@@ -30,6 +30,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     var tick by remember { mutableStateOf(0) }
     var showInvite by remember { mutableStateOf(false) }
     var showPeople by remember { mutableStateOf(false) }
+    var showPaste by remember { mutableStateOf(false) }
     var showCarrying by remember { mutableStateOf(false) }
 
     // Redraw on a clock, because the AGE changes even when the data does not —
@@ -166,10 +167,15 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     }
 
     if (showInvite) InviteDialog(Endpoint.invite(context)) { showInvite = false }
+    if (showPaste) PasteInviteDialog(
+        onFollow = { Invites.queue(context, it); Sync.now(context); tick++ },
+        onClose = { showPaste = false }
+    )
     if (showCarrying) CarryingDialog(carrying, Prefs.carryingAt(context)) { showCarrying = false }
     if (showPeople) PeopleSheet(
         followed = followed,
         onScan = { showPeople = false; onScan() },
+        onPaste = { showPeople = false; showPaste = true },
         onShowInvite = { showPeople = false; Endpoint.expectOffer(); showInvite = true },
         onChoose = { Prefs.setGraphSubject(context, it.key); tick++; showPeople = false },
         onUnits = { Prefs.setMmol(context, !Prefs.mmol(context)); tick++ },

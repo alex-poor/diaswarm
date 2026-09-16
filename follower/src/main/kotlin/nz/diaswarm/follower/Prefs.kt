@@ -179,7 +179,28 @@ object Prefs {
     fun setLastUnreadable(c: Context, subject: String, n: Int) =
         p(c).edit().putInt("unreadable_$subject", n).apply()
 
-    fun keysVault(c: Context): Boolean = p(c).getBoolean(KEYS_VAULT, false)
+    /**
+     * Whether this follower keeps a keys vault — and it now defaults to ON.
+     *
+     * 🔴 **BECAUSE OFF MAKES AN INVITE THAT CANNOT BE FULLY GRANTED.** The
+     * invite only carries a keys identity when this vault exists; without it
+     * the app emits a **v2** invite, the subject's grant does the segment half
+     * and silently skips the keys half, and the new reader lands in their book
+     * with `keys: null` — unable to read anything sealed into the keys vault
+     * and, worse, impossible to withdraw later, because a withdrawal needs the
+     * identity a v2 invite never carried.
+     *
+     * Measured 2026-09-16: a fresh install was granted, read nothing, and the
+     * only clue was the invite's version number. Nothing on either screen said
+     * why. Turning it on by hand and re-issuing the invite fixed it at once.
+     *
+     * **This changes behaviour on upgrade for anyone who never touched the
+     * toggle**, which is deliberate: the keys vault is where everything the
+     * follower reads now lives, and an install without one is a follower that
+     * can be granted and still see nothing. Anyone who turned it off
+     * explicitly keeps it off — the stored value wins.
+     */
+    fun keysVault(c: Context): Boolean = p(c).getBoolean(KEYS_VAULT, true)
     fun setKeysVault(c: Context, v: Boolean) = p(c).edit().putBoolean(KEYS_VAULT, v).apply()
 
     fun mmol(c: Context): Boolean = p(c).getBoolean(UNITS_MMOL, true)
