@@ -46,11 +46,38 @@ enum class SwarmBooleanKey(
     /**
      * Also seal into the `diaswarm-keys` vault, read it back, and report.
      *
-     * **Off, and it changes nothing while it is off.** On, it costs a second
-     * seal of the same records plus a read of the epoch it just wrote, and
-     * writes one line per pass saying whether every record survived —
-     * `shadow agrees` or `shadow DISAGREES` with the counts behind it.
+     * On, it costs a second seal of the same records plus a read of the epoch
+     * it just wrote, and writes one line per pass saying whether every record
+     * survived — `shadow agrees` or `shadow DISAGREES` with the counts behind
+     * it.
+     *
+     * **ON BY DEFAULT SINCE 2026-09-17, WHICH IS A DECISION ABOUT MIGRATION
+     * RATHER THAN ABOUT SHADOWING.** D26 replaces the hand-composed sealing
+     * construction with p2panda's key layer, and SECURITY.md's headline warning
+     * is about the code that deletes. A phone that sealed only the old way for
+     * its first months would need its history migrated when that lands. A phone
+     * that has been writing both from the day it was installed needs nothing.
+     *
+     * So this is on from the start, while there are no real vaults to migrate,
+     * precisely so that there never are any. The cost is a second seal; the
+     * alternative is a migration path for somebody's only copy of their own
+     * history, written later and under worse conditions.
+     *
+     * **IT IS STILL A SHADOW, AND THE OLD VAULT IS STILL AUTHORITATIVE.**
+     * Turning this on does not cut over: every screen still reads the old
+     * vault, and if the new one throws or loses a record the consequence is a
+     * log line. Making `diaswarm-keys` authoritative is a separate change,
+     * because this vault seals on a five-minute cadence where the old one seals
+     * every pass — promoting it without changing that would make a follower
+     * five minutes staler, which §12.3 is about.
+     *
+     * **IT COSTS ENOUGH TO NOTICE.** Switching it off on the loop phone on
+     * 2026-09-17 took AAPS from 70% of a core to 20%, though that measurement
+     * also stopped carrying keys logs and predates the read caches in 3792fd6
+     * and 063c1c7. The publisher-side seal has not been isolated since. Anyone
+     * turning this on for a battery experiment should measure it rather than
+     * quote that number.
      */
-    ShadowSpacesVault("swarm_shadow_spaces_vault", false),
+    ShadowSpacesVault("swarm_shadow_spaces_vault", true),
 
 }

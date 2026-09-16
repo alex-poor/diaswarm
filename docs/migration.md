@@ -12,10 +12,16 @@ about what was measured, on what, and what each measurement does *not* cover.
 
 ## What is replaced, if this lands
 
+> **THIS TABLE NAMED `p2panda-spaces` UNTIL 2026-09-17, AND D26 REJECTED SPACES
+> ON 2026-09-12.** Five days in which the document a cutover is read off named
+> the wrong destination. It is the second time — `1bdcffd` left a gate list
+> behind a rewritten finding — so the rule is now explicit: a decision that
+> changes direction updates this file in the same change, not in a later tidy.
+
 | Today | Then |
 |---|---|
-| `diaswarm-core::vault` + `seal` — 1,159 lines of hand-composed cryptography | `p2panda-spaces`: `add`, `remove`, `publish` |
-| per-reader key wraps, hash-chained grant log, unlinkable tags | the library's key layer and auth CRDT |
+| `diaswarm-core::vault` + `seal` — hand-composed cryptography, ~312 lines of construction in `seal.rs` under 1,310 lines of vault bookkeeping | `diaswarm-keys` on `p2panda-encryption`: `EncryptionGroup`, `SecretBundle`, `encrypt_data`/`decrypt_data` |
+| per-reader key wraps, hash-chained grant log, unlinkable tags | the library's key layer, with diaswarm's segments kept |
 | `diaswarm-net::wire` — `Have`/`Manifest`/`Grants`/`Segment`/`Wraps`, polled | `p2panda-net` log sync, pushed after catch-up |
 
 **SECURITY.md's headline warning is about the code this deletes.** That is the
@@ -40,6 +46,23 @@ the JNI surface and the Kotlin plugin.
 | It runs *inside* AAPS | Shadow mode, hundreds of live passes without a crash | ~~agreeing pass for pass~~ — that comparison was never made; a real one now exists, see below |
 | **The new vault returns what it was handed, on a phone** | `shadow agrees — given 17, holds 17, missing 0, lost 0, failures 0` — phone B, 2026-09-12, 17 records over 4 epochs | A long run, and the loop phone |
 | Identity survives a restart | Shadow passes either side of an app upgrade, different pids | A device reboot, a factory reset, a restore from backup |
+
+## The migration path, and why there will not be one
+
+**Decided 2026-09-17.** `ShadowSpacesVault` now defaults **on**, so every phone
+writes the `diaswarm-keys` vault from the day it is installed. The point is not
+shadowing; it is that a phone which has been writing both since first run has
+nothing to migrate when D26 lands.
+
+There are no real vaults yet — everything sealed the old way belongs to a
+development phone — so the window in which this is free is open now and closes
+the moment anyone outside development seals history. Taken now for that reason.
+
+What it does NOT do is cut over. The old vault stays authoritative and every
+screen still reads it. Promoting `diaswarm-keys` is a separate change with its
+own cost, because it seals on a five-minute cadence where the old vault seals
+every pass; making it authoritative unchanged would make a follower up to five
+minutes staler, which is the fault §12.3 exists to prevent.
 
 ## What is not yet true
 
@@ -201,9 +224,16 @@ context the plugin has and a command-line process does not. These two phones
 found each other anyway, but this harness is measuring a *worse* case than the
 plugin would.
 
-**4. There is no migration path for an existing vault.** A phone with 74 days
-sealed the old way has to re-seal from the AAPS database, which is what the
-re-drain button does — see (1).
+**4. ~~There is no migration path for an existing vault.~~ NOT REQUIRED, and
+this is a scope decision rather than a solved problem — 2026-09-17.** There are
+no real vaults yet; everything sealed the old way belongs to development phones.
+The cutover therefore ships as the only behaviour, so that every user starts on
+the upstream vault and no migration path ever has to exist. The re-drain button
+covers the two development phones.
+
+**This is only true while it is true.** The moment anyone outside development is
+sealing history, this item comes back and comes back harder, because by then it
+is somebody's only copy.
 
 **5. First contact is worse — by three seconds.** ~~An open question.~~
 Measured in `spike/p2panda-logsync --bin firstcontact`, five cold runs each with

@@ -726,7 +726,10 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * this writes to a separate directory, is read by no screen, and its worst
      * failure is a log line.
      *
-     * Off by default. See [SwarmBooleanKey.ShadowSpacesVault].
+     * **On by default since 2026-09-17**, so that a phone never accumulates
+     * history the old way only and then needs migrating. See
+     * [SwarmBooleanKey.ShadowSpacesVault] for why that is a migration decision
+     * rather than a shadowing one.
      */
     /**
      * Seal the accumulated records into the spaces vault, on a cadence.
