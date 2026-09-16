@@ -77,7 +77,44 @@ hardcoded — so neither NonFreeNet nor TetheredNet fits.
 * **Icon** — adaptive XML in the APK, with a 512px PNG in
   `fastlane/…/en-US/images/` because F-Droid's indexer will not use the XML.
 
-## Recommendation on bumping
+## Recommendation on bumping — SUPERSEDED, and the bump is done
+
+**Re-pinned to 0.1.7 (codes 81/82) on 2026-09-17, without the overnight run the
+section below asked for.** That was a deliberate trade, so the reasoning it
+replaces is left underneath rather than deleted.
+
+What changed: the merge window is closing, and the two 🔴 defects above are in
+the commit a tester would open first. Shipping a build whose settings screen
+renders blank and whose CAMERA justification is false, in order to buy one
+night of soak, is the worse of the two risks.
+
+What the bump carries beyond those two fixes:
+
+* `e9ab0d8` — the demo subject, which answers the 🟠 above: a tester can follow
+  a synthetic publisher instead of nobody, with no real glucose involved.
+* `3792fd6`, `063c1c7` — the follower's read path stops re-fetching and
+  re-decrypting on every refresh. 63.1% of a core to 38.0% on phone B, same
+  protocol either side. A battery fix for whoever installs this, not just for us.
+
+What it does NOT carry, and should be said plainly on the MR if asked: **no
+overnight run.** 0.1.7 has run on a phone — installed from a clean tree at
+`18ec189`, live for minutes, reading and merging both vaults without a crash —
+which is the bar `fdroid/nz.diaswarm.ayni.yml` sets before a tag ("do not tag a
+version until it has actually run on a phone"). It is not the bar the section
+below wanted, and the difference is a night.
+
+Also not verified the way it should have been: the dialog fix was confirmed
+**structurally** — `MaterialTheme` opens at FollowerApp.kt:94 and all four
+dialogs now sit inside it — rather than by opening them on the device.
+`adb input` events stopped reaching the app on phone B, tap and swipe alike, so
+the screen could not be driven. The defect was structural and the structure is
+fixed; somebody should still open that menu by hand before trusting it.
+
+---
+
+<details><summary>The superseded recommendation, kept because it was right about
+the trade it was making</summary>
+
 
 **Bump — but not tonight, and not to a moving target.**
 
@@ -104,3 +141,5 @@ diff written in one evening deserves one night of the daemon and both phones
 running before it is handed to somebody else to test. Re-pinning mid-review
 costs them a pipeline run either way; better to spend it once, on something that
 has survived a night.
+
+</details>

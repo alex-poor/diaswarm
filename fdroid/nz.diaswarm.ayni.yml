@@ -65,14 +65,16 @@ Repo: https://github.com/alex-poor/diaswarm.git
 # arithmetic ever drifts from the numbers declared here, this build fails rather
 # than publishing an APK that claims a version it does not have.
 #
-# The base is 7 AT THE PINNED COMMIT below, which is what this file builds.
-# HEAD has since moved to 8 (0.1.7) and that is not a drift — these entries are
-# pinned to a hash on purpose, so they keep building 0.1.6 no matter where the
-# branch goes.
+# The base is 8 at the pinned tag below, giving 81 and 82.
+#
+# **PINNED TO A TAG RATHER THAN A HASH, FROM 0.1.7.** A tag is what
+# `UpdateCheckMode` already watches, so pinning the build to the same name means
+# the recipe and the update check cannot disagree about which commit 0.1.7 is —
+# which they silently could while one named a hash and the other a tag.
 Builds:
-  - versionName: 0.1.6
-    versionCode: 71
-    commit: 2e55f2bc1290f06d38ba71fcebfb00e26e5f381f
+  - versionName: 0.1.7
+    versionCode: 81
+    commit: follower-v0.1.7
     subdir: follower
     sudo:
       - apt-get update
@@ -91,9 +93,9 @@ Builds:
       - rustup target add aarch64-linux-android armv7-linux-androideabi
       - cargo install cargo-ndk@4.1.2 --locked
 
-  - versionName: 0.1.6
-    versionCode: 72
-    commit: 2e55f2bc1290f06d38ba71fcebfb00e26e5f381f
+  - versionName: 0.1.7
+    versionCode: 82
+    commit: follower-v0.1.7
     subdir: follower
     sudo:
       - apt-get update
@@ -135,5 +137,5 @@ UpdateCheckMode: Tags ^follower-v
 VercodeOperation:
   - "%c * 10 + 1"
   - "%c * 10 + 2"
-CurrentVersion: 0.1.6
-CurrentVersionCode: 72
+CurrentVersion: 0.1.7
+CurrentVersionCode: 82
