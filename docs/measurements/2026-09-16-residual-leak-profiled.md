@@ -44,13 +44,31 @@ subscribed exactly once on our side. The churn is inside p2panda-net: either
 topic managers are torn down and rebuilt, or `state.sync_receivers` keeps
 receivers whose rings can never be reclaimed.
 
-🔴 **NOT YET ESTABLISHED: why there are 3.5 new topics a minute.** Ayni carries
-strangers' ciphertext, so a growing topic set is expected — but not at that rate.
-**Count the topics before theorising**: `Replicator::carried()` already exposes
-the live set, and Ayni displays it. If the count is stable while rings
-accumulate, the rings are being re-created for topics that already exist, which
-is an upstream bug; if the count climbs, this is a cost of carrying and the
-question becomes what bounds it.
+✅ **COUNTED, AND THE TOPIC SET IS FLAT.** `logcat` on the same process, across
+the capture window and after it:
+
+```
+14:50:47  diaswarm: keys carrying 5 log(s)
+14:51:28  diaswarm: keys carrying 5 log(s)
+...
+14:56:47  diaswarm: keys carrying 5 log(s)
+```
+
+**Five topics, never moving, while ~3.5 rings a minute are allocated and
+retained.** So this is not the cost of carrying more subjects — the rings are
+being re-created for topics that already exist, and the old ones are not
+dropped. That is an upstream bug in p2panda-net, not a property of the swarm
+getting bigger.
+
+It also fits the cadence: a sync pass logs every ~40 s, and 5 topics re-armed
+every pass is the right order of magnitude for 3.5 rings a minute.
+
+**So the next step is upstream-shaped**, which is where it belongs: establish
+whether `ToSyncManager::Create` is reached for an already-subscribed topic (its
+guard returns early, so something must be evicting `topic_manager_map`), or
+whether `state.sync_receivers.insert(topic, from_sync_rx)` is replacing a
+receiver whose ring is still held by the spawned `TopicManager`. Either is
+reportable to p2panda with exactly the evidence above.
 
 ## 2. The smaller half is the page cache, measured properly this time
 
