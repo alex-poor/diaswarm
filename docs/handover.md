@@ -22,8 +22,15 @@
 > * **The AAPS plugin now builds** (`BUILD SUCCESSFUL`, 14:45) and was never
 >   built at the time this was written.
 >
-> §0's central point stands and is the main open item: **almost nothing from
-> today is installed on a phone.**
+> * **PHONE B NOW HAS BOTH**: Ayni 0.1.7 and the AAPS plugin, installed 15:15,
+>   both verified running and on screen. Phone B carries AAPS as well as Ayni —
+>   loop disabled, virtual pump — which is what let the subject-side screens be
+>   opened without going near the loop phone.
+> * **§3.4 is DONE and was seen on a phone.** Opening it changed it: the
+>   unknown-scope line wrapped to two lines under every reader and is now one.
+>
+> §0's central point still stands for the one device that matters: **the loop
+> phone has none of today's work**, and that install is yours to make.
 
 Everything is committed and pushed. Working tree clean. Fifteen commits today.
 
