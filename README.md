@@ -337,6 +337,11 @@ diaswarm-peer read    --subject <identity> --days 1
 diaswarm-peer export  --subject <identity> --out day.csv
 diaswarm-peer summary --subject <identity> --days 90 --patient <id>
 diaswarm-peer nightscout --subject <identity> --out ./ns
+
+# and the three ways to hand a summary to a clinician
+diaswarm-peer summary --subject <identity> --patient <id> --out s.json \
+    --report agp.html \                    # prints; the clinic needs nothing
+    --shl-url https://files.example/cgm     # a SMART Health Link; they need only a receiver
 ```
 
 `read` and `export` are the raw records, one row each. **`summary` is the

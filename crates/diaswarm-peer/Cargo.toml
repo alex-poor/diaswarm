@@ -32,6 +32,11 @@ anyhow = "1"
 # three bespoke things where one dependency does the job — and the standing
 # preference in this project is explicit about that trade.
 clap = { version = "4", features = ["derive"] }
+# SMART Health Links: JWE compact with alg=dir, enc=A256GCM. Both are already in
+# this workspace's tree via diaswarm-keys, so this adds no new supply chain --
+# and AES-GCM is emphatically not a thing to hand-roll.
+aes-gcm = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 # TO PARSE WHAT WE EMIT. A bundle that is not valid JSON is not a bundle, and

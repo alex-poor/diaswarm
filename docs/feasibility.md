@@ -1219,6 +1219,39 @@ its way to a format, and the subject's revocation still governs — a reader who
 grant stops gets no new segments to export. **An exporter that ran anywhere else
 would be a custodian**, which is the thing §9.2 removed.
 
+#### Three routes to a clinician, and what each costs them
+
+The CGM IG defines three, and they differ entirely in what the *clinic* must
+already have:
+
+| route | clinic needs | status |
+|---|---|---|
+| `$submit-cgm-bundle` | **a FHIR server** implementing the operation | `--as transaction` emits the bundle; nothing submits it |
+| **SMART Health Link** | **only a receiver** — no FHIR server | ✅ `--shl-url` |
+| printable report | **nothing at all** | ✅ `--report` |
+
+🔑 **THE SHL TRUST MODEL IS THIS PROJECT'S OWN, ARRIVING FROM THE OTHER
+DIRECTION.** The link carries a 32-byte key; the host stores AES-256-GCM
+ciphertext and the spec's own word for it is a **"blind intermediary"**. That is
+§9.2's holder-that-cannot-read. So a document behind a SHL does not create the
+custodian that uploading to Nightscout would — which is why this is the
+standards-based pathway worth having, and the `U` flag (single encrypted file,
+plain GET, no manifest endpoint) means **any static host serves it and this
+project still runs no server**.
+
+⚠️ **A SHL's expiry is a courtesy, not a revocation.** A receiver is asked to
+stop honouring the link; nothing enforces it, and whoever fetched the ciphertext
+and read the key keeps both. Same property as [§7.4](#) states about the swarm,
+and a UI must not describe it as taking access back.
+
+**The printable report is the one that works today**, because it asks the clinic
+for nothing: one HTML file, no scripts, no fonts, no network references, which
+prints to a sheet of paper. It renders the same [`Agp`] the FHIR document
+carries, so a clinician reading the page and a system reading the bundle cannot
+be told different things — and it **leads** with whether the period is long
+enough to act on, because a four-day summary and a ninety-day summary look
+identical otherwise.
+
 **What it does not fix.** A clinician still cannot be handed a URL; they are
 handed a file by a person who ran software. Export makes the *data* portable and
 leaves the *access* non-interoperable, which is the price named in

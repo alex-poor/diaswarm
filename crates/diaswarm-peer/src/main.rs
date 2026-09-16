@@ -21,6 +21,8 @@
 mod agp;
 mod fhir;
 mod nightscout;
+mod report;
+mod shl;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -181,6 +183,25 @@ enum Cmd {
         /// arranged to submit to a server. This tool does not submit it.
         #[arg(long = "as", default_value = "document", value_name = "ENVELOPE")]
         envelope: String,
+        /// Also produce a SMART Health Link pointing at this URL.
+        ///
+        /// Writes `<out>.jwe` — the encrypted document — and prints the
+        /// `shlink:` a clinician's receiver reads. **Publish that file at
+        /// exactly this URL yourself**; nothing here uploads it, and the host
+        /// only ever sees ciphertext.
+        #[arg(long, value_name = "URL")]
+        shl_url: Option<String>,
+        /// Days until the link should stop being honoured.
+        ///
+        /// ⚠️ A courtesy, not a revocation — see `shl::wrap`.
+        #[arg(long, default_value_t = 30, value_name = "N")]
+        shl_expires_days: u64,
+        /// Also write a printable one-page report here.
+        ///
+        /// **THE ROUTE THAT NEEDS NOTHING FROM THE CLINIC** — one HTML file,
+        /// no scripts, no network, prints to a sheet of paper.
+        #[arg(long, value_name = "FILE")]
+        report: Option<PathBuf>,
     },
 
     /// Nightscout `entries.json` and `treatments.json`, for the ecosystem.
@@ -554,6 +575,9 @@ async fn cmd_summary(
     patient: &str,
     out: &Path,
     envelope: fhir::Envelope,
+    shl_url: Option<String>,
+    shl_expires_days: u64,
+    report_to: Option<PathBuf>,
 ) -> Result<()> {
     let g = granted_records(dir, subject, days).await?;
     let Some(summary) = agp::Agp::from_records(&g.records) else {
@@ -570,6 +594,46 @@ async fn cmd_summary(
         std::fs::write(out, bundle.as_bytes())
             .with_context(|| format!("writing {}", out.display()))?;
         eprintln!("FHIR CGM summary → {}", out.display());
+    }
+
+    // **THE PAGE A PERSON CARRIES IN**, from the same Agp as the bundle, so a
+    // clinician reading it and a system reading the document cannot be told
+    // different things.
+    if let Some(path) = &report_to {
+        let window = match days {
+            0 => "all readable history".to_string(),
+            n => format!("last {n} days"),
+        };
+        std::fs::write(path, report::html(&summary, patient, &window).as_bytes())
+            .with_context(|| format!("writing {}", path.display()))?;
+        eprintln!("printable report → {}", path.display());
+    }
+
+    // **A SMART HEALTH LINK, IF ASKED FOR.** The IG's only route to a clinician
+    // that does not require the clinic to run a FHIR server.
+    if let Some(url) = shl_url {
+        if out == Path::new("-") {
+            anyhow::bail!("--shl-url needs --out <FILE>, because the encrypted file goes beside it");
+        }
+        let exp = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0))
+            + shl_expires_days * 86_400;
+        let wrapped = shl::wrap(&bundle, &url, "Continuous glucose monitoring summary", Some(exp));
+        let jwe = out.with_extension("jwe");
+        std::fs::write(&jwe, wrapped.encrypted.as_bytes())
+            .with_context(|| format!("writing {}", jwe.display()))?;
+        eprintln!();
+        eprintln!("encrypted document → {}", jwe.display());
+        eprintln!("PUBLISH THAT FILE AT: {url}");
+        eprintln!("  it is AES-256-GCM ciphertext; the host cannot read it, and nothing here uploads it");
+        eprintln!();
+        eprintln!("then give the clinician this link:");
+        println!("{}", wrapped.link);
+        eprintln!();
+        eprintln!("⚠️ the key is IN the link — treat it like the document itself.");
+        eprintln!("⚠️ expiry is a courtesy a receiver is asked to honour, not a revocation.");
     }
 
     // **EVERYTHING BELOW GOES TO STDERR**, so `--out -` stays a clean bundle a
@@ -653,13 +717,19 @@ async fn main() -> Result<()> {
         Some(Cmd::Export { subject, out, days }) => {
             return cmd_export(&dir, &subject, &out, days).await;
         }
-        Some(Cmd::Summary { subject, days, patient, out, envelope }) => {
+        Some(Cmd::Summary {
+            subject, days, patient, out, envelope, shl_url, shl_expires_days, report,
+        }) => {
             let envelope = match envelope.as_str() {
                 "document" => fhir::Envelope::Document,
                 "transaction" => fhir::Envelope::Transaction,
                 other => anyhow::bail!("--as must be document or transaction, not {other}"),
             };
-            return cmd_summary(&dir, &subject, days, &patient, &out, envelope).await;
+            return cmd_summary(
+                &dir, &subject, days, &patient, &out, envelope, shl_url, shl_expires_days,
+                report,
+            )
+            .await;
         }
         Some(Cmd::Nightscout { subject, days, out }) => {
             return cmd_nightscout(&dir, &subject, days, &out).await;
@@ -950,9 +1020,29 @@ mod tests {
         // that came out of a real grant rather than a fixture: sealed by a
         // subject, replicated as operations, opened with a granted secret.
         let bundle_path = dir.join("summary.json");
-        cmd_summary(&dir, &subject_identity_hex, 0, "patient-42", &bundle_path, fhir::Envelope::Document)
-            .await
-            .expect("summary");
+        let report_path = dir.join("report.html");
+        cmd_summary(
+            &dir,
+            &subject_identity_hex,
+            0,
+            "patient-42",
+            &bundle_path,
+            fhir::Envelope::Document,
+            Some("https://files.example/cgm".to_string()),
+            30,
+            Some(report_path.clone()),
+        )
+        .await
+        .expect("summary");
+
+        // **ALL THREE HANDOVER ARTEFACTS, FROM ONE RUN.** The document a system
+        // ingests, the encrypted file a SMART Health Link points at, and the
+        // page a person carries in.
+        let jwe = std::fs::read_to_string(bundle_path.with_extension("jwe")).expect("no .jwe");
+        assert_eq!(jwe.split('.').count(), 5, "the SHL payload is not a JWE compact form");
+        let page = std::fs::read_to_string(&report_path).expect("no report");
+        assert!(page.contains("Continuous glucose monitoring summary"));
+        assert!(!page.contains("https://"), "the printable report reaches the network");
         let bundle = std::fs::read_to_string(&bundle_path).unwrap();
         let v: serde_json::Value = serde_json::from_str(&bundle).expect("bundle is not JSON");
         assert_eq!(v["resourceType"], "Bundle");
