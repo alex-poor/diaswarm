@@ -25,15 +25,6 @@ private val Text2 = Color(0xFF9AA3B0)
 private val Warn = Color(0xFFE8A33D)
 
 /**
- * The code somebody else scans to start following you — or, in the one-scan
- * flow, the code they scan so THEY can share with YOU and hand their invite
- * back in the same movement.
- *
- * Opening this opened the offer window ([Endpoint.expectOffer]); the invite is
- * shown as text as well, because a camera is not always in the room and an
- * invite is short enough to send in a message.
- */
-/**
  * What this phone is holding for other people, and what that does and does not
  * mean.
  *
@@ -76,6 +67,15 @@ fun CarryingDialog(count: Int, at: Long, onClose: () -> Unit) {
     )
 }
 
+/**
+ * The code somebody else scans to start following you — or, in the one-scan
+ * flow, the code they scan so THEY can share with YOU and hand their invite
+ * back in the same movement.
+ *
+ * Opening this opened the offer window ([Endpoint.expectOffer]); the invite is
+ * shown as text as well, because a camera is not always in the room and an
+ * invite is short enough to send in a message.
+ */
 @Composable
 fun InviteDialog(invite: String, onClose: () -> Unit) {
     val context = LocalContext.current
