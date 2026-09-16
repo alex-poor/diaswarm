@@ -2407,3 +2407,54 @@ seven and renumbered them**, which is how an open question stops being tracked.
 | 6 | **Delegation.** Diabetes has minors and has emergencies. The delegate for a child is permanent; the delegate in an emergency is unplanned | |
 | — | **Is "nothing new will be sent" recognisable as *withdrawal*?** D4's question, reshaped: granularity is solved, semantics are not. Nobody has asked a person whether a withdrawal that recalls nothing counts as one | Not in §12; rights.md §12 has a route |
 | — | **Who operates the commons**, and does being a named, revocable peer actually change what an ethics committee thinks? That is the claim this design makes to that audience and it has never been tested on one | Not in §12; the gate on D5 |
+
+### D33 · Nightscout compatibility is a data-model claim, not a connection
+
+**Settled 2026-09-16.** Asked directly — *"this is meant to be decentralised, so
+exactly what is the model for integrating with nightscout"* — and the answer is
+that there is no integration and there should not be one yet.
+
+**What is built: compatibility in the shapes.** `diaswarm-peer nightscout`
+writes `entries.json` and `treatments.json` that Nightscout and its ecosystem
+can read. The record vocabulary (`spec/records.md` §2) is expected to be
+*expressible* as those shapes, and where it is not, that gap is documented
+rather than papered over.
+
+**What is not built, explicitly: connectivity.** No HTTP client, no
+`API_SECRET`, no upload, no sync, no standing relationship. `diaswarm-peer`
+opens no connection to any Nightscout or FHIR server, and the only URLs in it
+are `urn:uuid` identifiers and LOINC/UCUM namespace strings, which are names and
+are never fetched.
+
+#### Why the distinction is load-bearing and not pedantry
+
+* **The exporter runs where the key already is**, so it decrypts nothing that
+  machine could not already decrypt and publishes nothing. One running anywhere
+  else would be a custodian, which [§9.2](feasibility.md) removed.
+* **What crosses the boundary is plaintext with no access control.** That is the
+  point rather than a leak — the receiving software has no concept of a group
+  secret — but the guarantees stop at the directory the file lands in and
+  nothing downstream inherits them.
+* **Uploading creates a custodian, and the person uploading is the one choosing
+  it**: a server holding readable data behind a shared password, which is the
+  model [§11](feasibility.md)'s comparison table scores this project *against*.
+  Their copy, their call, and not an extension of this architecture.
+
+⚠️ **"WORKS WITH NIGHTSCOUT" MUST NOT BE SAID.** It produces a document
+Nightscout can read, which a person moves. A sync implies a standing
+relationship, a credential and an egress path; there is none of that. The README
+made this mistake once already — it claimed a dashboard "can read a diaswarm
+vault" — and it was corrected the day it was written.
+
+#### What this closes
+
+The `--upload` question is **closed as "not a priority"**, not left open.
+Nothing should hold a third party's server credential, and no standing egress
+path from a vault to a third-party server should exist, until there is a reason
+that outweighs the claim it costs.
+
+*Reopens if:* somebody actually needs data in a Nightscout instance often enough
+that a person moving a file is the binding constraint — at which point the
+question is still whether the credential belongs in this binary, and the answer
+may be that the upload belongs in a separate tool that this one never links
+against.

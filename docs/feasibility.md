@@ -1253,6 +1253,46 @@ person moves. The difference is the whole of §11's honesty section: a sync
 implies a standing relationship, a credential and an egress path, and there is
 none of that here.
 
+#### The mapping, kind by kind
+
+[D33](decisions.md) settles that compatibility means *the shapes*, so here is
+what the record vocabulary (`spec/records.md` §2) becomes:
+
+| `k` | Nightscout | notes |
+|---|---|---|
+| `cgm` | `entries`, `type: sgv` | `trend` **name → text**; `src` → `device` |
+| `bolus` | `Correction Bolus` | `isSMB` and `isBasalInsulin` kept; **PRIMING excluded** |
+| `carb` | `Carb Correction` | |
+| `tbr` | `Temp Basal` | `abs` picks `absolute` (U/hr) or `percent` |
+| `extbolus` | `Combo Bolus` | |
+| `target` | `Temporary Target` | `why` **name → text** (`HYPOGLYCEMIA` → `Hypo`) |
+| `profile` | `Profile Switch` | `shift` → `timeshift` |
+| `event` | its own `eventType` | **name → text** (`CANNULA_CHANGE` → `Site Change`) |
+| `meta` | — | the stream header is not an event (§5.2) |
+
+🔴 **THE TWO THAT WOULD CORRUPT AN INSULIN TOTAL**, which matter more than the
+rest because every consumer sums `insulin`:
+
+* **A PRIMING bolus never reached the patient.** AAPS's own code says exactly
+  that and filters it out of IOB and TDD. Exported as `insulin` it inflates
+  every total in software nobody here controls, so it is excluded — **and
+  counted on the way out**, because a silently shorter answer is the failure
+  this project keeps being bitten by.
+* **Insulin delivered as basal is not a bolus.** Nightscout has
+  `isBasalInsulin`; dropping it double-counts against a basal rate the consumer
+  already knows about.
+
+⚠️ **FOUR FIELDS ARE AAPS ENUM NAMES WHERE NIGHTSCOUT WANTS ITS OWN TEXT** —
+`trend`, event `type`, target `why`, and nothing else so far. A passthrough is
+not a mapping, and each of these produces output that renders as *missing* or as
+something it is not. An unknown value degrades to Nightscout's own `NONE` for
+arrows, is dropped for event types (a closed vocabulary), and passes through for
+target reasons (free text) — ugly beats lost, except where ugly is also wrong.
+
+**What Nightscout can express and this cannot**: a `Bolus Wizard` entry carrying
+carbs and insulin together, because carbs are their own record here and arrive
+as a second treatment. Nothing is lost; the pairing is.
+
 🔴 **OPEN, AND DELIBERATELY NOT DECIDED HERE: should `--upload` exist?** Against:
 the peer would hold somebody's server credential, and a standing egress path
 from a vault to a third-party server is the shape this architecture exists to

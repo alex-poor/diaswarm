@@ -24,6 +24,23 @@
 //! 3. **`dur` is MILLISECONDS and Nightscout's `duration` is MINUTES.** AAPS
 //!    settles it: `timestamp..timestamp + duration`. A passthrough turns a
 //!    30-minute temp basal into one lasting 1,800,000 minutes.
+//! 4. **A temp target's `why` is an enum name too** — `HYPOGLYCEMIA` where
+//!    Nightscout's `reason` reads `Hypo`.
+//!
+//! 🔴 **AND TWO THINGS THAT WOULD CORRUPT AN INSULIN TOTAL**, which matter more
+//! than any of the above because every consumer sums `insulin`:
+//!
+//! * **A PRIMING bolus never reached the patient.** AAPS's own code says so and
+//!   filters it out of IOB and TDD (`HovorkaMpcPlugin`, `AutotuneIob`). Exported
+//!   as `insulin` it would inflate every total downstream, so it is excluded —
+//!   and counted, because a silently shorter answer is the failure this project
+//!   keeps being bitten by.
+//! * **Insulin delivered as basal is not a bolus.** Nightscout has
+//!   `isBasalInsulin` for exactly this; dropping the flag would double-count it
+//!   against the basal rate a consumer already knows about.
+//!
+//! `isSMB` is carried for the same reason: the loop's own micro-boluses are
+//! distinguishable in Nightscout and flattening them loses that.
 
 use diaswarm_core::Record;
 
@@ -43,6 +60,22 @@ fn direction(name: &str) -> &str {
         // name degrades to something the ecosystem already handles rather than
         // to an invented string.
         _ => "NONE",
+    }
+}
+
+/// `TT.Reason` enum name → the text Nightscout's `reason` carries.
+fn target_reason(name: &str) -> &str {
+    match name {
+        "CUSTOM" => "Custom",
+        "HYPOGLYCEMIA" => "Hypo",
+        "ACTIVITY" => "Activity",
+        "EATING_SOON" => "Eating Soon",
+        "AUTOMATION" => "Automation",
+        "WEAR" => "Wear",
+        // Unknown reasons pass through: `reason` is free text in Nightscout, so
+        // an unmapped name is ugly rather than wrong, and dropping it would
+        // lose why a target was set.
+        other => other,
     }
 }
 
@@ -146,8 +179,23 @@ pub fn treatments(records: &[Record]) -> Vec<String> {
             };
             let mut f = match r.kind() {
                 "bolus" => {
+                    // **PRIMING NEVER REACHED THE PATIENT.** Counted by the
+                    // caller, not silently dropped.
+                    if r.get("type").and_then(|v| v.as_str()) == Some("PRIMING") {
+                        return None;
+                    }
+                    // **"Correction Bolus" RATHER THAN "Meal Bolus"** because a
+                    // record does not say whether carbs accompanied it — carbs
+                    // are their own record here. Both sum insulin identically;
+                    // the difference is how a dashboard labels it.
                     let mut f = base("Correction Bolus");
                     f.push(format!(r#""insulin":{}"#, num(r, "u")?));
+                    if r.get("type").and_then(|v| v.as_str()) == Some("SMB") {
+                        f.push(r#""isSMB":true"#.to_string());
+                    }
+                    if r.get("basal").and_then(|v| v.as_bool()) == Some(true) {
+                        f.push(r#""isBasalInsulin":true"#.to_string());
+                    }
                     f
                 }
                 "carb" => {
@@ -181,7 +229,7 @@ pub fn treatments(records: &[Record]) -> Vec<String> {
                         f.push(format!(r#""targetTop":{hi}"#));
                     }
                     if let Some(why) = r.get("why").and_then(|v| v.as_str()) {
-                        f.push(format!(r#""reason":"{}""#, esc(why)));
+                        f.push(format!(r#""reason":"{}""#, esc(target_reason(why))));
                     }
                     f
                 }
@@ -192,6 +240,11 @@ pub fn treatments(records: &[Record]) -> Vec<String> {
                     }
                     if let Some(p) = num(r, "pct") {
                         f.push(format!(r#""percentage":{p}"#));
+                    }
+                    // Nightscout calls it `timeshift`; the record calls it
+                    // `shift`. Hours, both sides.
+                    if let Some(sh) = num(r, "shift") {
+                        f.push(format!(r#""timeshift":{sh}"#));
                     }
                     f
                 }
@@ -219,6 +272,18 @@ pub fn treatments(records: &[Record]) -> Vec<String> {
             Some(format!("{{{}}}", f.join(",")))
         })
         .collect()
+}
+
+/// How many boluses were left out because they never reached the patient.
+///
+/// **SO THE CALLER CAN SAY SO.** `treatments` returning fewer records than it
+/// was given is correct and must still be visible.
+pub fn priming_excluded(records: &[Record]) -> usize {
+    records
+        .iter()
+        .filter(|r| r.kind() == "bolus")
+        .filter(|r| r.get("type").and_then(|v| v.as_str()) == Some("PRIMING"))
+        .count()
 }
 
 /// A JSON array, which is what both endpoints take.
@@ -375,5 +440,96 @@ mod tests {
         assert_eq!(iso8601(0), "1970-01-01T00:00:00.000Z");
         assert_eq!(iso8601(951_782_400_000), "2000-02-29T00:00:00.000Z");
         assert_eq!(iso8601(1_789_516_800_123), "2026-09-16T00:00:00.123Z");
+    }
+}
+
+#[cfg(test)]
+mod compat_tests {
+    use super::*;
+    use diaswarm_core::Record;
+    use serde_json::Value as J;
+
+    fn parse(items: &[String]) -> Vec<J> {
+        items.iter().map(|s| serde_json::from_str(s).expect("not JSON")).collect()
+    }
+
+    fn bolus(t: i64, u: f64, kind: &str, basal: bool) -> Record {
+        Record::new(t, "bolus")
+            .set("u", Some(u.into()))
+            .set("type", Some(kind.into()))
+            .set("basal", Some(basal.into()))
+    }
+
+    /// A PRIMING BOLUS NEVER REACHED THE PATIENT AND MUST NOT BE SUMMED.
+    ///
+    /// AAPS excludes it from IOB and TDD in its own code. Every Nightscout
+    /// consumer adds up `insulin`, so exporting it inflates the total in
+    /// software nobody here controls.
+    #[test]
+    fn priming_insulin_is_excluded_and_counted() {
+        let r = vec![
+            bolus(1, 1.5, "NORMAL", false),
+            bolus(2, 0.3, "PRIMING", false),
+            bolus(3, 0.7, "SMB", false),
+        ];
+        let t = parse(&treatments(&r));
+        assert_eq!(t.len(), 2, "a priming bolus was exported as insulin");
+        let total: f64 = t.iter().map(|x| x["insulin"].as_f64().unwrap()).sum();
+        assert!((total - 2.2).abs() < 1e-9, "insulin total is {total}, not 2.2");
+        assert_eq!(priming_excluded(&r), 1, "the exclusion was not countable");
+    }
+
+    /// SMB AND BASAL INSULIN ARE DISTINGUISHABLE IN NIGHTSCOUT, SO KEEP THEM.
+    ///
+    /// Flattening `isBasalInsulin` double-counts against a basal rate the
+    /// consumer already knows about.
+    #[test]
+    fn smb_and_basal_insulin_keep_their_flags() {
+        let r = vec![
+            bolus(1, 1.5, "NORMAL", false),
+            bolus(2, 0.7, "SMB", false),
+            bolus(3, 0.2, "NORMAL", true),
+        ];
+        let t = parse(&treatments(&r));
+        assert!(t[0]["isSMB"].is_null(), "a manual bolus was marked as an SMB");
+        assert!(t[0]["isBasalInsulin"].is_null());
+        assert_eq!(t[1]["isSMB"], true, "an SMB lost its flag");
+        assert_eq!(t[2]["isBasalInsulin"], true, "basal insulin was exported as a plain bolus");
+    }
+
+    /// THE TEMP TARGET REASON IS AN ENUM NAME, LIKE EVERYTHING ELSE.
+    #[test]
+    fn target_reasons_become_nightscout_text() {
+        let r = vec![
+            Record::new(1, "target")
+                .set("lo", Some(80.0.into()))
+                .set("hi", Some(100.0.into()))
+                .set("why", Some("HYPOGLYCEMIA".into())),
+            Record::new(2, "target")
+                .set("lo", Some(140.0.into()))
+                .set("hi", Some(160.0.into()))
+                .set("why", Some("EATING_SOON".into())),
+            // Free text in Nightscout, so an unknown reason survives rather
+            // than being dropped — ugly beats lost.
+            Record::new(3, "target").set("lo", Some(90.0.into())).set("why", Some("SOMETHING".into())),
+        ];
+        let t = parse(&treatments(&r));
+        assert_eq!(t[0]["reason"], "Hypo");
+        assert_eq!(t[1]["reason"], "Eating Soon");
+        assert_eq!(t[2]["reason"], "SOMETHING");
+    }
+
+    #[test]
+    fn a_profile_switch_carries_its_timeshift() {
+        let r = vec![
+            Record::new(1, "profile")
+                .set("name", Some("Default".into()))
+                .set("pct", Some(110.0.into()))
+                .set("shift", Some(2.0.into())),
+        ];
+        let t = parse(&treatments(&r));
+        assert_eq!(t[0]["profile"], "Default");
+        assert_eq!(t[0]["percentage"], 110.0);
+        assert_eq!(t[0]["timeshift"], 2.0, "the timeshift was dropped");
     }
 }

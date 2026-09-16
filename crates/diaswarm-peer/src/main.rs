@@ -605,7 +605,14 @@ async fn cmd_nightscout(dir: &Path, subject: &str, days: u64, out: &Path) -> Res
     // are left out rather than guessed at, and a count that does not add up is
     // the only way a reader would notice.
     let carried = g.records.len();
-    let dropped = carried - entries.len() - treatments.len();
+    let priming = nightscout::priming_excluded(&g.records);
+    if priming > 0 {
+        // **NOT A LOSS, AND NOT SILENT EITHER.** A priming bolus never reaches
+        // the patient — AAPS excludes it from IOB and TDD for the same reason —
+        // and exporting it as `insulin` would inflate every total downstream.
+        eprintln!("{priming} priming bolus(es) excluded — they never reached the patient");
+    }
+    let dropped = carried - entries.len() - treatments.len() - priming;
     if dropped > 0 {
         eprintln!(
             "{dropped} record(s) had no Nightscout shape and were left out (stream headers, and event types outside its vocabulary)"
