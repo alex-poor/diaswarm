@@ -170,7 +170,17 @@ follows is what is actually left.
 | ~~Post the iroh comment~~ | **decided: not posting.** Draft kept as a record. |
 | ~~Readers' scope + withdrawal copy~~ | done, opened on a phone, and shortened because of what that showed. |
 
-### 1. D29 step 1 — the desktop peer UI
+### ~~1. D29 step 1 — the desktop peer~~ — the reading half is DONE
+
+`diaswarm-peer identity | read | export` ships (`383bf0f`). A desktop can now be
+granted, join, read and write CSV. The reading rule moved to
+`diaswarm_keys::follow` so the phones and the desktop share one implementation.
+
+**What is left of step 1 is only the graphical part**, and it was deliberately
+not started: the CLI is what the clinician gateway builds on, and a window buys
+looks before it buys capability.
+
+### 1b. The original argument for it, still unspent
 
 **Unblocked, and the reason has nothing to do with clinicians.** D15 promises a
 subject stays readable while their phone sleeps because somebody else holds the

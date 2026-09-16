@@ -168,8 +168,11 @@ specific one gets it wrong.
 1. ✅ **Rotation on a schedule** (subject) — `8988329`.
 2. ✅ **Carrying, visible** (Ayni) — `b5d985b`.
 3. ✅ **Scope picker on grant** (subject) — `cbfc379`.
-4. ⬜ **Desktop peer UI** (carrier + subject + clinician). D29 step 1, and three
-   of five roles differ only in what they are granted, not in what they run.
+4. 🔨 **Desktop peer** (carrier + subject + clinician). D29 step 1 — the
+   *reading* half now exists: `diaswarm-peer identity | read | export`. A
+   desktop can be granted and can read and export what it was granted. What is
+   still absent is anything graphical; the CLI was chosen first because it is
+   what the clinician gateway will build on.
 5. ⬜ **The clinician gateway.** D29 step 3, honest for the first time.
 
 ⚠️ **1–3 are built but not installed on either phone**, and the loop phone's
