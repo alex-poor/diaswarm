@@ -28,6 +28,26 @@ ExecStart=%h/.local/bin/diaswarm-peer
 Restart=on-failure
 RestartSec=30s
 
+# A LEAK MUST RESTART THE PEER, NOT THE DESKTOP.
+#
+# Measured 2026-09-16: this service reached 8.2 GB anon plus 4.3 million swap
+# entries and the kernel's OOM killer fired. `OOMScoreAdjust` steered it at the
+# peer rather than at the compositor, which worked — but an editor went as
+# collateral and swap had already filled to 46 GB, so the machine was crawling
+# long before anything was killed. An unbounded carrier can take the desktop
+# with it.
+#
+# A carrier holding other people's ciphertext has no business using gigabytes:
+# steady state after catch-up is 50–350 MB, and the transient for one
+# re-subscribe peaks around 750 MB. 2 GB is generous against that and decisive
+# against a runaway.
+#
+# **BOTH, NOT EITHER.** `MemoryHigh` only throttles and lets the process swap the
+# machine to death first, which is exactly what happened; `MemoryMax` is the hard
+# ceiling. High starts reclaim early, Max ends it.
+MemoryHigh=1G
+MemoryMax=2G
+
 # THE SAME DIRECTORY THE BINARY USES WHEN RUN BY HAND. An earlier version of
 # this file pointed the service at `%S` (~/.local/state) while
 # `diaswarm-peer` with no arguments defaults to ~/.local/share — so running it
