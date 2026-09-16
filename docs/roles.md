@@ -11,6 +11,11 @@ be designed from a decision index.
 and cited. What is new is putting the actors side by side, because that is the
 view that shows which promises a UI is allowed to make.
 
+**For what this means for the apps, see
+[roles-to-product.md](roles-to-product.md)** — the per-role deltas, read from
+the code rather than remembered, and the finding that fell out of doing it: a
+scoped grant is meaningless without a rotation schedule, and nothing rotates.
+
 **The honesty rules are load-bearing, not garnish.** `feasibility.md` §11 lists
 sentences this project may never say. A role's "must never be told" column is
 that list, applied to the person in front of the screen.
