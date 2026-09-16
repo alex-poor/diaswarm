@@ -227,10 +227,22 @@ object SwarmSharing {
                 val parts = row.split('\t')
                 val key = parts.getOrElse(0) { "" }
                 val purpose = parts.getOrElse(1) { "" }
+                // **A LIST THAT OMITS SCOPE CANNOT ANSWER "WHAT DID I SHARE?"**
+                // Empty means nobody wrote it down, which is not the same as
+                // "everything" and must not be shown as if it were — a reader
+                // granted before the window existed has an unknown scope, and
+                // guessing it wide would be a guess presented as a promise.
+                val scope = when (val days = parts.getOrElse(2) { "" }.toLongOrNull()) {
+                    null -> ctx.getString(R.string.swarm_reader_scope_unknown)
+                    0L   -> ctx.getString(R.string.swarm_reader_scope_all)
+                    else -> ctx.resources.getQuantityString(
+                        R.plurals.swarm_reader_scope_days, days.toInt(), days
+                    )
+                }
                 view.addView(TextView(ctx).apply {
                     // The whole key, not a prefix: this is the string you paste
                     // into the withdraw box, and a truncated one cannot be.
-                    text = ctx.getString(R.string.swarm_reader_row, purpose, key)
+                    text = ctx.getString(R.string.swarm_reader_row, purpose, scope, key)
                     textSize = 11f
                     setTextIsSelectable(true)
                     setPadding(0, dp(ctx, 6f), 0, dp(ctx, 6f))
@@ -239,6 +251,15 @@ object SwarmSharing {
             view.addView(TextView(ctx).apply {
                 setText(R.string.swarm_readers_explain)
                 setPadding(0, dp(ctx, 12f), 0, 0)
+            })
+            // **AND WHAT STOPPING ACTUALLY DOES**, written down here rather
+            // than invented during a withdrawal. This is the moment somebody
+            // is deciding to do it, and the truth — today goes, finished days
+            // stay — is better than they expect and still not what they hope.
+            view.addView(TextView(ctx).apply {
+                setText(R.string.swarm_revoke_explain)
+                textSize = 11f
+                setPadding(0, dp(ctx, 8f), 0, 0)
             })
         }
         builder.setTitle(R.string.swarm_readers)

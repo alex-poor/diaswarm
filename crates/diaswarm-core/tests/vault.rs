@@ -802,3 +802,59 @@ fn a_reader_already_granted_can_hand_over_a_keys_identity() {
         None
     );
 }
+
+/// A narrower re-grant must not make the readers list *claim* it is narrower.
+///
+/// This is the one thing the scope display can get wrong in a way that matters.
+/// `grant_since` narrows what the next grant hands over and takes nothing back,
+/// so a reader given the whole history on Monday still holds it on Friday, no
+/// matter what window Friday's grant used. A list that showed "24 hours" there
+/// would answer "what did I share?" with something comfortable and false.
+#[test]
+fn reader_scope_widens_and_never_narrows() {
+    let dir = tempdir::TempDir::new("scope").unwrap();
+    let subject = Identity::generate();
+    let reader = Identity::generate();
+    let vault = Vault::create(dir.path(), &subject, OFFSET).expect("vault");
+
+    let reader_pub = x25519_dalek::PublicKey::from(&reader.encryption).to_bytes();
+    let hex = diaswarm_core::vault::hex(&reader_pub);
+    let tag = diaswarm_core::vault::hex(
+        &diaswarm_core::seal::grant_tag(&subject.encryption, &reader_pub, "follow"),
+    );
+    vault.remember_reader(&tag, &reader_pub, "follow").expect("book");
+
+    let scope_of = || {
+        vault.readers().expect("readers").into_iter().find(|k| k.tag == tag).expect("row").scope_days
+    };
+
+    // Nobody has written one down yet, and that is not the same as "everything".
+    assert_eq!(scope_of(), None, "an unrecorded scope was reported as a real one");
+
+    // A window, then a narrower one: the wider stands.
+    vault.remember_reader_scope(&hex, "follow", 30).expect("30");
+    assert_eq!(scope_of(), Some(30));
+    vault.remember_reader_scope(&hex, "follow", 1).expect("1");
+    assert_eq!(scope_of(), Some(30), "a narrower re-grant shrank the recorded scope");
+
+    // A wider one does move it.
+    vault.remember_reader_scope(&hex, "follow", 90).expect("90");
+    assert_eq!(scope_of(), Some(90));
+
+    // 0 is unlimited, so it beats any finite window...
+    vault.remember_reader_scope(&hex, "follow", 0).expect("0");
+    assert_eq!(scope_of(), Some(0), "an unlimited grant did not widen a finite one");
+
+    // ...and nothing narrows it afterwards.
+    vault.remember_reader_scope(&hex, "follow", 7).expect("7");
+    assert_eq!(scope_of(), Some(0), "a window appeared to take back an unlimited grant");
+
+    // A re-grant rewrites the row; it must not drop the scope with it.
+    vault.remember_reader(&tag, &reader_pub, "follow").expect("re-grant");
+    assert_eq!(scope_of(), Some(0), "an upsert forgot the recorded scope");
+
+    // Somebody this subject has never granted is silently ignored, not an error.
+    let stranger = diaswarm_core::vault::hex(&[9u8; 32]);
+    vault.remember_reader_scope(&stranger, "follow", 5).expect("stranger");
+    assert_eq!(vault.readers().expect("readers").len(), 1);
+}

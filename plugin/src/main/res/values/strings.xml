@@ -16,12 +16,29 @@
     <string name="swarm_grant">Share with someone</string>
     <string name="swarm_grant_summary">Paste the key they gave you. They will be able to read as much history as the setting above allows.</string>
     <string name="swarm_revoke">Stop sharing with</string>
-    <string name="swarm_revoke_summary">Paste their key. Takes effect immediately — but they keep whatever they already downloaded.</string>
+    <string name="swarm_revoke_summary">Paste their key. They stop getting anything new, lose today, and keep every day that had already finished.</string>
 
     <string name="swarm_readers">Who can read</string>
     <string name="swarm_readers_summary">The people you have shared with</string>
-    <string name="swarm_reader_row">%1$s\n%2$s</string>
+    <string name="swarm_reader_row">%1$s\n%2$s\n%3$s</string>
+    <!-- What a reader can actually open. "Everything" and "not recorded" are
+         deliberately different: one is a fact, the other is the absence of one,
+         and showing an unknown scope as unlimited would be a guess presented as
+         a promise. -->
+    <string name="swarm_reader_scope_all">Can read your whole history</string>
+    <plurals name="swarm_reader_scope_days">
+        <item quantity="one">Can read the last day</item>
+        <item quantity="other">Can read the last %1$d days</item>
+    </plurals>
+    <string name="swarm_reader_scope_unknown">How much they can read was not recorded — this share is older than the setting</string>
     <string name="swarm_readers_explain">To stop sharing with someone, copy their key above and paste it into “Stop sharing with”.</string>
+    <!-- THE HONEST SENTENCE, and it is better than people expect while still
+         not being what they hope. Sealing re-seals the whole accumulated day
+         under the newest secret, so stopping at noon takes this morning back
+         too; finished days keep their own secret and cannot be reached. Nothing
+         here can delete what is already on their phone, and saying otherwise
+         would be the one lie this screen must never tell. -->
+    <string name="swarm_revoke_explain">Stopping takes effect at once. They get nothing new, and today goes back out of reach as well — but every day that had already finished stays readable to them, and nothing can change that. The keys are on their phone and the sealed records are spread across other people\'s phones. If that matters, share a smaller window next time.</string>
     <string name="swarm_no_readers">Nobody. Use “Share with someone” to add a key.</string>
 
     <string name="swarm_scan">Scan a code</string>

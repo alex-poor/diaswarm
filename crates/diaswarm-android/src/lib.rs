@@ -1165,7 +1165,13 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultReaders<'a>(
         .readers()
         .unwrap_or_default()
         .iter()
-        .map(|k| format!("{}\t{}", k.reader, k.purpose))
+        // Three fields now. The scope is "" when nobody wrote it down, which
+        // the caller must render as unknown rather than as unlimited — see
+        // `KnownReader::scope_days`.
+        .map(|k| {
+            let scope = k.scope_days.map(|d| d.to_string()).unwrap_or_default();
+            format!("{}\t{}\t{}", k.reader, k.purpose, scope)
+        })
         .collect::<Vec<_>>()
         .join("\n");
     to_jstring(env, listing)
@@ -1380,6 +1386,42 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultNoteReaderKeys<'a>(
         (String::from(v), String::from(r), String::from(p), String::from(k));
     let Ok(vault) = Vault::open(Path::new(&v)) else { return -3 };
     match vault.remember_reader_keys(&r, &p, &k) {
+        Ok(()) => 0,
+        Err(_) => -4,
+    }
+}
+
+/// Write down how much history a reader was granted, so *Show readers* can say.
+///
+/// `days` is 0 for the whole history, matching the preference the subject
+/// chose. Widens and never narrows — a reader given everything and later
+/// re-granted a window still holds everything, and the list has to say what
+/// they can open rather than what was last typed. See
+/// `Vault::remember_reader_scope`.
+///
+/// 0 whether or not it matched, like its sibling above.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultNoteReaderScope<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    vault_path: JString<'a>,
+    reader_pub: JString<'a>,
+    purpose: JString<'a>,
+    days: jlong,
+) -> jlong {
+    let (Ok(v), Ok(r), Ok(p)) = (
+        env.get_string(&vault_path),
+        env.get_string(&reader_pub),
+        env.get_string(&purpose),
+    ) else {
+        return -1;
+    };
+    if days < 0 {
+        return -2;
+    }
+    let (v, r, p) = (String::from(v), String::from(r), String::from(p));
+    let Ok(vault) = Vault::open(Path::new(&v)) else { return -3 };
+    match vault.remember_reader_scope(&r, &p, days as u64) {
         Ok(()) => 0,
         Err(_) => -4,
     }

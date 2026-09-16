@@ -50,8 +50,8 @@ Publishing, sealing and carrying all work.
 |---|---|---|
 | ✅ **Rotate on a schedule** | the finding above — without it no grant can be scoped | done, `8988329` |
 | ✅ **Scope picker on grant** | D11 says family needs 24 h; they got everything | done, `cbfc379` |
-| ⬜ **Show each reader's scope** in *Show readers* | a grant list that omits scope cannot answer "what did I share?" | still open |
-| ⬜ **Honest withdrawal copy** | the wording is unwritten, so it will be invented at the worst moment | still open |
+| 🔨 **Show each reader's scope** in *Show readers* | a grant list that omits scope cannot answer "what did I share?" | built, not yet seen on a screen |
+| 🔨 **Honest withdrawal copy** | the wording is unwritten, so it will be invented at the worst moment | built, not yet seen on a screen |
 | ✅ **A name for the subject** | a follower showed sixteen hex characters | done, `a1d51af` + `cd3f4ac` |
 
 **UI implications**
@@ -176,11 +176,23 @@ specific one gets it wrong.
 install is the owner's call. Built is not shipped, and this project has been
 caught by that distinction before.
 
-⚠️ **Two small ones from the subject table are still open**: the readers list
-does not say what scope each reader got, and the withdrawal copy is still
-unwritten. The true sentence is in roles.md — "they lose today and keep every
-day that already finished" — and writing it into a dialog now is cheaper than
-inventing it during a withdrawal.
+🔨 **Two small ones from the subject table are now BUILT AND COMPILED, and
+neither has been opened on a phone.** The readers list carries each reader's
+scope, and the withdrawal copy says the true sentence from roles.md — "they lose
+today and keep every day that already finished".
+
+⚠️ **Do not tick these off until the dialog has actually been looked at.** A
+compile does not instantiate an Android component, and this list has been wrong
+about that before. *Show readers* needs a grant to display, so seeing it means
+granting a reader on a phone running the new plugin.
+
+**The scope shown is the WIDEST grant ever made, not the latest**, because
+`grant_since` narrows the next grant and takes nothing back — a reader given
+everything on Monday and re-granted a day on Friday still holds everything.
+Showing Friday's number would answer "what did I share?" with a comfortable lie.
+`reader_scope_widens_and_never_narrows` in `crates/diaswarm-core/tests/vault.rs`
+is what holds that. A reader granted before the field existed reads as *not
+recorded*, which is deliberately not the same as *everything*.
 
 ⚠️ **1–3 are small and none of them is a new product.** The reason to do them
 first is not that they are easy: it is that each one closes a gap between

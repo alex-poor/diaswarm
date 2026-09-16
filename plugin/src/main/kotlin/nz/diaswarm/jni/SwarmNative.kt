@@ -618,6 +618,24 @@ object SwarmNative {
         keysIdentity: String
     ): Long
 
+    /**
+     * Write down how much history a reader was granted, so the list can say.
+     *
+     * [days] is 0 for the whole history, matching the window the subject chose.
+     *
+     * Widens and never narrows. A scoped grant limits what the *next* grant
+     * hands over and takes nothing back, so a reader given everything and later
+     * re-granted a window still holds everything — recording the newer, smaller
+     * number would make *Show readers* answer "what did I share?" with a
+     * comfortable lie.
+     */
+    external fun vaultNoteReaderScope(
+        vaultPath: String,
+        readerPub: String,
+        purpose: String,
+        days: Long
+    ): Long
+
     external fun keysRevokeReader(handle: Long, readerBundle: String, purpose: String): Long
 
     /**

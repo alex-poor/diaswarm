@@ -1180,6 +1180,13 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                             // withdrawing later has nobody to name. This is the
                             // only moment a scan has it.
                             SwarmNative.vaultNoteReaderKeys(vault, who, PURPOSE, theirKeys)
+                            // **AND WHAT THEY CAN OPEN**, in the same breath
+                            // and for the same reason: this is the only moment
+                            // that holds both the reader and the window. Show
+                            // readers had no way to answer "what did I share
+                            // with them?" without it. Widens only — see
+                            // [SwarmNative.vaultNoteReaderScope].
+                            SwarmNative.vaultNoteReaderScope(vault, who, PURPOSE, days)
                             aapsLogger.info(
                                 LTag.CORE,
                                 "swarm: keys granted as ${tag.take(16)}… — " +

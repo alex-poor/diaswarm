@@ -286,6 +286,21 @@ pub struct KnownReader {
     /// keys vault. `#[serde(default)]`, so an existing book still loads.
     #[serde(default)]
     pub keys: Option<String>,
+    /// How much history this reader can actually open, in days. `Some(0)` is
+    /// the whole of it.
+    ///
+    /// **THE WIDEST GRANT EVER MADE, NOT THE LATEST.** A scoped grant narrows
+    /// what a *new* grant hands over and takes nothing back — a reader given
+    /// everything on Monday and re-granted 24 h on Friday still holds
+    /// everything. Recording the latest number would answer "what did I share?"
+    /// with a comfortable lie. See [`Vault::remember_reader_scope`].
+    ///
+    /// `None` means nobody wrote it down: a reader granted before this field
+    /// existed, or one whose app has no keys vault and so was never scoped at
+    /// all. It is not the same as `Some(0)` and must not be displayed as if it
+    /// were — unknown is unknown.
+    #[serde(default)]
+    pub scope_days: Option<u64>,
 }
 
 pub struct Vault {
@@ -771,6 +786,47 @@ impl Vault {
         self.write_readers(&book)
     }
 
+    /// Note how much history a reader can open, widening but never narrowing.
+    ///
+    /// `days` is 0 for the whole history. Keyed by reader and purpose, like
+    /// [`Vault::remember_reader_keys`], because the grant path holds those two
+    /// and not the tag.
+    ///
+    /// ⚠️ **WIDENING ONLY, AND THAT IS THE WHOLE POINT.** `Vault::grant_since`
+    /// narrows what the *next* grant hands over; it does not take back a secret
+    /// the reader already has. So the honest answer to "what did I share with
+    /// them?" is the widest grant ever made, and this keeps that rather than
+    /// the most recent one. 0 beats every finite number because it is
+    /// unlimited; otherwise the larger window wins.
+    ///
+    /// Silent if this subject does not know them, matching the sibling above.
+    pub fn remember_reader_scope(
+        &self,
+        reader: &str,
+        purpose: &str,
+        days: u64,
+    ) -> Result<(), VaultError> {
+        let mut book = self.readers()?;
+        let Some(slot) = book
+            .iter_mut()
+            .find(|k| k.reader.eq_ignore_ascii_case(reader) && k.purpose == purpose)
+        else {
+            return Ok(());
+        };
+        let widened = match slot.scope_days {
+            // Already unlimited: nothing is wider, so nothing to do.
+            Some(0) => 0,
+            Some(prev) if days != 0 => prev.max(days),
+            // Either this grant is unlimited, or there was no recorded scope.
+            _ => days,
+        };
+        if slot.scope_days == Some(widened) {
+            return Ok(());
+        }
+        slot.scope_days = Some(widened);
+        self.write_readers(&book)
+    }
+
     /// Note a reader's key against their tag, so later segments can be wrapped.
     ///
     /// An upsert keyed by tag, and the tag already fixes the purpose, so
@@ -791,6 +847,10 @@ impl Vault {
             // forget which keys member they are, or withdrawing would go back
             // to having nobody to name.
             keys: book.iter().find(|k| k.tag == tag).and_then(|k| k.keys.clone()),
+            // KEPT ACROSS AN UPSERT, for the same reason as `keys` and one
+            // more: a re-grant cannot shrink what they already hold, so
+            // forgetting the old scope here would silently narrow the answer.
+            scope_days: book.iter().find(|k| k.tag == tag).and_then(|k| k.scope_days),
         };
         match book.iter_mut().find(|k| k.tag == tag) {
             Some(slot) => *slot = entry,
