@@ -103,10 +103,15 @@ being small.
 * ❌ *"Trustless."* They can screenshot and forward, and no protocol reaches
   that.
 
-⚠️ **Today they get everything, not 24 hours.** `Vault::grant` hands over every
-secret the subject still holds. `Vault::grant_since` (2026-09-16) can narrow it,
-and nothing calls it yet. Until something does, this role is over-granted
-relative to what it needs — which is least-privilege debt, not a feature.
+✅ **They can now be given a day.** `Vault::grant_since` narrows the bundle, the
+subject's app rotates daily so a window has boundaries to land on, and a picker
+above the grant control chooses between everything, a day, a week, 30 and 90
+days.
+
+⚠️ **It defaults to everything**, deliberately: that is what the app did before,
+and narrowing silently would take history from people already relying on it. So
+the over-granting is now a choice rather than a certainty — which is the most a
+default can honestly be.
 
 **Constrained by:** D11, D30, D15.
 
