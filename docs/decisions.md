@@ -4,6 +4,11 @@ What is settled, why, and what evidence would reopen it. Reasoning lives in
 [feasibility.md](feasibility.md); this is the index so a decision is not quietly
 re-litigated six weeks from now.
 
+**For who these decisions are actually about, see [roles.md](roles.md)** — the
+five actors side by side, what each must see, and what each may never be told.
+The constraints there are all from this file; what that document adds is the
+view a UI has to be designed against.
+
 **`D1`–`D9` here are decisions. `RQ1`–`RQ10` in feasibility.md §8 are the
 requirements frameworks are judged against.** Both were `D` until a review found
 that `D3` meant *"audit is given up"* in this document and *"data survives for
