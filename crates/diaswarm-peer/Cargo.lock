@@ -940,6 +940,7 @@ dependencies = [
  "diaswarm-net",
  "p2panda-core",
  "p2panda-store",
+ "serde_json",
  "tokio",
 ]
 

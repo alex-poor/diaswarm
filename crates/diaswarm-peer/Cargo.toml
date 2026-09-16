@@ -33,6 +33,11 @@ anyhow = "1"
 # preference in this project is explicit about that trade.
 clap = { version = "4", features = ["derive"] }
 
+[dev-dependencies]
+# TO PARSE WHAT WE EMIT. A bundle that is not valid JSON is not a bundle, and
+# asserting on substrings would not catch it.
+serde_json = "1"
+
 [profile.release]
 strip = true
 lto = true

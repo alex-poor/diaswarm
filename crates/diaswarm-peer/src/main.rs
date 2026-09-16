@@ -18,6 +18,9 @@
 //! new grant semantics; the research gateway needs time-scoped grants and does
 //! not exist.
 
+mod agp;
+mod fhir;
+
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -146,7 +149,33 @@ enum Cmd {
         json: bool,
     },
 
-    /// Write what a subject has granted this peer to a CSV file.
+    /// A clinical summary of what a subject granted, as a FHIR bundle.
+    ///
+    /// **THIS IS THE CLINICIAN'S VIEW, AND `export` IS NOT.** A clinic does not
+    /// read 143,000 glucose values; it reads time in range, mean, variability
+    /// and how much of the window the sensor was working. FHIR because that is
+    /// what an institution can ingest — feasibility §10.7.
+    Summary {
+        /// The subject's identity, from their invite — not their 64-hex key.
+        #[arg(long, value_name = "IDENTITY-HEX")]
+        subject: String,
+        /// The window to summarise. 0 summarises everything readable.
+        #[arg(long, default_value_t = 90, value_name = "N")]
+        days: u64,
+        /// The Patient this is about, for `Observation.subject`.
+        ///
+        /// **REQUIRED, AND NOT INVENTED HERE.** A gateway that minted patient
+        /// identifiers would be the identity broker D5 forbids; the receiving
+        /// institution's identifier is the caller's to supply.
+        #[arg(long, value_name = "PATIENT-ID")]
+        patient: String,
+        /// Where to write. `-` writes to stdout.
+        #[arg(long, default_value = "-", value_name = "FILE")]
+        out: PathBuf,
+    },
+
+    /// Write what a subject has granted this peer to a CSV file, one row per
+    /// record. The researcher's shape, not the clinician's.
     Export {
         /// The subject's identity, from their invite — not their 64-hex key.
         #[arg(long, value_name = "IDENTITY-HEX")]
@@ -493,6 +522,53 @@ async fn cmd_export(dir: &Path, subject: &str, out: &Path, days: u64) -> Result<
     Ok(())
 }
 
+async fn cmd_summary(
+    dir: &Path,
+    subject: &str,
+    days: u64,
+    patient: &str,
+    out: &Path,
+) -> Result<()> {
+    let g = granted_records(dir, subject, days).await?;
+    let Some(summary) = agp::Agp::from_records(&g.records) else {
+        anyhow::bail!(
+            "no CGM readings in what this peer can open — {}",
+            describe_skipped(g.opened, &g.skipped)
+        );
+    };
+    let bundle = fhir::cgm_summary_bundle(&summary, patient);
+
+    if out == Path::new("-") {
+        println!("{bundle}");
+    } else {
+        std::fs::write(out, bundle.as_bytes())
+            .with_context(|| format!("writing {}", out.display()))?;
+        eprintln!("FHIR CGM summary → {}", out.display());
+    }
+
+    // **EVERYTHING BELOW GOES TO STDERR**, so `--out -` stays a clean bundle a
+    // pipe can hand to a validator.
+    eprintln!("window: {}", describe_window(g.granted_from));
+    eprintln!("{}", describe_skipped(g.opened, &g.skipped));
+    eprintln!(
+        "{} reading(s) at a {}s cadence · in range {:.1}% · mean {:.0} mg/dL · GMI {:.1}% · CV {:.1}%",
+        summary.readings,
+        summary.cadence_seconds,
+        summary.in_range_percent,
+        summary.mean_mgdl,
+        summary.gmi_percent,
+        summary.cv_percent,
+    );
+    // **SAY WHEN IT IS NOT ENOUGH TO ACT ON.** The consensus asks for 14 days at
+    // 70% active; a report that quietly summarises four days looks exactly like
+    // one that summarises ninety.
+    match summary.insufficiency() {
+        Some(why) => eprintln!("⚠️ NOT a reliable estimate: {why}"),
+        None => eprintln!("meets the consensus minimum (14 days, 70% active)"),
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -513,6 +589,9 @@ async fn main() -> Result<()> {
         }
         Some(Cmd::Export { subject, out, days }) => {
             return cmd_export(&dir, &subject, &out, days).await;
+        }
+        Some(Cmd::Summary { subject, days, patient, out }) => {
+            return cmd_summary(&dir, &subject, days, &patient, &out).await;
         }
         None => {}
     }
@@ -715,10 +794,17 @@ mod tests {
         wire::publish_control(&store, &subject_key, &create).await.unwrap();
 
         let epoch = 20_000i64;
-        let records = vec![
-            Record::new(epoch * EPOCH_MS + 60_000, "cgm").set("mgdl", Some(101.0.into())),
+        // A realistic minute-cadence hour, so the summary has something to be a
+        // summary of, plus one treatment to prove kinds stay separate.
+        let mut records: Vec<Record> = (0..60)
+            .map(|i| {
+                let mgdl = 100.0 + (i as f64 * 3.0) % 120.0;
+                Record::new(epoch * EPOCH_MS + i * 60_000, "cgm").set("mgdl", Some(mgdl.into()))
+            })
+            .collect();
+        records.push(
             Record::new(epoch * EPOCH_MS + 120_000, "bolus").set("units", Some(1.5.into())),
-        ];
+        );
         let segment = subject.seal(epoch, &records).unwrap();
         wire::publish(&store, &subject_key, &segment).await.unwrap();
 
@@ -737,7 +823,7 @@ mod tests {
         assert_eq!(g.skipped.lost(), 0, "a freshly granted peer hit {} fault(s)", g.skipped.lost());
         assert_eq!(g.skipped.not_ours, 0, "an unscoped grant left segments outside the window");
         assert!(g.opened >= 1, "no segment was opened at all");
-        assert_eq!(g.records.len(), 2, "expected both records, got {}", g.records.len());
+        assert_eq!(g.records.len(), 61, "expected 60 readings and a bolus, got {}", g.records.len());
         assert!(g.records.iter().any(|r| r.kind() == "cgm"), "the cgm record is missing");
         assert!(g.records.iter().any(|r| r.kind() == "bolus"), "the bolus record is missing");
 
@@ -772,7 +858,7 @@ mod tests {
 
         // ---- reading twice must not re-join and lose the secret bundle ----
         let again = granted_records(&dir, &subject_identity_hex, 0).await.expect("reread");
-        assert_eq!(again.records.len(), 2, "the second read lost records — it probably re-joined");
+        assert_eq!(again.records.len(), 61, "the second read lost records — it probably re-joined");
 
         // ---- and the export names the columns that arrived ----
         let out = dir.join("export.csv");
@@ -782,6 +868,32 @@ mod tests {
         assert!(header.starts_with("t,k"), "header does not lead with t,k: {header}");
         assert!(header.contains("mgdl"), "a column that arrived is missing: {header}");
         assert!(header.contains("units"), "a column that arrived is missing: {header}");
-        assert_eq!(csv.lines().count(), 3, "expected a header and two rows:\n{csv}");
+
+        // ---- AND THE CLINICIAN'S VIEW, THROUGH THE REAL COMMAND ----
+        //
+        // **THIS IS THE PATH A CLINIC ACTUALLY GETS**, and it runs over data
+        // that came out of a real grant rather than a fixture: sealed by a
+        // subject, replicated as operations, opened with a granted secret.
+        let bundle_path = dir.join("summary.json");
+        cmd_summary(&dir, &subject_identity_hex, 0, "patient-42", &bundle_path)
+            .await
+            .expect("summary");
+        let bundle = std::fs::read_to_string(&bundle_path).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&bundle).expect("bundle is not JSON");
+        assert_eq!(v["resourceType"], "Bundle");
+        assert_eq!(v["entry"].as_array().unwrap().len(), 7);
+        assert_eq!(
+            v["entry"][0]["resource"]["subject"]["reference"], "Patient/patient-42",
+            "the summary is about somebody else"
+        );
+        // The bolus must not have been counted as glucose.
+        let summary = agp::Agp::from_records(&g.records).expect("agp");
+        assert_eq!(summary.readings, 60, "a treatment leaked into the glucose statistics");
+        assert_eq!(summary.cadence_seconds, 60, "the minute cadence was not detected");
+        assert!(
+            summary.insufficiency().is_some(),
+            "one hour of data must not be reported as enough to act on"
+        );
+        assert_eq!(csv.lines().count(), 62, "expected a header and 61 rows");
     }
 }

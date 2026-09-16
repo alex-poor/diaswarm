@@ -200,7 +200,13 @@ specific one gets it wrong.
    desktop can be granted and can read and export what it was granted. What is
    still absent is anything graphical; the CLI was chosen first because it is
    what the clinician gateway will build on.
-5. ⬜ **The clinician gateway.** D29 step 3, honest for the first time.
+5. 🔨 **The clinician gateway.** D29 step 3. **Phase A and the digest are
+   built**: `diaswarm-peer summary --subject … --days 90 --patient …` emits an
+   HL7 CGM v1.0.0 FHIR bundle — times in ranges, mean glucose, GMI, CV, days of
+   wear, sensor active — and states the window it actually holds plus whether
+   the period meets the consensus minimum. ⚠️ **Not yet validated against a
+   FHIR server**, which is the condition §10.7 sets for reopening the
+   interoperability verdict.
 
 ⚠️ **1–3 are built but not installed on either phone**, and the loop phone's
 install is the owner's call. Built is not shipped, and this project has been
