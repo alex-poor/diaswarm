@@ -321,12 +321,43 @@ cargo run --bin diaswarm-net -- keep  /tmp/store2 '<invite>'     # peer 2 follow
 cargo run --bin diaswarm-net -- peer  /tmp/store2 /tmp/n2.key /tmp/friend.id
 ```
 
+## A desktop in the pool
+
+`diaswarm-peer` is a machine that does not sleep. **Every other holder is a
+phone**, and the promise that your data stays reachable while your phone is
+asleep rests on somebody else having the bytes — so one mains-powered peer makes
+that structural rather than probabilistic.
+
+Run with no arguments and it carries. It can read nothing it carries.
+
+```sh
+diaswarm-peer                                   # carry a share of the pool
+diaswarm-peer identity                          # the string a subject grants
+diaswarm-peer read    --subject <identity> --days 1
+diaswarm-peer export  --subject <identity> --out day.csv
+diaswarm-peer summary --subject <identity> --days 90 --patient <id>
+```
+
+`read` and `export` are the raw records, one row each. **`summary` is the
+clinician's view and is deliberately not those**: a Libre 3 reports every
+minute, so ninety days is about 143,000 readings, and handing a clinic that is
+handing them nothing. It emits an [HL7 CGM FHIR
+bundle](https://hl7.org/fhir/uv/cgm/) — time in range, mean glucose, GMI,
+variability, days of wear, sensor active — which validates against HL7's own
+validator with zero errors.
+
+**It states the window it actually holds**, read off the keys rather than off a
+flag it was passed, so it cannot claim ninety days it was not granted. And it
+says when a period is too short to act on: the consensus asks for 14 days at
+70% sensor active, and a report quietly summarising four days looks exactly like
+one summarising ninety.
+
 ## Repository
 
 ```
 spec/records.md          The wire contract. Versioned in-band
 docs/feasibility.md      The assessment: architecture, costs, what must not be claimed
-docs/decisions.md        What is settled (D1–D23), and what would reopen each
+docs/decisions.md        What is settled (D1–D32), and what would reopen each
 docs/migration.md        Moving onto p2panda: what is proven, and what a cutover still needs
 docs/rights.md           The Diabetes Data Rights Charter, and where this fails it
 
@@ -334,6 +365,8 @@ crates/diaswarm-core     Records, sealing, the vault, grants. The reference impl
 crates/diaswarm-net      The pool: membership and buckets (pool.rs, swarm.rs) over
                          p2panda-net, and the vault protocol they carry
 crates/diaswarm-android  The JNI surface the phone calls
+crates/diaswarm-peer     The desktop: an always-on carrier, a reader, and the
+                         clinician's FHIR summary
 plugin/                  The AAPS add-on: settings screen, QR scanner, sync worker
 follower/                Ayni — the standalone follower app. No AAPS in it at all
 
@@ -418,6 +451,15 @@ Released builds are signed by CI on a `follower-v*` tag; the workflow is
   only recent days.
 - **No pause.** The only controls are withdrawing the grant or turning the plugin
   off. There is nothing between "sharing" and "not sharing".
+- **The follower's memory grows and it is not yet fixed.** Measured over three
+  hours on a phone: live allocation roughly doubles, and it is retained objects
+  rather than an allocator holding pages back. The suspect is a per-topic
+  broadcast channel in `p2panda-net` that is re-created for topics already
+  subscribed. A separate and much worse leak in `iroh` is worked around in
+  `vendor/iroh`.
+- **The clinical summary has never been accepted by a real system.** It validates
+  against HL7's own validator with zero errors, which is not the same as one
+  FHIR server ingesting it, and no clinic has been handed one.
 - **iOS is out of scope.**
 
 ## Licence
