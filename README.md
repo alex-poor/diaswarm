@@ -336,6 +336,7 @@ diaswarm-peer identity                          # the string a subject grants
 diaswarm-peer read    --subject <identity> --days 1
 diaswarm-peer export  --subject <identity> --out day.csv
 diaswarm-peer summary --subject <identity> --days 90 --patient <id>
+diaswarm-peer nightscout --subject <identity> --out ./ns
 ```
 
 `read` and `export` are the raw records, one row each. **`summary` is the
@@ -345,6 +346,10 @@ handing them nothing. It emits an [HL7 CGM FHIR
 bundle](https://hl7.org/fhir/uv/cgm/) — time in range, mean glucose, GMI,
 variability, days of wear, sensor active — which validates against HL7's own
 validator with zero errors.
+
+`nightscout` writes `entries.json` and `treatments.json` in the shapes the
+ecosystem already speaks, so a follower app, watch face or clinic dashboard can
+read a diaswarm vault without knowing anything about it.
 
 **It states the window it actually holds**, read off the keys rather than off a
 flag it was passed, so it cannot claim ninety days it was not granted. And it

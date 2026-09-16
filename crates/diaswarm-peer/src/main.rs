@@ -20,6 +20,7 @@
 
 mod agp;
 mod fhir;
+mod nightscout;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -171,6 +172,22 @@ enum Cmd {
         patient: String,
         /// Where to write. `-` writes to stdout.
         #[arg(long, default_value = "-", value_name = "FILE")]
+        out: PathBuf,
+    },
+
+    /// Nightscout `entries.json` and `treatments.json`, for the ecosystem.
+    ///
+    /// **THE CHEAPEST BRIDGE TO EVERYTHING THAT ALREADY EXISTS** — follower
+    /// apps, watch faces, clinic dashboards. feasibility §10.7.
+    Nightscout {
+        /// The subject's identity, from their invite — not their 64-hex key.
+        #[arg(long, value_name = "IDENTITY-HEX")]
+        subject: String,
+        /// Only the newest N days. 0 exports everything readable.
+        #[arg(long, default_value_t = 0, value_name = "N")]
+        days: u64,
+        /// Directory to write `entries.json` and `treatments.json` into.
+        #[arg(long, value_name = "DIR")]
         out: PathBuf,
     },
 
@@ -569,6 +586,36 @@ async fn cmd_summary(
     Ok(())
 }
 
+async fn cmd_nightscout(dir: &Path, subject: &str, days: u64, out: &Path) -> Result<()> {
+    let g = granted_records(dir, subject, days).await?;
+    let entries = nightscout::entries(&g.records);
+    let treatments = nightscout::treatments(&g.records);
+
+    std::fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
+    let e_path = out.join("entries.json");
+    let t_path = out.join("treatments.json");
+    std::fs::write(&e_path, nightscout::as_array(&entries).as_bytes())
+        .with_context(|| format!("writing {}", e_path.display()))?;
+    std::fs::write(&t_path, nightscout::as_array(&treatments).as_bytes())
+        .with_context(|| format!("writing {}", t_path.display()))?;
+
+    eprintln!("{} entry(ies) → {}", entries.len(), e_path.display());
+    eprintln!("{} treatment(s) → {}", treatments.len(), t_path.display());
+    // **SAY WHAT WAS DROPPED.** Records whose kind has no Nightscout event type
+    // are left out rather than guessed at, and a count that does not add up is
+    // the only way a reader would notice.
+    let carried = g.records.len();
+    let dropped = carried - entries.len() - treatments.len();
+    if dropped > 0 {
+        eprintln!(
+            "{dropped} record(s) had no Nightscout shape and were left out (stream headers, and event types outside its vocabulary)"
+        );
+    }
+    eprintln!("window: {}", describe_window(g.granted_from));
+    eprintln!("{}", describe_skipped(g.opened, &g.skipped));
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -592,6 +639,9 @@ async fn main() -> Result<()> {
         }
         Some(Cmd::Summary { subject, days, patient, out }) => {
             return cmd_summary(&dir, &subject, days, &patient, &out).await;
+        }
+        Some(Cmd::Nightscout { subject, days, out }) => {
+            return cmd_nightscout(&dir, &subject, days, &out).await;
         }
         None => {}
     }
@@ -802,8 +852,12 @@ mod tests {
                 Record::new(epoch * EPOCH_MS + i * 60_000, "cgm").set("mgdl", Some(mgdl.into()))
             })
             .collect();
+        // **`u`, NOT `units` — spec/records.md §2.** The first version of this
+        // fixture invented a field name, and the Nightscout exporter correctly
+        // dropped the record for not having the one the spec defines. A fixture
+        // that does not match the wire tests nothing.
         records.push(
-            Record::new(epoch * EPOCH_MS + 120_000, "bolus").set("units", Some(1.5.into())),
+            Record::new(epoch * EPOCH_MS + 120_000, "bolus").set("u", Some(1.5.into())),
         );
         let segment = subject.seal(epoch, &records).unwrap();
         wire::publish(&store, &subject_key, &segment).await.unwrap();
@@ -867,7 +921,7 @@ mod tests {
         let header = csv.lines().next().unwrap();
         assert!(header.starts_with("t,k"), "header does not lead with t,k: {header}");
         assert!(header.contains("mgdl"), "a column that arrived is missing: {header}");
-        assert!(header.contains("units"), "a column that arrived is missing: {header}");
+        assert!(header.contains('u'), "a column that arrived is missing: {header}");
 
         // ---- AND THE CLINICIAN'S VIEW, THROUGH THE REAL COMMAND ----
         //
@@ -894,6 +948,21 @@ mod tests {
             summary.insufficiency().is_some(),
             "one hour of data must not be reported as enough to act on"
         );
+
+        // ---- AND THE ECOSYSTEM'S SHAPE, THROUGH THE REAL COMMAND ----
+        let ns_dir = dir.join("ns");
+        cmd_nightscout(&dir, &subject_identity_hex, 0, &ns_dir).await.expect("nightscout");
+        let e: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(ns_dir.join("entries.json")).unwrap())
+                .expect("entries.json is not JSON");
+        let t: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(ns_dir.join("treatments.json")).unwrap())
+                .expect("treatments.json is not JSON");
+        assert_eq!(e.as_array().unwrap().len(), 60, "the 60 readings did not become entries");
+        assert_eq!(t.as_array().unwrap().len(), 1, "the bolus did not become a treatment");
+        assert_eq!(e[0]["type"], "sgv");
+        assert_eq!(t[0]["eventType"], "Correction Bolus");
+        assert_eq!(t[0]["insulin"], 1.5);
         assert_eq!(csv.lines().count(), 62, "expected a header and 61 rows");
     }
 }

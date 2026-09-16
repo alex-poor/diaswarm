@@ -1228,6 +1228,24 @@ leaves the *access* non-interoperable, which is the price named in
 against real consumers — a Nightscout instance ingesting `entries`, and one FHIR
 server validating a bundle.
 
+✅ **BOTH SHAPES LAND, 2026-09-16**, in `crates/diaswarm-peer`: `summary` emits
+the FHIR CGM bundle and `nightscout` emits `entries.json` and
+`treatments.json`. The FHIR half **validates against HL7's own validator with
+zero errors** (`validator_cli` + `hl7.fhir.uv.cgm#1.0.0`, R4).
+
+⚠️ **THE VERDICT DOES NOT REOPEN YET.** The condition is *round-trip against
+real consumers*, and neither has faced one: no Nightscout instance has ingested
+these entries and no FHIR server has accepted this bundle. A validator agreeing
+a document conforms is necessary and is not the same claim.
+
+**What the Nightscout half had to convert, none of it visible from the wire
+format**: `trend` and event `type` are AAPS *enum names* where Nightscout wants
+its own text (`FORTY_FIVE_UP` → `FortyFiveUp`, `CANNULA_CHANGE` → `Site
+Change`), and `dur` is milliseconds where `duration` is minutes — a passthrough
+turns a 30-minute temp basal into one lasting 1,800,000. The field names are
+read out of AAPS's own Nightscout SDK rather than from documentation, because
+AAPS is the consumer on the other side of this bridge.
+
 ## 11. Calling this decentralised, honestly
 
 Structure borrowed from `seeder-architecture.md` §10, which is the right way to
