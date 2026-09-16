@@ -57,8 +57,16 @@ them, and carry their share of strangers' ciphertext like anyone else.
 * ❌ *"We can show you who read your data."* Nobody can. Anyone may pull
   ciphertext and there is nothing to log.
 * ❌ *"Delete my data."* Say *"nothing new is added and no new key is issued."*
-* ❌ *"Revoke"* as though it recalls. Say *"nothing new will be sent after you
-  stop it."* Withdrawal bites forward only.
+* ❌ *"Revoke"* as though it recalls closed days. Say *"nothing new will be
+  sent after you stop it, and they keep what they already have."*
+
+  ⚠️ **It bites back further than "forward only", and by exactly one day.**
+  `seal` re-seals the whole accumulated day under the *latest* secret, so a
+  reader revoked at noon loses this morning as well — the segment they could
+  already open is re-sealed out from under them. Closed days keep their own
+  secret and are kept forever. So the true sentence is *"they lose today and
+  keep every finished day"*, which is worth saying accurately because it is
+  better than people expect and still not what they hope.
 * ❌ Anything implying a follower's view is safe for a dosing decision. D7's
   read-only isolation is a safety property.
 
@@ -182,6 +190,42 @@ scoped grants, then the gateway. Step 2 landed today; this is step 3, and
 is how that stops being true.
 
 **Constrained by:** D5, D11 (research is not the flagship), `rights.md` §6.
+
+---
+
+## Why a revocation cannot reach backwards
+
+Asked directly, and worth recording because it is the first thing anyone
+reasonable assumes: **can a withdrawal remove the history already shared?**
+
+**No, for two independent reasons, either of which alone would be enough.**
+
+1. **The secrets are on the reader's device.** A grant hands over `GroupSecret`s
+   that live in their vault. `revoke` rotates the group secret so what comes
+   next is sealed under one they do not hold. Nothing reaches into their
+   storage, and nothing could.
+2. **The ciphertext is permanent.** A DHT cannot unpublish
+   (`feasibility.md` §7.4). Closed days are replicated across carriers — and
+   under D30 the revoked reader is themselves one of those carriers.
+
+**Crypto-shredding does not rescue it.** Destroying a key works when you hold
+the only copy. Here the reader holds the key *and* the bytes.
+
+**An honest client deleting on request is not a protocol property.** It works
+against a cooperative reader and is worthless against any other, so it must
+never be offered as a guarantee.
+
+### What actually limits the damage: give less to begin with
+
+The only real mitigation is scope at grant time. A family reader needs 24 hours
+(D11) and currently receives every secret the subject holds — so a withdrawal
+today leaves them holding everything. A reader granted through
+`Vault::grant_since` against a daily rotation holds one day, so the same
+withdrawal leaves them one day.
+
+**That is the same over-granting debt this document identifies below**, arrived
+at from the other direction. It is not a tidiness issue: it is the difference
+between a withdrawal that leaves somebody a day and one that leaves them a life.
 
 ---
 
