@@ -1,5 +1,30 @@
 # Handover — 2026-09-16 14:15
 
+> ⚠️ **PARTLY SUPERSEDED, 15:05.** Read this block before acting on §1 or §3.
+>
+> * **§3.1 is DONE.** The residual leak is named: p2panda-net allocates a
+>   `broadcast::channel(1024)` ring (~176 KB) per topic and re-creates them for
+>   topics that are *already subscribed* — the carried set sat at five the whole
+>   time. SQLite page cache is the second half. `pending_open_paths` is absent
+>   from the profile, so the vendored patch is confirmed holding.
+>   → `docs/measurements/2026-09-16-residual-leak-profiled.md`
+> * **The +0.7 MB/min figure was wrong** — it is **+0.52**, and the sqlx pool
+>   (~5 MB a connection) was the confound.
+>   → `docs/measurements/2026-09-16-residual-leak-analysis.md`
+> * **The soak is over.** It ended at t+371m because phone B left adb, not
+>   because of the 6 h FGS kill; pid 6562 survived and was still running at
+>   6 h 52 m.
+> * **§3.3 is decided: the iroh comment will NOT be posted.** The draft stays as
+>   a record.
+> * **§3.4 is built and compiles, and has NOT been opened on a phone.**
+> * **Ayni is now 0.1.7 (codes 81/82), built and signed.** Deliberately **not
+>   tagged** — a `follower-v*` tag is itself the F-Droid release.
+> * **The AAPS plugin now builds** (`BUILD SUCCESSFUL`, 14:45) and was never
+>   built at the time this was written.
+>
+> §0's central point stands and is the main open item: **almost nothing from
+> today is installed on a phone.**
+
 Everything is committed and pushed. Working tree clean. Fifteen commits today.
 
 ⚠️ **`README.md` and `fdroid/nz.diaswarm.ayni.yml` have carried the owner's own
