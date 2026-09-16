@@ -172,6 +172,24 @@ fun PasteInviteDialog(onFollow: (String) -> Unit, onClose: () -> Unit) {
     )
 }
 
+/**
+ * A section heading inside a sheet.
+ *
+ * Small, upper-ish and in the dim colour, so it groups the rows under it
+ * without competing with the dialog's own title — the thing that went wrong
+ * when one section's name WAS the title.
+ */
+@Composable
+private fun SheetHeading(text: String) {
+    Text(
+        text,
+        color = Text2,
+        fontSize = 12.sp,
+        letterSpacing = 0.8.sp,
+        modifier = Modifier.padding(top = 2.dp)
+    )
+}
+
 /** Who this phone follows, and the handful of controls that exist. */
 @Composable
 fun PeopleSheet(
@@ -197,9 +215,21 @@ fun PeopleSheet(
     AlertDialog(
         onDismissRequest = onClose,
         confirmButton = { TextButton(onClick = onClose) { Text("Close") } },
-        title = { Text("People you follow") },
+        // **THE SHEET IS THE WHOLE MENU, AND IT WAS TITLED AS ONE SECTION OF
+        // ITSELF.** `AlertDialog` renders `title` as a headline and `text` as
+        // its body, so naming it "People you follow" put every app-wide setting
+        // — units, the sleep behaviour, both vault toggles, the colour band —
+        // underneath a heading about people, reading as though they belonged to
+        // whoever was listed above them.
+        //
+        // Reported by the owner opening it: "'people you follow' looks like a
+        // title and all the other menu items look like children". They do,
+        // because it is and they were. The headings below say which rows are
+        // about a person and which are about the app.
+        title = { Text("ayni") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SheetHeading("People you follow")
                 if (followed.isEmpty()) {
                     Text("Nobody yet.", color = Text2)
                 } else {
@@ -218,7 +248,11 @@ fun PeopleSheet(
                         }
                     }
                 }
-                Divider(color = Color(0xFF2A3140))
+                // THE DIVIDER MOVED DOWN. It used to sit here, cutting the
+                // people off from the three actions that are entirely about
+                // people — scanning, pasting and showing an invite — and
+                // joining those to the app settings instead. The break belongs
+                // where the subject changes, which is at "Settings".
                 Text("Scan an invite", color = Text1, fontSize = 15.sp,
                     modifier = Modifier.fillMaxWidth().clickable { onScan() }.padding(vertical = 8.dp))
                 // **BECAUSE SCANNING NEEDS TWO PHONES IN ONE ROOM.** An invite
@@ -229,6 +263,8 @@ fun PeopleSheet(
                     modifier = Modifier.fillMaxWidth().clickable { onPaste() }.padding(vertical = 8.dp))
                 Text("Show my invite", color = Text1, fontSize = 15.sp,
                     modifier = Modifier.fillMaxWidth().clickable { onShowInvite() }.padding(vertical = 8.dp))
+                Divider(color = Color(0xFF2A3140))
+                SheetHeading("Settings")
                 Text("Units: ${if (mmol) "mmol/L" else "mg/dL"}", color = Text1, fontSize = 15.sp,
                     modifier = Modifier.fillMaxWidth().clickable { onUnits() }.padding(vertical = 8.dp))
                 // BEFORE THE EXPERIMENTAL ROWS, because this one is about

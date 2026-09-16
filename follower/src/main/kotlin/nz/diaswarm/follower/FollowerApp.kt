@@ -98,8 +98,28 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
         // and scrolled to reveal nothing. Without the scroll, `weight(1f)` can
         // hand the chart everything the cards above it did not take.
         Column(
+            // **THE STATUS BAR IS 136px AND THIS USED TO RESERVE 28.dp.** At
+            // this phone's density that is 74px, so the whole top row — the
+            // name, the carrying count, and the `···` that opens every setting
+            // in the app — was drawn underneath the status bar. The glyph is
+            // visible there, because the app draws edge to edge and the status
+            // bar is transparent. It is not reliably tappable: the status bar
+            // window takes the touch, and only the part of the button below
+            // 136px reaches Compose at all.
+            //
+            // Found by driving it with `adb input tap`: a tap on the dots does
+            // nothing and a tap ten pixels lower opens the sheet. A person
+            // holding the phone gets the same behaviour and no explanation —
+            // "I tap the ... and nothing happens" — which is the report that
+            // started `7c62da4`, arriving from a second direction. That one was
+            // the sheet rendering invisibly; this is the button that opens it.
+            //
+            // `statusBars` rather than a bigger constant, because the number is
+            // the device's and not ours: a phone with a taller cutout moves it
+            // again and a constant would be wrong somewhere else instead.
             Modifier.fillMaxSize().background(Bg)
-                .padding(horizontal = 16.dp).padding(top = 28.dp),
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(horizontal = 16.dp).padding(top = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {

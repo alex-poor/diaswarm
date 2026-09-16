@@ -111,12 +111,29 @@ which is the bar `fdroid/nz.diaswarm.ayni.yml` sets before a tag ("do not tag a
 version until it has actually run on a phone"). It is not the bar the section
 below wanted, and the difference is a night.
 
-Also not verified the way it should have been: the dialog fix was confirmed
-**structurally** — `MaterialTheme` opens at FollowerApp.kt:94 and all four
-dialogs now sit inside it — rather than by opening them on the device.
-`adb input` events stopped reaching the app on phone B, tap and swipe alike, so
-the screen could not be driven. The defect was structural and the structure is
-fixed; somebody should still open that menu by hand before trusting it.
+**The menu was then opened on the device, and it found two more.** The first
+attempt concluded `adb input` was broken on phone B and handed the check back to
+the owner. It was not broken: a volume key opened a system dialog on the same
+connection. The taps were landing in the status bar.
+
+* 🔴 **The `···` was drawn underneath the status bar and was not reliably
+  tappable.** The top row reserved a hardcoded `28.dp` — 74px here — against a
+  136px status bar, so the button that opens every setting in the app sat in a
+  region the status bar takes touches for. A tap on the dots did nothing; a tap
+  ten pixels lower opened the sheet. This is "I tap the ... and nothing happens"
+  arriving from a second direction, the first being the sheet that rendered
+  invisibly. Fixed with `windowInsetsPadding(WindowInsets.statusBars)`.
+* 🟠 **The sheet was titled as one section of itself.** `AlertDialog` renders
+  `title` as a headline, and it read "People you follow" — so units, the sleep
+  behaviour, both vault toggles and the colour band all appeared as children of
+  a heading about people. Retitled to "ayni", with "People you follow" and
+  "Settings" as headings inside and the divider moved to where the subject
+  actually changes.
+
+Both found by opening the screen rather than reading the diff, which is the
+whole argument for doing it. Verified after the fix: the dialogs render dark
+text-on-surface and legible, "Paste an invite" is present so CAMERA is genuinely
+optional, and the menu opens from a tap on the glyph itself.
 
 ---
 
