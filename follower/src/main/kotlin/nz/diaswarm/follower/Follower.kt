@@ -57,10 +57,21 @@ object Follower {
          * Empty is every subject paired before D26 and every subject whose
          * phone has no keys vault — the core vault and nothing else.
          */
-        val keys: String = ""
+        val keys: String = "",
+        /**
+         * What this device calls them, or empty.
+         *
+         * Learned from the invite at pairing and kept locally — see
+         * [Prefs.handleFor]. Empty for everyone paired before invites carried
+         * one, which is why [label] falls back rather than showing a blank.
+         */
+        val handle: String = ""
     ) {
         /** Enough of the key to recognise, without pretending to be a name. */
         val short: String get() = key.take(8)
+
+        /** What to put on screen: their name if there is one, the key if not. */
+        val label: String get() = handle.ifBlank { short }
     }
 
     fun following(context: Context): List<Subject> {
@@ -74,7 +85,8 @@ object Follower {
                     key = it.getOrElse(0) { "" },
                     purpose = it.getOrElse(1) { PURPOSE },
                     reached = it.getOrElse(2) { "0" } == "1",
-                    keys = it.getOrElse(3) { "" }
+                    keys = it.getOrElse(3) { "" },
+                    handle = Prefs.handleFor(context, it.getOrElse(0) { "" })
                 )
             }
             .filter { it.key.isNotEmpty() }

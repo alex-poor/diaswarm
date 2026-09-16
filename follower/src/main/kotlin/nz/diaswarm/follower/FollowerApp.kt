@@ -320,7 +320,7 @@ private fun ChooseCard(followed: List<Follower.Subject>, onChoose: (Follower.Sub
             Text("Whose glucose should this show?", color = Text1, fontSize = 17.sp)
             // Picking one at random would be picking a PERSON at random.
             followed.forEach { s ->
-                Text(s.short, color = Good, fontSize = 15.sp,
+                Text(s.label, color = Good, fontSize = 15.sp,
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
                         .clickable { onChoose(s) }.padding(vertical = 10.dp))
             }
@@ -332,7 +332,7 @@ private fun ChooseCard(followed: List<Follower.Subject>, onChoose: (Follower.Sub
 private fun WaitingCard(subject: Follower.Subject) {
     Card(colors = CardDefaults.cardColors(containerColor = Card), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Following ${subject.short}", color = Text1, fontSize = 17.sp)
+            Text("Following ${subject.label}", color = Text1, fontSize = 17.sp)
             Text(
                 "Nothing readable yet. Following costs them nothing and grants you nothing — " +
                     "they still have to share with you from their own phone.",

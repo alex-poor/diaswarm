@@ -34,6 +34,25 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
             if (pending.isNotEmpty()) {
                 val n = SwarmNative.netFollow(store, pending)
                 Log.i(TAG, "followed an invite: $n")
+                // **LEARN THE NAME HERE, BECAUSE THIS IS THE ONLY TIME IT IS
+                // OFFERED.** The handle travels in the invite and nowhere else
+                // — it is never published — so an invite acted on and discarded
+                // without reading it leaves this device with sixteen hex
+                // characters forever. Stored against the subject key, which is
+                // the identity; the name is only the label. Empty for every
+                // invite issued before v4, and for anyone who has not named
+                // themselves.
+                val fields = SwarmNative.inviteParse(pending).split('\t')
+                val subject = fields.getOrElse(0) { "" }
+                val handle = fields.getOrElse(5) { "" }
+                if (subject.isNotEmpty() && handle.isNotEmpty() &&
+                    Prefs.handleFor(applicationContext, subject).isEmpty()
+                ) {
+                    // Only if this device has not already been told otherwise:
+                    // a name the person edited is theirs, not the invite's.
+                    Prefs.setHandleFor(applicationContext, subject, handle)
+                    Log.i(TAG, "learned a name for ${subject.take(8)}")
+                }
             }
 
             if (Follower.following(applicationContext).isEmpty()) {

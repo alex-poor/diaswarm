@@ -92,6 +92,20 @@ enum class SwarmStringKey(
      */
     GrantReader("swarm_grant_reader", ""),
 
+    /**
+     * What to call this subject in a follower's app.
+     *
+     * **SO A FOLLOWER STOPS SHOWING SIXTEEN HEX CHARACTERS.** It travels in the
+     * invite — the one moment both devices are in the same room — and stops at
+     * the follower's device. It is never published: a name on the swarm would
+     * attach an identity to a subject key for every carrier to see, which is
+     * the leak D13 avoids.
+     *
+     * Empty is the normal state and keeps the invite at the shape every
+     * installed build already reads.
+     */
+    Handle("swarm_handle", ""),
+
     /** A reader to withdraw from. Same shape, same lifecycle. */
     RevokeReader("swarm_revoke_reader", ""),
 

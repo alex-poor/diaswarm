@@ -1209,7 +1209,13 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         val subject = SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)
         val endpoint = SwarmNative.swarmNodeId(handle)
         if (subject.isEmpty() || endpoint.isEmpty()) return ""
-        return SwarmNative.inviteFor(subject, endpoint, PURPOSE, SwarmKeys.identity(context, preferences))
+        return SwarmNative.inviteFor(
+            subject,
+            endpoint,
+            PURPOSE,
+            SwarmKeys.identity(context, preferences),
+            preferences.get(SwarmStringKey.Handle).trim()
+        )
     }
 
     /**

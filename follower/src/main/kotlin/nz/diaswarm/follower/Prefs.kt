@@ -66,6 +66,21 @@ object Prefs {
      * the pairing never completes. Half an hour is slow enough to be free and
      * quick enough that nobody waits for it.
      */
+    /**
+     * What to call a subject, as learned from their invite at pairing.
+     *
+     * **LOCAL, AND EDITABLE.** The handle arrives in the invite, which anyone
+     * can forward and anyone can forge over their own key — so it is a
+     * suggestion this device accepted once, not a claim it keeps believing.
+     * Stored per subject key, which is the identity; the name is the label on
+     * the front. See `Invite::handle`.
+     */
+    fun handleFor(c: Context, subject: String): String =
+        p(c).getString("handle_$subject", "").orEmpty().trim()
+
+    fun setHandleFor(c: Context, subject: String, name: String) =
+        p(c).edit().putString("handle_$subject", name.trim().take(40)).apply()
+
     fun handedOverAt(c: Context, subject: String): Long =
         p(c).getLong(HANDED_OVER_AT + subject, 0L)
 

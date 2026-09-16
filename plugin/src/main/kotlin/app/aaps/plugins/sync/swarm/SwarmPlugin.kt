@@ -204,6 +204,17 @@ class SwarmPlugin @Inject constructor(
                     }
                 )
             )
+            // **BEFORE GRANTING, BECAUSE IT IS WHAT THE OTHER PERSON WILL
+            // SEE.** A follower that has scanned an unnamed invite shows
+            // sixteen hex characters and has nothing better to offer.
+            addPreference(
+                AdaptiveStringPreference(
+                    ctx = context,
+                    stringKey = SwarmStringKey.Handle,
+                    title = R.string.swarm_handle,
+                    summary = R.string.swarm_handle_summary
+                )
+            )
             addPreference(
                 AdaptiveStringPreference(
                     ctx = context,
@@ -330,7 +341,10 @@ class SwarmPlugin @Inject constructor(
             subject,
             endpoint,
             DataSyncSelectorSwarmImpl.PURPOSE,
-            SwarmKeys.identity(context, preferences)
+            SwarmKeys.identity(context, preferences),
+            // Empty until the subject sets one, which keeps the invite at the
+            // shape every installed build already reads.
+            preferences.get(SwarmStringKey.Handle).trim()
         )
     }
 

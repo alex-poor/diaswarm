@@ -9,6 +9,8 @@
     <string name="swarm_invite_not_ready">Nothing to share yet. Turn Swarm sharing on and wait for the first records to be sealed — an invite needs both your key and somewhere to reach you.</string>
     <string name="swarm_copy">Copy</string>
 
+    <string name="swarm_handle">Your name</string>
+    <string name="swarm_handle_summary">Shown to people who follow you, instead of a row of letters and numbers. It travels in your invite and goes no further \u2014 it is never published.</string>
     <string name="swarm_grant">Share with someone</string>
     <string name="swarm_grant_summary">Paste the key they gave you. They will be able to read your whole history.</string>
     <string name="swarm_revoke">Stop sharing with</string>

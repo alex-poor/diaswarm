@@ -142,9 +142,31 @@ object SwarmNative {
      * Built in Rust so the phone and the CLI cannot drift into two formats
      * that look alike and are not. Empty if any part is malformed.
      */
-    external fun inviteFor(subject: String, endpoint: String, purpose: String, keys: String): String
+    /**
+     * Build this subject's invite.
+     *
+     * **[handle] IS A LABEL THE SUBJECT CHOSE, AND AN EMPTY ONE KEEPS THE OLD
+     * SHAPE.** A subject who has not named themselves emits exactly the invite
+     * they emitted before, so nothing already scanned stops working. See
+     * `Invite::handle` for why a follower must treat it as a suggestion to
+     * confirm at pairing rather than as proof of who sent it.
+     */
+    external fun inviteFor(
+        subject: String,
+        endpoint: String,
+        purpose: String,
+        keys: String,
+        handle: String
+    ): String
 
     /** Read one back as `subject<TAB>endpoint<TAB>purpose`; empty if not valid. */
+    /**
+     * Read an invite: `subject\tendpoint\tpurpose\trelay\tkeys\thandle`.
+     *
+     * The last field is the subject's chosen name and is **empty before v4**.
+     * Store it once at pairing and show it after — it is a label, not proof of
+     * who sent the invite, and an invite can be forwarded.
+     */
     external fun inviteParse(text: String): String
 
     // --- being in the pool -------------------------------------------------

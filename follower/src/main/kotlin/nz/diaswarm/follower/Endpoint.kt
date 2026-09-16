@@ -115,7 +115,22 @@ object Endpoint {
         val subject = SwarmNative.vaultSubject(SwarmPaths.identity(context).absolutePath)
         val node = SwarmNative.swarmNodeId(handle)
         if (subject.isEmpty() || node.isEmpty()) return ""
-        return SwarmNative.inviteFor(subject, node, Follower.PURPOSE, SwarmKeys.identity(context))
+        // **NO NAME ON THIS ONE, AND THAT IS A GAP RATHER THAN A DECISION.**
+        // This is the *follower's* invite — the key a subject grants — so the
+        // name that would help here is the one a subject sees in their readers
+        // list, which still shows hex. Naming readers is the same feature in
+        // the other direction and is not built. Empty keeps the invite at the
+        // shape every installed build reads.
+        //
+        // (`handle` above is the swarm pointer, an unrelated Long. The name is
+        // `Invite::handle`; the collision is unfortunate and local.)
+        return SwarmNative.inviteFor(
+            subject,
+            node,
+            Follower.PURPOSE,
+            SwarmKeys.identity(context),
+            ""
+        )
     }
 
     /** Showing the code is the consent: accept a pushed invite from now. */

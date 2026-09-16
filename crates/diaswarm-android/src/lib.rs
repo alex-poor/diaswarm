@@ -1186,6 +1186,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_inviteFor<'a>(
     endpoint: JString<'a>,
     purpose: JString<'a>,
     keys: JString<'a>,
+    handle: JString<'a>,
 ) -> JString<'a> {
     let (Ok(s), Ok(e), Ok(p)) =
         (env.get_string(&subject), env.get_string(&endpoint), env.get_string(&purpose))
@@ -1198,8 +1199,13 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_inviteFor<'a>(
     // actually grant on the keys vault emits something older builds refuse —
     // which they then say clearly, rather than half-working.
     let keys = env.get_string(&keys).map(String::from).unwrap_or_default();
+    // **AN EMPTY HANDLE KEEPS THE OLDER SHAPE, for the same reason empty keys
+    // does.** A subject who has not named themselves emits exactly what they
+    // emitted before, so nothing already scanned stops working.
+    let handle = env.get_string(&handle).map(String::from).unwrap_or_default();
     match diaswarm_core::invite::Invite::new(&String::from(s), &String::from(e), &String::from(p))
         .and_then(|inv| inv.with_keys(&keys))
+        .and_then(|inv| inv.with_handle(&handle))
     {
         Ok(inv) => to_jstring(env, inv.encode()),
         Err(_) => to_jstring(env, String::new()),
@@ -1219,9 +1225,16 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_inviteParse<'a>(
         // A FIFTH FIELD, EMPTY ON A v1 OR v2 INVITE. It is what lets the
         // subject grant this reader on the keys vault as well as the old one —
         // without it a scan grants half of what the invite offers.
+        //
+        // AND A SIXTH: the subject's chosen name, empty before v4. The caller
+        // stores it once, at pairing, and shows it thereafter — it is a label,
+        // not proof of who sent the invite. See `Invite::handle`.
         Ok(i) => to_jstring(
             env,
-            format!("{}\t{}\t{}\t{}\t{}", i.subject, i.endpoint, i.purpose, i.relay, i.keys),
+            format!(
+                "{}\t{}\t{}\t{}\t{}\t{}",
+                i.subject, i.endpoint, i.purpose, i.relay, i.keys, i.handle
+            ),
         ),
         Err(_) => to_jstring(env, String::new()),
     }
