@@ -29,8 +29,25 @@
 > * **§3.4 is DONE and was seen on a phone.** Opening it changed it: the
 >   unknown-scope line wrapped to two lines under every reader and is now one.
 >
-> §0's central point still stands for the one device that matters: **the loop
-> phone has none of today's work**, and that install is yours to make.
+> * **THE LOOP PHONE HAS TODAY'S WORK, INCLUDING THE ROTATION FIX** (installed
+>   16:27; pump key intact, loop verified running afterwards).
+>
+> 🔴 **KNOWN GAP, ACCEPTED: followers cannot read 2026-09-16 after 15:34.**
+> The first rotation ran unannounced (the bug fixed in `9ebbf69`), so today's
+> epoch 20712 is sealed under a secret no follower holds. Repairing it needed a
+> forced rotation before the day closed; that was **deliberately not done**,
+> because the only route went through interrupting AAPS and the loop's
+> continuity outweighs a day of dev/test sharing — see
+> `loop-is-critical-sharing-is-not` in memory.
+>
+> **It self-resolves.** The next rotation (~15:34 on 2026-09-17) is announced by
+> the fixed build, and that day's accumulated epoch is re-sealed under it. Only
+> 2026-09-16 after 15:34 stays dark, permanently, and that is fine.
+>
+> ⚠️ **Do not "fix" this later by re-granting** — an existing member returns
+> `AlreadyGranted` and publishes nothing. Closed days keep their own secret.
+
+> §0's point about the loop phone is now closed.
 
 Everything is committed and pushed. Working tree clean. Fifteen commits today.
 
