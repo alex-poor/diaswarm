@@ -1126,6 +1126,40 @@ impl Vault {
     pub fn secrets(&self) -> usize {
         self.state.as_ref().map(|s| s.secrets.len()).unwrap_or(0)
     }
+
+    /// The earliest moment this vault can open anything, in UNIX seconds.
+    ///
+    /// **THE WINDOW, READ OFF THE KEYS RATHER THAN OFF A PROMISE.** A scoped
+    /// grant narrows the bundle by [`GroupSecret::timestamp`], so the oldest
+    /// secret a reader holds *is* the start of what it can read. A screen that
+    /// states its window from this cannot overstate it, because it is not
+    /// repeating something it was told — it is reporting what it has.
+    ///
+    /// That matters because the alternative is the specific harm D29 exists to
+    /// prevent: a clinician screen offering "the last 90 days" that in fact
+    /// hands over everything. A UI asking this question gets an answer that is
+    /// wrong only if the cryptography is wrong.
+    ///
+    /// ⚠️ **IT IS WHEN THE SECRET WAS MINTED, NOT WHAT IT COVERS.** Records
+    /// sealed under a secret can predate it — the epoch is the subject's, the
+    /// timestamp is the secret's. So this is the boundary the grant enforces,
+    /// and is only as fine as the subject's rotation schedule. It is a floor on
+    /// what is readable, not a promise about what exists.
+    ///
+    /// `None` for a vault holding no secrets, which is one that has not joined.
+    pub fn granted_from(&self) -> Option<u64> {
+        let state = self.state.as_ref()?;
+        state.secrets.secrets().map(|s| s.timestamp()).min()
+    }
+
+    /// Every secret's timestamp, oldest first — for a screen that wants to show
+    /// the rotation boundaries its window actually lands on.
+    pub fn secret_timestamps(&self) -> Vec<u64> {
+        let Some(state) = self.state.as_ref() else { return Vec::new() };
+        let mut out: Vec<u64> = state.secrets.secrets().map(|s| s.timestamp()).collect();
+        out.sort_unstable();
+        out
+    }
 }
 
 

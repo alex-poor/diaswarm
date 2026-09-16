@@ -314,12 +314,23 @@ async fn cmd_identity(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// What a read came back with, including what it could not open and why.
+struct Granted {
+    records: Vec<diaswarm_core::Record>,
+    opened: usize,
+    skipped: diaswarm_keys::Skipped,
+    /// The oldest moment this peer can open anything, in UNIX seconds — read
+    /// off the secrets it holds, not off anything it was told. See
+    /// `Vault::granted_from`.
+    granted_from: Option<u64>,
+}
+
 /// Join if needed and read. Shared by `read` and `export` so they cannot differ.
 async fn granted_records(
     dir: &Path,
     subject_identity: &str,
     days: u64,
-) -> Result<(Vec<diaswarm_core::Record>, usize, usize)> {
+) -> Result<Granted> {
     let signing = keys_identity_key(dir)?;
     let own = own_vault_dir(dir);
     if !own.join("group.cbor").exists() {
@@ -352,46 +363,88 @@ async fn granted_records(
         }
     };
 
-    diaswarm_keys::follow::read(&vault, &store, &decoded.signer, days, i64::MIN)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))
+    let granted_from = vault.granted_from();
+    let (records, opened, skipped) =
+        diaswarm_keys::follow::read(&vault, &store, &decoded.signer, days, i64::MIN)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(Granted { records, opened, skipped, granted_from })
+}
+
+/// **THE WINDOW THIS PEER ACTUALLY HOLDS, SAID PLAINLY.**
+///
+/// D29 exists to stop a screen offering a window the grant does not enforce.
+/// This prints the one derived from the key material, so it cannot overstate
+/// what can be read — and says so when nothing bounds it.
+fn describe_window(granted_from: Option<u64>) -> String {
+    let Some(from) = granted_from else {
+        return "no secrets held — nothing is readable".to_string();
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(from);
+    let days = now.saturating_sub(from) / 86_400;
+    format!("granted from unix {from} — about {days} day(s) of history")
+}
+
+/// What could not be opened, in words that do not overstate the cause.
+///
+/// ⚠️ **"OUTSIDE YOUR WINDOW" IS ONLY SAID FOR `not_ours`.** Everything else is
+/// a fault, and calling a fault access control is how a reader gets told its
+/// data is fine when it is not — which is exactly what an unannounced rotation
+/// looked like on 2026-09-16.
+fn describe_skipped(opened: usize, s: &diaswarm_keys::Skipped) -> String {
+    let mut parts = vec![format!("{opened} segment(s) opened")];
+    if s.not_ours > 0 {
+        parts.push(format!("{} outside this peer's window (unreadable, not hidden)", s.not_ours));
+    }
+    if s.lost() > 0 {
+        parts.push(format!(
+            "⚠️ {} FAILED to open despite holding the secret — this is a fault, not a window",
+            s.lost()
+        ));
+    }
+    parts.join("; ")
 }
 
 async fn cmd_read(dir: &Path, subject: &str, days: u64, json: bool) -> Result<()> {
-    let (records, opened, unreadable) = granted_records(dir, subject, days).await?;
+    let g = granted_records(dir, subject, days).await?;
+    let (records, opened) = (&g.records, g.opened);
     if json {
-        for r in &records {
+        for r in records {
             println!("{}", r.to_canonical_json());
         }
     } else {
         let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
-        for r in &records {
+        for r in records {
             *kinds.entry(r.kind()).or_default() += 1;
         }
         let span = match (records.first(), records.last()) {
             (Some(a), Some(b)) => format!("{} … {}", a.t(), b.t()),
             _ => "nothing".to_string(),
         };
+        println!("window: {}", describe_window(g.granted_from));
         println!("{} record(s) over {span}", records.len());
         for (k, n) in kinds {
             println!("  {k:<16} {n}");
         }
-        // **SAY WHAT COULD NOT BE OPENED.** A short answer must never be a
-        // silent one: segments sealed before this peer was granted, or after a
-        // rotation it was not told about, land here and look like nothing.
-        println!("segments: {opened} opened, {unreadable} not readable by this peer");
+        // **SAY WHAT COULD NOT BE OPENED, AND WHY.** A short answer must never
+        // be a silent one, and it must not blame access control for a fault.
+        println!("{}", describe_skipped(opened, &g.skipped));
     }
     Ok(())
 }
 
 async fn cmd_export(dir: &Path, subject: &str, out: &Path, days: u64) -> Result<()> {
-    let (records, opened, unreadable) = granted_records(dir, subject, days).await?;
+    let g = granted_records(dir, subject, days).await?;
+    let records = &g.records;
 
     // **THE UNION OF WHAT ARRIVED, NOT A FIXED LIST.** A record is open by
     // design, so a fixed header silently drops whatever a device started
     // reporting last week — see `Record::fields`.
     let mut columns: std::collections::BTreeSet<&str> = Default::default();
-    for r in &records {
+    for r in records {
         for (k, _) in r.fields() {
             columns.insert(k);
         }
@@ -403,7 +456,7 @@ async fn cmd_export(dir: &Path, subject: &str, out: &Path, days: u64) -> Result<
     let mut csv = String::new();
     csv.push_str(&header.join(","));
     csv.push('\n');
-    for r in &records {
+    for r in records {
         let row: Vec<String> = header
             .iter()
             .map(|c| match r.get(c) {
@@ -434,7 +487,8 @@ async fn cmd_export(dir: &Path, subject: &str, out: &Path, days: u64) -> Result<
             header.len(),
             out.display()
         );
-        eprintln!("segments: {opened} opened, {unreadable} not readable by this peer");
+        eprintln!("window: {}", describe_window(g.granted_from));
+        eprintln!("{}", describe_skipped(g.opened, &g.skipped));
     }
     Ok(())
 }
@@ -679,17 +733,46 @@ mod tests {
         .unwrap();
 
         // ---- the claim ----
-        let (got, opened, unreadable) =
-            granted_records(&dir, &subject_identity_hex, 0).await.expect("read");
-        assert_eq!(unreadable, 0, "a freshly granted peer could not open {unreadable} segment(s)");
-        assert!(opened >= 1, "no segment was opened at all");
-        assert_eq!(got.len(), 2, "expected both records, got {}", got.len());
-        assert!(got.iter().any(|r| r.kind() == "cgm"), "the cgm record is missing");
-        assert!(got.iter().any(|r| r.kind() == "bolus"), "the bolus record is missing");
+        let g = granted_records(&dir, &subject_identity_hex, 0).await.expect("read");
+        assert_eq!(g.skipped.lost(), 0, "a freshly granted peer hit {} fault(s)", g.skipped.lost());
+        assert_eq!(g.skipped.not_ours, 0, "an unscoped grant left segments outside the window");
+        assert!(g.opened >= 1, "no segment was opened at all");
+        assert_eq!(g.records.len(), 2, "expected both records, got {}", g.records.len());
+        assert!(g.records.iter().any(|r| r.kind() == "cgm"), "the cgm record is missing");
+        assert!(g.records.iter().any(|r| r.kind() == "bolus"), "the bolus record is missing");
+
+        // **THE WINDOW IS READ OFF THE KEYS, AND IT IS THE THING D29 IS ABOUT.**
+        // A peer that cannot answer this cannot honestly label a clinician
+        // screen, and one that answers from a flag it was passed is worse than
+        // one that cannot answer at all.
+        let from = g.granted_from.expect("a granted peer must know its own window");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(from <= now, "the window starts in the future: {from} > {now}");
+        assert!(
+            describe_window(g.granted_from).contains("day(s) of history"),
+            "the window did not describe itself"
+        );
+        assert!(
+            describe_window(None).contains("nothing is readable"),
+            "a peer holding no secrets must not describe a window at all"
+        );
+
+        // **AND A FAULT IS NEVER CALLED A WINDOW.** This is the wording that an
+        // unannounced rotation would otherwise have hidden behind.
+        let faulty = diaswarm_keys::Skipped { undecryptable: 3, ..Default::default() };
+        let said = describe_skipped(1, &faulty);
+        assert!(said.contains("FAILED"), "a fault was not reported as one: {said}");
+        assert!(
+            !said.contains("outside this peer's window"),
+            "a fault was described as access control: {said}"
+        );
 
         // ---- reading twice must not re-join and lose the secret bundle ----
-        let (again, _, _) = granted_records(&dir, &subject_identity_hex, 0).await.expect("reread");
-        assert_eq!(again.len(), 2, "the second read lost records — it probably re-joined");
+        let again = granted_records(&dir, &subject_identity_hex, 0).await.expect("reread");
+        assert_eq!(again.records.len(), 2, "the second read lost records — it probably re-joined");
 
         // ---- and the export names the columns that arrived ----
         let out = dir.join("export.csv");

@@ -99,14 +99,26 @@ pub async fn join(
 /// research export and the wrong one for a follower refreshing every two
 /// minutes. Passing 0 asks for that linear read deliberately.
 ///
-/// Returns `(records, opened, unreadable)`.
+/// Returns `(records, opened, skipped)`.
+///
+/// 🔴 **`Skipped` IS SPLIT, AND THE SPLIT IS THE WHOLE POINT FOR A CLINICIAN
+/// SCREEN.** `not_ours` is access control working — a segment sealed under a
+/// secret this reader was never given, which is what "outside your window"
+/// means. `lost()` is a failure: the secret was held and the bytes still would
+/// not open, or the segment would not parse.
+///
+/// This used to return one number for both, and on 2026-09-16 that number
+/// climbed all afternoon because a rotation had not been announced. A screen
+/// reading it would have told a clinician "outside your window" about data that
+/// was squarely inside it. **A reader may only say the access control refused
+/// it when the access control actually did.**
 pub async fn read(
     vault: &Vault,
     store: &SqliteStore,
     subject: &VerifyingKey,
     tail_days: u64,
     from_epoch: i64,
-) -> Result<(Vec<Record>, usize, usize), String> {
+) -> Result<(Vec<Record>, usize, crate::Skipped), String> {
     // **ONE EPOCH IS MANY OPERATIONS, AND ONLY THE LAST ONE MATTERS.**
     //
     // A subject publishes on every flush — every five minutes — and each flush
@@ -146,26 +158,31 @@ pub async fn read(
 
     let mut out: Vec<Record> = Vec::new();
     let mut opened = 0usize;
-    let mut unreadable = 0usize;
+    let mut skipped = crate::Skipped::default();
     // **DEDUPED, BECAUSE A RE-DRAIN REPUBLISHES.** Deltas do not normally
     // overlap, but a subject that re-reads its whole database seals the same
     // records again, and a reader must not show a reading twice.
     let mut seen: HashSet<String> = HashSet::new();
     for segment in &segments {
         match vault.open_segment(segment) {
-            Ok((records, bad)) => {
+            Ok((records, unparseable)) => {
                 opened += 1;
-                unreadable += bad;
+                skipped.unparseable += unparseable;
                 for record in records {
                     if seen.insert(record.to_canonical_json()) {
                         out.push(record);
                     }
                 }
             }
-            // NOT AN ERROR. A segment sealed before this reader was granted, or
-            // after it was revoked, is access control working.
-            Err(_) => unreadable += 1,
+            // NOT AN ERROR. A segment sealed under a secret this reader was
+            // never given — before its grant, after a revocation, or outside a
+            // scoped window — is the access control working.
+            Err(crate::Error::NotGranted) => skipped.not_ours += 1,
+            // A FAILURE, AND NOT THE SAME THING. The secret was held and the
+            // ciphertext still would not open.
+            Err(crate::Error::Undecryptable) => skipped.undecryptable += 1,
+            Err(_) => skipped.unreadable += 1,
         }
     }
-    Ok((out, opened, unreadable))
+    Ok((out, opened, skipped))
 }

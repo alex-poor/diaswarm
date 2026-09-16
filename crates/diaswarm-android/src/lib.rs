@@ -3085,8 +3085,14 @@ pub fn read_followed(
     tail_days: u64,
     from_epoch: i64,
 ) -> Result<(String, usize, usize), String> {
-    let (records, opened, unreadable) =
+    let (records, opened, skipped) =
         runtime.block_on(diaswarm_keys::follow::read(vault, store, subject, tail_days, from_epoch))?;
+    // **ONE NUMBER STILL, BECAUSE THAT IS THIS CRATE'S WIRE TO KOTLIN.** The
+    // shared reader now splits "the access control refused it" from "it broke",
+    // and the phones do not yet distinguish them on screen. Summing preserves
+    // exactly what the follower has always been told; a screen that wants the
+    // difference should take `Skipped` rather than have it invented here.
+    let unreadable = skipped.not_ours + skipped.lost();
     let mut out = String::new();
     for record in &records {
         out.push_str(&record.to_canonical_json());
