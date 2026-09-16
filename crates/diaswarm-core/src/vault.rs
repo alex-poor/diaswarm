@@ -992,8 +992,37 @@ impl Vault {
         purpose: &str,
         from_epoch: i64,
     ) -> Result<BTreeMap<i64, Vec<Record>>, VaultError> {
-        let tag = hex(&grant_tag(&reader.encryption, &self.subject_pub, purpose));
+        let tag = self.cached_tag(reader, purpose);
         let name = format!("{tag}.wrap");
+
+        // **THE FOLLOWER ASKS THIS FOUR TIMES A REFRESH.** A profile of Ayni on
+        // 2026-09-17 put `netProfile` at 13.5% of all cycles and
+        // `netTempTarget` at 13.8%, beside the same pair on the keys vault:
+        // every datum is read from both vaults and merged by recency, and
+        // `profile` and `tempTarget` pass `from_epoch = i64::MIN`, so each one
+        // decrypts and parses the entire grant.
+        //
+        // The state this read depends on is on disk, so the freshness check is
+        // a `stat` per segment rather than a decrypt per segment — micro-
+        // seconds against milliseconds. A segment appended to changes length, a
+        // segment rewritten changes mtime, a wrap granted or revoked appears or
+        // vanishes; all three move the fingerprint and the entry is never
+        // reused. Compared element by element rather than hashed, because a
+        // hash collision here shows up as a follower displaying yesterday's
+        // glucose and no error anywhere.
+        let fingerprint = self.read_fingerprint(&name).unwrap_or_default();
+        let key = ReadKey {
+            subject: self.subject_pub,
+            tag: tag.clone(),
+            from_epoch,
+            fingerprint,
+        };
+        if !key.fingerprint.is_empty() {
+            if let Some(hit) = read_cache_get(&key) {
+                return Ok(hit);
+            }
+        }
+
         let mut out: BTreeMap<i64, Vec<Record>> = BTreeMap::new();
 
         // SEGMENTS CAN LEGITIMATELY OVERLAP, so a reader assembling a history
@@ -1032,7 +1061,154 @@ impl Vault {
         for records in out.values_mut() {
             crate::sort(records);
         }
+        if !key.fingerprint.is_empty() {
+            read_cache_put(key, &out);
+        }
         Ok(out)
+    }
+
+    /// The reader's wrap tag, remembered.
+    ///
+    /// `grant_tag` is an X25519 Diffie-Hellman, and the answer is fixed for a
+    /// (reader, subject, purpose) triple for ever — so computing it on every
+    /// read was a scalar multiplication to learn a filename.
+    fn cached_tag(&self, reader: &Identity, purpose: &str) -> String {
+        let reader_pub: [u8; 32] =
+            x25519_dalek::PublicKey::from(&reader.encryption).to_bytes();
+        let k = (reader_pub, self.subject_pub, purpose.to_string());
+        if let Ok(guard) = TAG_CACHE.lock() {
+            if let Some((_, v)) = guard.iter().find(|(kk, _)| kk == &k) {
+                return v.clone();
+            }
+        }
+        let tag = hex(&grant_tag(&reader.encryption, &self.subject_pub, purpose));
+        if let Ok(mut guard) = TAG_CACHE.lock() {
+            guard.retain(|(kk, _)| kk != &k);
+            guard.push((k, tag.clone()));
+            while guard.len() > 32 {
+                guard.remove(0);
+            }
+        }
+        tag
+    }
+
+    /// What this read depends on, cheaply: one `stat` per segment and per wrap.
+    ///
+    /// Returns empty when the vault cannot be listed, which disables caching
+    /// for that call rather than guessing — an unreadable directory is exactly
+    /// when a stale answer would be worst.
+    fn read_fingerprint(&self, wrap_name: &str) -> Option<Vec<(u64, i64, u64, i128, u64, i128)>> {
+        let segments = self.segments().ok()?;
+        let mut out = Vec::with_capacity(segments.len());
+        for seg in &segments {
+            let seal = self.root.join("segments").join(seg.seal_name());
+            let (slen, smt) = stat_pair(&seal);
+            let wrap = self.root.join("wraps").join(seg.seq.to_string()).join(wrap_name);
+            let (wlen, wmt) = stat_pair(&wrap);
+            out.push((seg.seq, seg.epoch, slen, smt, wlen, wmt));
+        }
+        Some(out)
+    }
+}
+
+/// Length and modification time, or zeroes when the file is not there. Absent
+/// and empty are different states here: an absent wrap has length 0 and mtime
+/// 0, and a granted-then-emptied one would have a real mtime.
+fn stat_pair(p: &std::path::Path) -> (u64, i128) {
+    match fs::metadata(p) {
+        Ok(m) => {
+            let mt = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as i128)
+                .unwrap_or(-1);
+            (m.len(), mt)
+        }
+        Err(_) => (0, 0),
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct ReadKey {
+    subject: [u8; 32],
+    tag: String,
+    from_epoch: i64,
+    fingerprint: Vec<(u64, i64, u64, i128, u64, i128)>,
+}
+
+/// See [`Vault::cached_tag`].
+#[allow(clippy::type_complexity)]
+static TAG_CACHE: std::sync::Mutex<Vec<(([u8; 32], [u8; 32], String), String)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// **BOUNDED BY RECORDS, NOT ENTRIES.** A `from_epoch = i64::MIN` read is the
+/// whole grant — tens of thousands of records for a subject with a year of
+/// history — so a count of entries is not a bound on anything. Kept small
+/// because the callers that matter are the two or three windows a screen is
+/// showing right now.
+///
+/// These are PLAINTEXT records, unlike the ciphertext the keys vault caches.
+/// They are the same records the caller is about to hold anyway, and they live
+/// no longer than the next few reads, but that is the reason the bound is
+/// tight rather than generous.
+const READ_CACHE_ENTRIES: usize = 6;
+const READ_CACHE_RECORDS: usize = 120_000;
+
+#[allow(clippy::type_complexity)]
+static READ_CACHE: std::sync::Mutex<Vec<(ReadKey, std::sync::Arc<BTreeMap<i64, Vec<Record>>>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn records_in(m: &BTreeMap<i64, Vec<Record>>) -> usize {
+    m.values().map(Vec::len).sum()
+}
+
+fn read_cache_get(key: &ReadKey) -> Option<BTreeMap<i64, Vec<Record>>> {
+    let mut guard = match READ_CACHE.lock() {
+        Ok(g) => g,
+        Err(p) => {
+            let mut g = p.into_inner();
+            g.clear();
+            g
+        }
+    };
+    let at = guard.iter().position(|(k, _)| k == key)?;
+    let entry = guard.remove(at);
+    let out = entry.1.as_ref().clone();
+    guard.push(entry);
+    Some(out)
+}
+
+fn read_cache_put(key: ReadKey, value: &BTreeMap<i64, Vec<Record>>) {
+    let n = records_in(value);
+    if n > READ_CACHE_RECORDS {
+        return;
+    }
+    let mut guard = match READ_CACHE.lock() {
+        Ok(g) => g,
+        Err(p) => {
+            let mut g = p.into_inner();
+            g.clear();
+            g
+        }
+    };
+    guard.retain(|(k, _)| k != &key);
+    guard.push((key, std::sync::Arc::new(value.clone())));
+    while guard.len() > READ_CACHE_ENTRIES
+        || guard.iter().map(|(_, v)| records_in(v)).sum::<usize>() > READ_CACHE_RECORDS
+    {
+        if guard.len() <= 1 {
+            break;
+        }
+        guard.remove(0);
+    }
+}
+
+/// Forget every cached read. For tests, and for a caller that has reason to
+/// believe the vault changed under it in a way `stat` cannot see.
+pub fn forget_cached_reads() {
+    if let Ok(mut g) = READ_CACHE.lock() {
+        g.clear();
     }
 }
 
