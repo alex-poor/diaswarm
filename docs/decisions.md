@@ -1219,11 +1219,38 @@ rotation boundaries rather than to days. Day-granular windows therefore mean
 rotating daily — and D26 measured that: a year of daily rotation is a
 366-secret bundle and a **0.76 ms** welcome.
 
-⚠️ **This is read from the source. Nothing has been built, compiled or
-measured**, and on the evidence of this repository's last three days that
-distinction is the whole difference between a finding and a result. The spike
-that would settle it is small: filter a bundle, `Dcgka::add` with it, assert the
-joiner opens epoch N and fails on epoch N−1.
+#### ✅ The spike ran, 2026-09-16 — and the route above is wrong
+
+The conclusion holds: **a time-scoped grant is reachable on pinned 0.7.1, with no
+fork.** `Vault::grant_since` ships it, and
+`crates/diaswarm-keys/tests/scoped_grant.rs` asserts the thing that matters —
+a reader granted with a cutoff opens the day after it, is refused the day
+before it (`Skipped::not_ours == 1`), and the subject still reads its own
+history. An unscoped grant is the control and still hands over everything.
+
+**But not by dropping to `Dcgka::add`.** That takes the bundle as a parameter,
+as read — however rebuilding what `EncryptionGroup::add` does around it needs
+`process_local`, which is **private**. The table above lists the four things
+that are public and misses the one that is not.
+
+**The way through is one layer higher and simpler.** `GroupState::secrets` is a
+public field and `EncryptionGroup::update_secrets` is a public setter, so the
+bundle a joiner receives is whatever sits in that field when `add` runs. Narrow
+it, add, put it back — three lines, no private API, no fork.
+
+⚠️ **Two limits the source reading did not surface**, both now in
+`grant_since`'s doc:
+
+* `GroupSecret`'s timestamp is **UNIX seconds stamped at creation**, not a
+  property of the data. So this scopes by *when the secret was minted*, and
+  "the last 90 days" only means that if the subject rotates on a schedule.
+  Without rotation it is a no-op, because one secret covers everything.
+  `Vault::rotate` exists for that and is what the spike uses.
+* Two secrets minted in the same second are indistinguishable to any filter over
+  them. Second granularity is the floor.
+
+**It is not a revocation.** A reader already holding an older secret keeps it.
+This narrows what a *new* grant hands over. [`Vault::revoke`] is what bites.
 
 #### Sequencing, and why this order
 

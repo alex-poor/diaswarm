@@ -138,7 +138,7 @@ pub use p2panda_encryption::key_bundle::LongTermKeyBundle;
 use p2panda_encryption::crypto::x25519::SecretKey;
 use p2panda_encryption::crypto::xchacha20::XAeadNonce;
 use p2panda_encryption::data_scheme::{
-    EncryptionGroup, GroupState, GroupSecretId, decrypt_data, encrypt_data,
+    EncryptionGroup, GroupState, GroupSecretId, SecretBundle, decrypt_data, encrypt_data,
 };
 use p2panda_encryption::key_bundle::Lifetime;
 use p2panda_encryption::key_manager::{KeyManager, KeyManagerState};
@@ -837,12 +837,18 @@ impl Vault {
     /// returned tag is what the subject's own private book should file them
     /// under — the grant itself names nobody.
     ///
-    /// ⚠️ **A GRANT REACHES BACK OVER EVERYTHING, AND CANNOT BE ASKED NOT TO.**
+    /// ⚠️ **THIS GRANT REACHES BACK OVER EVERYTHING.**
     /// `EncryptionGroup::add` hands the joiner `&y.secrets` — the whole secret
     /// bundle — so a reader granted today opens every day the subject still
     /// holds a secret for, including days sealed long before they were granted.
-    /// There is no `history` flag and no way to pass a narrower bundle: the
-    /// library does not expose one.
+    ///
+    /// **"AND CANNOT BE ASKED NOT TO" USED TO FOLLOW, AND IT WAS WRONG.** This
+    /// said "there is no `history` flag and no way to pass a narrower bundle:
+    /// the library does not expose one." There is no flag, true. But
+    /// `GroupState::secrets` is a public field and `update_secrets` a public
+    /// setter, so the bundle handed over is whatever is in that field when
+    /// `add` runs — see [`Vault::grant_since`], which narrows it and is tested.
+    /// The claim stood unchallenged until somebody ran the spike D29 asked for.
     ///
     /// **THAT IS LESS THAN BOTH VAULTS THIS REPLACES.** `diaswarm-core` wraps
     /// per segment, so the subject chooses what a reader can open;
@@ -869,7 +875,7 @@ impl Vault {
         bundle: LongTermKeyBundle,
         purpose: &str,
     ) -> Result<(Message, GrantTag), Error> {
-        self.grant_inner(bundle, purpose, false)
+        self.grant_inner(bundle, purpose, false, None)
     }
 
     /// Grant without anybody watching — for a handover, and nothing else.
@@ -890,7 +896,57 @@ impl Vault {
         bundle: LongTermKeyBundle,
         purpose: &str,
     ) -> Result<(Message, GrantTag), Error> {
-        self.grant_inner(bundle, purpose, true)
+        self.grant_inner(bundle, purpose, true, None)
+    }
+
+    /// Grant a reader only the secrets created at or after `since`.
+    ///
+    /// **THIS IS THE THING [`Vault::grant`]'s warning says cannot be done, and
+    /// it turns out it can.** That comment reads "there is no `history` flag and
+    /// no way to pass a narrower bundle: the library does not expose one." The
+    /// first half is true and the second is not. `EncryptionGroup::add` hands
+    /// the joiner `&y.secrets`, but `y.secrets` is a public field and
+    /// `EncryptionGroup::update_secrets` is a public setter, so the bundle the
+    /// joiner receives is whatever is in that field at the moment `add` runs.
+    /// Narrow it, add, put it back.
+    ///
+    /// No fork, no private API, no waiting on upstream — which is what D29
+    /// predicted, though not by the route it proposed: dropping to `Dcgka::add`
+    /// does not work, because reassembling what `EncryptionGroup::add` does
+    /// afterwards needs `process_local`, and that *is* private.
+    ///
+    /// ⚠️ **`since` IS UNIX SECONDS, AND IT FILTERS BY WHEN THE SECRET WAS
+    /// MADE — NOT BY WHAT IT COVERS.** `GroupSecret`'s timestamp is stamped
+    /// from `SystemTime::now()` at creation. So this scopes to rotation
+    /// boundaries, and "the last 90 days" means "everything sealed since the
+    /// secret that was current 90 days ago" — which is only the same sentence
+    /// if the subject rotates on a schedule. Rotating daily makes them agree to
+    /// the day; not rotating at all makes this a no-op, because one secret
+    /// covers everything.
+    ///
+    /// ⚠️ **AND IT IS NOT A REVOCATION.** A reader who already holds an older
+    /// secret keeps it. This narrows what a *new* grant hands over; it takes
+    /// nothing back. [`Vault::revoke`] is what bites, and it bites forward.
+    pub fn grant_since(
+        &mut self,
+        bundle: LongTermKeyBundle,
+        purpose: &str,
+        since: u64,
+    ) -> Result<(Message, GrantTag), Error> {
+        self.grant_inner(bundle, purpose, false, Some(since))
+    }
+
+    /// Rotate the group secret, so what follows is sealed under a new one.
+    ///
+    /// Needed for [`Vault::grant_since`] to mean anything: the scope it can
+    /// express is only as fine as the rotation boundaries that exist.
+    pub fn rotate(&mut self) -> Result<Message, Error> {
+        let state = self.state.take().ok_or(Error::NoSecret)?;
+        let (state, msg) =
+            Group::update(state, &self.rng).map_err(|e| Error::Group(e.to_string()))?;
+        self.state = Some(state);
+        self.save()?;
+        msg.stamp(self.me)
     }
 
     fn grant_inner(
@@ -898,6 +954,7 @@ impl Vault {
         bundle: LongTermKeyBundle,
         purpose: &str,
         unattended: bool,
+        since: Option<u64>,
     ) -> Result<(Message, GrantTag), Error> {
         let mut state = self.state.take().ok_or(Error::NoSecret)?;
         let tag = Self::tag_for(&state.dcgka.my_keys, &bundle, purpose)?;
@@ -914,8 +971,26 @@ impl Vault {
         }
         state.dcgka.pki = KeyRegistry::add_longterm_bundle(state.dcgka.pki, tag, bundle)
             .map_err(|e| Error::Crypto(e.to_string()))?;
-        let (state, msg) =
+        // **THE WHOLE OF A SCOPED GRANT IS THESE THREE LINES.** `Group::add`
+        // hands the joiner whatever is in `y.secrets`, so the narrowing happens
+        // here and is undone immediately afterwards. Keeping the full bundle in
+        // a local rather than re-deriving it matters: `add` must not be able to
+        // leave this vault holding less than it started with, or the subject
+        // would lose the ability to read its own history by granting somebody.
+        // `SecretBundleState` is only `Clone` under the crate's `test_utils`
+        // feature, so the snapshot is of the secrets themselves — which are
+        // `Clone` — and the bundle is rebuilt from them.
+        let full: Vec<_> = state.secrets.secrets().cloned().collect();
+        if let Some(since) = since {
+            let kept: Vec<_> =
+                full.iter().filter(|s| s.timestamp() >= since).cloned().collect();
+            state.secrets = SecretBundle::from_secrets(kept);
+        }
+        let (mut state, msg) =
             Group::add(state, tag, &self.rng).map_err(|e| Error::Group(e.to_string()))?;
+        if since.is_some() {
+            state.secrets = SecretBundle::from_secrets(full);
+        }
         self.state = Some(state);
         self.save()?;
         Ok((msg.stamp(self.me)?, tag))
