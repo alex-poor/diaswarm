@@ -2637,10 +2637,66 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGrant<'a>(
             Err(e) => return to_jstring(env, format!("error bundle {e}")),
         },
     };
-    grant_and_publish(env, v, bundle, &purpose, false)
+    grant_and_publish(env, v, bundle, &purpose, false, None)
 }
 
-/// Withdraw a reader from the keys vault, naming them by their identity rather
+/// Grant a reader only the days sealed in the last `days`.
+///
+/// **THIS IS WHAT D11's 24 HOURS ASKS FOR.** The flagship is a parent watching
+/// a child, and what they need is a day — not every day the subject has ever
+/// sealed, which is what an unscoped grant hands over and what
+/// `Vault::grant`'s own warning calls over-granting rather than a feature.
+///
+/// `days` of 0 means everything, which is the old behaviour and the honest
+/// default for somebody who has not been asked yet.
+///
+/// ⚠️ **IT IS ONLY AS FINE AS THE ROTATION SCHEDULE.** The filter is by when
+/// each secret was minted, and secrets are minted per group operation. The
+/// plugin rotates daily, so a window lands to the day; a vault that has never
+/// rotated holds one secret covering everything and any window returns all of
+/// it. See `rotateIfDue`.
+///
+/// ⚠️ **AND IT IS NOT A REVOCATION.** A reader granted narrowly today keeps
+/// whatever they were granted before. This bounds a new grant; it takes nothing
+/// back.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGrantSince<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    reader_bundle: JString<'a>,
+    purpose: JString<'a>,
+    days: jlong,
+) -> JString<'a> {
+    let (Ok(bundle), Ok(purpose)) = (env.get_string(&reader_bundle), env.get_string(&purpose))
+    else {
+        return to_jstring(env, "error bad-argument".to_string());
+    };
+    let (bundle, purpose) = (String::from(bundle), String::from(purpose));
+    let Some(v) = keys_vault(handle) else {
+        return to_jstring(env, "error no-vault".to_string());
+    };
+    let bundle = match diaswarm_keys::decode_identity(&bundle) {
+        Ok(id) => id.bundle,
+        Err(_) => match diaswarm_keys::decode_bundle(&bundle) {
+            Ok(b) => b,
+            Err(e) => return to_jstring(env, format!("error bundle {e}")),
+        },
+    };
+    // Seconds, because that is what a `GroupSecret` timestamp is.
+    let since = if days <= 0 {
+        None
+    } else {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        Some(now.saturating_sub(days as u64 * 86_400))
+    };
+    grant_and_publish(env, v, bundle, &purpose, false, since)
+}
+
+/// Withdraw a reader from the keys vault, naming them by their identity rather/// Withdraw a reader from the keys vault, naming them by their identity rather
 /// than by a tag nobody kept.
 ///
 /// **THE OTHER HALF OF A WITHDRAWAL.** A reader is two members: one in the core
@@ -2738,7 +2794,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysGrantUnattended<'a>(
             Err(e) => return to_jstring(env, format!("error bundle {e}")),
         },
     };
-    grant_and_publish(env, v, bundle, &purpose, true)
+    grant_and_publish(env, v, bundle, &purpose, true, None)
 }
 
 /// Add the reader, publish the welcome if there is one, and answer with the tag.
@@ -2748,9 +2804,18 @@ fn grant_and_publish<'a>(
     bundle: diaswarm_keys::LongTermKeyBundle,
     purpose: &str,
     unattended: bool,
+    // **UNIX SECONDS, OR NONE FOR EVERYTHING THIS VAULT STILL HOLDS.** See
+    // `Vault::grant_since`: it filters the bundle by when each secret was
+    // minted, so what this can express is only as fine as the rotation
+    // schedule. None is the old behaviour and remains what an unattended
+    // handover uses, because narrowing a handover would silently take history
+    // away from somebody who already had it.
+    since: Option<u64>,
 ) -> JString<'a> {
     let granted = if unattended {
         v.vault.grant_unattended(bundle, purpose)
+    } else if let Some(since) = since {
+        v.vault.grant_since(bundle, purpose, since)
     } else {
         v.vault.grant(bundle, purpose)
     };

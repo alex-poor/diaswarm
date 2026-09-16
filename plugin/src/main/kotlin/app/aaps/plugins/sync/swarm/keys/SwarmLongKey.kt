@@ -26,6 +26,7 @@ enum class SwarmLongKey(
      */
     KeysLastRotated("swarm_keys_last_rotated", 0L),
 
+
     GlucoseValueLastSyncedId("swarm_glucose_value_last_synced_id", 0L),
     BolusLastSyncedId("swarm_bolus_last_synced_id", 0L),
     CarbsLastSyncedId("swarm_carbs_last_synced_id", 0L),
@@ -116,6 +117,23 @@ enum class SwarmStringKey(
      * installed build already reads.
      */
     Handle("swarm_handle", ""),
+
+    /**
+     * How many days of history a new grant hands over. "0" means all of it.
+     *
+     * **D11's FLAGSHIP NEEDS ONE DAY.** A parent watching a child needs 24
+     * hours; handing over every day ever sealed to satisfy that is more than
+     * least privilege allows, and means a follower compromised at any point
+     * exposes everything rather than the day they were watching.
+     *
+     * Defaults to everything, because that is what this did yesterday and
+     * silently narrowing would take history from people already relying on it.
+     * Narrowing is a choice the subject makes.
+     *
+     * ⚠️ Only as fine as the rotation cadence — see `rotateIfDue`. A string
+     * because that is what a list preference stores; parsed where it is used.
+     */
+    GrantWindowDays("swarm_grant_window_days", "0"),
 
     /** A reader to withdraw from. Same shape, same lifecycle. */
     RevokeReader("swarm_revoke_reader", ""),

@@ -26,6 +26,7 @@ import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.validators.preferences.AdaptiveClickPreference
+import app.aaps.core.validators.preferences.AdaptiveListPreference
 import app.aaps.core.validators.preferences.AdaptiveSwitchPreference
 import app.aaps.core.validators.preferences.AdaptiveStringPreference
 import app.aaps.plugins.sync.swarm.keys.SwarmBooleanKey
@@ -213,6 +214,27 @@ class SwarmPlugin @Inject constructor(
                     stringKey = SwarmStringKey.Handle,
                     title = R.string.swarm_handle,
                     summary = R.string.swarm_handle_summary
+                )
+            )
+            // **THE WINDOW COMES BEFORE THE GRANT, because it changes what
+            // granting means.** D11's parent needs 24 hours and an unscoped
+            // grant hands over every day ever sealed — which `Vault::grant`
+            // calls over-granting rather than a feature. Defaults to
+            // everything, which is what this did yesterday.
+            addPreference(
+                AdaptiveListPreference(
+                    ctx = context,
+                    stringKey = SwarmStringKey.GrantWindowDays,
+                    title = R.string.swarm_window,
+                    summary = R.string.swarm_window_summary,
+                    entries = arrayOf(
+                        "Everything",
+                        "The last day",
+                        "The last week",
+                        "The last 30 days",
+                        "The last 90 days"
+                    ),
+                    entryValues = arrayOf("0", "1", "7", "30", "90")
                 )
             )
             addPreference(

@@ -11,8 +11,10 @@
 
     <string name="swarm_handle">Your name</string>
     <string name="swarm_handle_summary">Shown to people who follow you, instead of a row of letters and numbers. It travels in your invite and goes no further \u2014 it is never published.</string>
+    <string name="swarm_window">How much history to share</string>
+    <string name="swarm_window_summary">Applies to the next person you share with. It does not change what anyone already has.</string>
     <string name="swarm_grant">Share with someone</string>
-    <string name="swarm_grant_summary">Paste the key they gave you. They will be able to read your whole history.</string>
+    <string name="swarm_grant_summary">Paste the key they gave you. They will be able to read as much history as the setting above allows.</string>
     <string name="swarm_revoke">Stop sharing with</string>
     <string name="swarm_revoke_summary">Paste their key. Takes effect immediately — but they keep whatever they already downloaded.</string>
 

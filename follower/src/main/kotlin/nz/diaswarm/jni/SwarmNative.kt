@@ -232,6 +232,25 @@ object SwarmNative {
      */
     external fun keysRotate(handle: Long): Long
 
+    /**
+     * Grant a reader only the days sealed in the last [days]. 0 means everything.
+     *
+     * **D11's PARENT NEEDS 24 HOURS**, and an unscoped grant hands over every
+     * day the subject has ever sealed — which `Vault::grant` itself calls
+     * over-granting rather than a feature.
+     *
+     * ⚠️ Only as fine as the rotation schedule: the filter is by when each
+     * secret was minted. The plugin rotates daily, so a window lands to the day.
+     *
+     * ⚠️ Not a revocation. It bounds a new grant and takes nothing back.
+     */
+    external fun keysGrantSince(
+        handle: Long,
+        readerBundle: String,
+        purpose: String,
+        days: Long
+    ): String
+
     /** Leave the pool and release the handle. Idempotent on 0. */
     external fun swarmLeave(handle: Long)
 

@@ -1158,7 +1158,19 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                     aapsLogger.error(LTag.CORE, "swarm: keys grant skipped — no keys vault")
                 } else {
                     try {
-                        val tag = SwarmNative.keysGrant(handle, theirKeys, PURPOSE)
+                        // **SCOPED, IF THE SUBJECT HAS CHOSEN A WINDOW.**
+                        // 0 is everything and is the default, because that is
+                        // what this did yesterday — narrowing silently would
+                        // take history from people already relying on it. See
+                        // [SwarmLongKey.KeysGrantDays], and note the window is
+                        // only as fine as `rotateIfDue`'s cadence.
+                        val days =
+                            preferences.get(SwarmStringKey.GrantWindowDays).toLongOrNull() ?: 0L
+                        val tag = if (days > 0) {
+                            SwarmNative.keysGrantSince(handle, theirKeys, PURPOSE, days)
+                        } else {
+                            SwarmNative.keysGrant(handle, theirKeys, PURPOSE)
+                        }
                         if (tag.startsWith("error")) {
                             aapsLogger.error(LTag.CORE, "swarm: keys grant failed: $tag")
                         } else {
@@ -1168,7 +1180,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                             // withdrawing later has nobody to name. This is the
                             // only moment a scan has it.
                             SwarmNative.vaultNoteReaderKeys(vault, who, PURPOSE, theirKeys)
-                            aapsLogger.info(LTag.CORE, "swarm: keys granted as ${tag.take(16)}…")
+                            aapsLogger.info(
+                                LTag.CORE,
+                                "swarm: keys granted as ${tag.take(16)}… — " +
+                                    if (days > 0) "last $days day(s)" else "whole history"
+                            )
                         }
                     } catch (e: Throwable) {
                         aapsLogger.error(LTag.CORE, "swarm: keys grant threw: $e")
