@@ -30,7 +30,10 @@
         <item quantity="one">Can read the last day</item>
         <item quantity="other">Can read the last %1$d days</item>
     </plurals>
-    <string name="swarm_reader_scope_unknown">How much they can read was not recorded — this share is older than the setting</string>
+    <!-- SHORT ON PURPOSE. It repeats under every reader granted before the
+         field existed, and at full length it buried the key and the purpose it
+         sits between. Seen on a phone, not guessed at. -->
+    <string name="swarm_reader_scope_unknown">Scope not recorded — shared before this was kept</string>
     <string name="swarm_readers_explain">To stop sharing with someone, copy their key above and paste it into “Stop sharing with”.</string>
     <!-- THE HONEST SENTENCE, and it is better than people expect while still
          not being what they hope. Sealing re-seals the whole accumulated day

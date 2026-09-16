@@ -84,9 +84,26 @@ withdrawn for the right reason and is being readmitted on different evidence. It
 was never the *burst*; the burst was iroh. On a six-hour-old process with the
 bursts patched out it is 31.5 MB per 20 minutes, second only to the rings.
 
-`cd8258a` capped `cache_size` on the vaults this repo builds. It cannot have
-capped the stores **p2panda-store** builds, which set no pragmas at all — see
-[[ayni-memory-burst]]. That is the first place to look.
+**Checked, and the cap is not the missing piece.** Audited every `sqlite://` URL
+in `crates/`: the app opens exactly two file-backed stores — `keys.sqlite`
+(`diaswarm-android/src/lib.rs:467`) and `addressbook.sqlite`
+(`diaswarm-net/src/swarm.rs:199`) — and **both go through
+`open_bounded_store`**, which sets `cache_size = -2000`. The rest are dev
+binaries and tests, which never run on a phone. And p2panda-net opens no store
+of its own; it is handed ours (`KeysReplicator::keys(store, …)`), so there is no
+third uncapped pool hiding behind it.
+
+**So this half is bounded, and probably is not a leak at all.** 2 MB a
+connection × up to 16 per store is a ceiling, and the allocating frame is
+`ConnectionWorker::establish` — a *newly established* connection warming its
+(capped) cache. The sampler watched the pool swing 11 → 20 during the soak, and
+~15 connections' worth of 2 MB is the right order for the 31.5 MB attributed
+here once the ~2× sampling inflation is taken off.
+
+⚠️ **That is an inference, not a measurement.** What settles it is the pool
+count logged beside the memory — `tools/mem-curve.sh` now records `sqlx`, which
+it should have from the start. If the count sits at 20 while `pcache1Alloc`
+keeps retaining, the ceiling is not holding and this becomes a real leak again.
 
 ---
 
