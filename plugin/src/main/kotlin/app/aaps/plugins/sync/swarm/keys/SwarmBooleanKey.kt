@@ -66,10 +66,12 @@ enum class SwarmBooleanKey(
      * **IT IS STILL A SHADOW, AND THE OLD VAULT IS STILL AUTHORITATIVE.**
      * Turning this on does not cut over: every screen still reads the old
      * vault, and if the new one throws or loses a record the consequence is a
-     * log line. Making `diaswarm-keys` authoritative is a separate change,
-     * because this vault seals on a five-minute cadence where the old one seals
-     * every pass — promoting it without changing that would make a follower
-     * five minutes staler, which §12.3 is about.
+     * log line. Making `diaswarm-keys` authoritative is a separate change —
+     * but NOT because of the cadence, which is what this comment claimed on the
+     * day it was written. It said five minutes; `SHADOW_SEAL_INTERVAL_MS` is
+     * sixty seconds, shortened from five precisely because a follower showed a
+     * reading four minutes old. Against a sensor reporting every minute and a
+     * follower polling every two, cadence is not what stands in the way.
      *
      * **IT COSTS ENOUGH TO NOTICE.** Switching it off on the loop phone on
      * 2026-09-17 took AAPS from 70% of a core to 20%, though that measurement

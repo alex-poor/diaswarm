@@ -59,10 +59,17 @@ development phone — so the window in which this is free is open now and closes
 the moment anyone outside development seals history. Taken now for that reason.
 
 What it does NOT do is cut over. The old vault stays authoritative and every
-screen still reads it. Promoting `diaswarm-keys` is a separate change with its
-own cost, because it seals on a five-minute cadence where the old vault seals
-every pass; making it authoritative unchanged would make a follower up to five
-minutes staler, which is the fault §12.3 exists to prevent.
+screen still reads it.
+
+> **The first version of this paragraph gave a wrong reason, hours after being
+> written.** It said the keys vault seals on a five-minute cadence and that
+> promoting it would cost a follower five minutes of freshness.
+> `SHADOW_SEAL_INTERVAL_MS` is sixty seconds — shortened from five precisely
+> because a follower once showed a reading four minutes old. Against a sensor
+> reporting every minute and a follower polling every two, cadence is not the
+> blocker, and this file should not have said it was. Corrected 2026-09-17.
+
+What a cutover still needs is below, and the cadence is not on the list.
 
 ## What is not yet true
 
@@ -386,7 +393,9 @@ output distinguishes those. Worth fixing before the decision, not after.
    * **Batching live seals** is still worth doing — cost is quadratic in the
      count, so cutting 1,400 operations a day to 288 is about a 24× saving. But
      it moves the wall by weeks, it does not remove it.
-     **Done 2026-09-12**, in `flushShadow`: the spaces path accumulates across
+     **Done 2026-09-12** (and the five minutes below became sixty seconds
+     later, once deltas made cadence cheap — see `SHADOW_SEAL_INTERVAL_MS`):
+     in `flushShadow`, the spaces path accumulates across
      passes and seals every five minutes, or sooner for a bulk handover, or
      immediately once an epoch closes. Five because it is the cadence the loop
      reasons in and the bucket `spec/records.md` uses, so a reading waits at most
