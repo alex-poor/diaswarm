@@ -46,6 +46,15 @@ use p2panda_store::SqliteStore;
 #[allow(dead_code)]
 const PASS: Duration = Duration::from_secs(60);
 
+/// How long nothing may arrive before a stall is declared.
+///
+/// **SECONDS, BECAUSE PASSES ARE NOT A UNIT OF TIME.** The same "three passes"
+/// is three minutes at a 60 s cadence and forty-five seconds at 15 s.
+const STALL_AFTER_SECS: u64 = 180;
+
+/// How many times to try re-subscribing before accepting it will not help.
+const MAX_RESTREAMS: u32 = 5;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "diaswarm-peer",
@@ -800,6 +809,10 @@ async fn main() -> Result<()> {
     // A stall is only visible against what was held last time.
     let mut was_held = 0u64;
     let mut stalled_for = 0u32;
+    let mut restreams = 0u32;
+    // How many passes make up one re-subscribe interval, so the cadence is the
+    // same wall-clock whatever `--pass-secs` is.
+    let restream_every = (STALL_AFTER_SECS / args.pass_secs.max(1)).max(1) as u32;
 
     loop {
         let tick = swarm.tick().await;
@@ -815,6 +828,7 @@ async fn main() -> Result<()> {
         let heard_waiting = swarm.keys_wanted().await.map(|w| w.len()).unwrap_or(0);
         if stored > was_held {
             stalled_for = 0;
+            restreams = 0;
         } else if stored > 0 {
             stalled_for += 1;
         }
@@ -856,10 +870,36 @@ async fn main() -> Result<()> {
                 // Three passes, not one: a pass with nothing new is ordinary
                 // when the publisher has nothing to say, and re-subscribing on
                 // every quiet minute would be its own kind of broken.
-                if stalled_for >= 3 && stalled_for % 3 == 0 {
+                // 🔴 **IN SECONDS, NOT IN PASSES, AND CAPPED.**
+                //
+                // This used to be `stalled_for >= 3`, which is three *passes* —
+                // three minutes at the old fixed cadence and **forty-five
+                // seconds** at `--pass-secs 15`. Measured 2026-09-16: a peer at
+                // 15 s went from 916 MB to 5.4 GB in six minutes, because each
+                // re-subscribe tears down and rebuilds every subscription and
+                // p2panda-net does not reclaim the old broadcast ring.
+                //
+                // Capped as well, because a remedy that has not worked five
+                // times running is not going to. A stall it cannot fix — a
+                // missing key rather than a broken link — otherwise costs a
+                // leak every interval, forever.
+                let stalled_secs = stalled_for as u64 * args.pass_secs;
+                if stalled_secs >= STALL_AFTER_SECS
+                    && stalled_for % restream_every == 0
+                    && restreams < MAX_RESTREAMS
+                {
+                    restreams += 1;
                     match replicator.restream().await {
-                        Ok(n) => println!("    stalled — re-subscribed {n} topic(s)"),
+                        Ok(n) => println!(
+                            "    stalled {stalled_secs}s — re-subscribed {n} topic(s) ({restreams}/{MAX_RESTREAMS})"
+                        ),
                         Err(e) => println!("    stalled — re-subscribe failed: {e:#}"),
+                    }
+                    if restreams == MAX_RESTREAMS {
+                        println!(
+                            "    re-subscribing has not helped {MAX_RESTREAMS} times — stopping. \
+                             A stall this cannot fix is a missing key, not a broken link."
+                        );
                     }
                 }
                 // The events, when asked for, or unprompted once a stall is

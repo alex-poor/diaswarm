@@ -281,6 +281,38 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
         val worst = stale.maxOf { it.second }
         if (worst < STALE_AFTER) return
 
+        // 🔴 **CIPHERTEXT ARRIVING AND NOT OPENING IS NOT A TRANSPORT STALL.**
+        //
+        // Both look identical from here: the newest readable reading stops
+        // getting newer. But if the `unreadable` count is climbing, segments
+        // ARE being delivered — the network is working and the key is missing,
+        // and re-subscribing a working transport fixes nothing.
+        //
+        // Measured 2026-09-16: an unannounced group-secret rotation made
+        // everything after 15:34 unreadable, and this check fired every fifteen
+        // minutes for four hours without a hope of succeeding. Each attempt
+        // tears down and rebuilds every subscription, and p2panda-net does not
+        // reclaim the old broadcast ring — so the cost was a memory leak bought
+        // with a remedy that could never work.
+        //
+        // The count is per subject and the comparison is against the last
+        // check, because a static non-zero count is ordinary: segments sealed
+        // before this reader was granted never open and never will.
+        val delivering = stale.any { (subject, _) ->
+            val now = Follower.keysUnreadable(context, subject) ?: return@any false
+            val before = Prefs.lastUnreadable(context, subject.key)
+            Prefs.setLastUnreadable(context, subject.key, now)
+            before >= 0 && now > before
+        }
+        if (delivering) {
+            Log.w(
+                TAG,
+                "keys stalled (${worst / 1000}s) but segments ARE arriving and not opening — " +
+                    "the transport is fine and the key is missing; not re-subscribing"
+            )
+            return
+        }
+
         val since = System.currentTimeMillis() - Prefs.lastEndpointRestart(context)
         if (since < MIN_BETWEEN_RESTARTS) {
             Log.w(TAG, "keys stalled (${worst / 1000}s) — waiting, last reconnect ${since / 1000}s ago")

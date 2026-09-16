@@ -214,6 +214,40 @@ object Follower {
 
 
 
+    /**
+     * How many segments this phone holds for [subject] that it could not open.
+     *
+     * **THE COUNT THE `#` LINE HAS ALWAYS CARRIED AND NOTHING HAS EVER READ.**
+     * `# opened <n> <unreadable> rows <r>` — it was logged and discarded, and it
+     * is the one number that distinguishes "nothing is arriving" from
+     * "everything is arriving and none of it opens". See
+     * [Prefs.lastUnreadable].
+     *
+     * `null` when there is no answer, which a caller must not read as zero.
+     */
+    fun keysUnreadable(context: Context, subject: Subject): Int? {
+        if (!Prefs.keysVault(context) || subject.keys.isEmpty()) return null
+        val handle = SwarmKeys.open(context)
+        if (handle == 0L) return null
+        val raw = try {
+            SwarmNative.keysGlucose(
+                handle,
+                SwarmKeys.joinedDir(context, subject.key).absolutePath,
+                subject.keys,
+                subject.purpose,
+                System.currentTimeMillis() - 24 * 3_600_000L,
+                MAX_READINGS.toLong()
+            )
+        } catch (e: Throwable) {
+            return null
+        } finally {
+            SwarmNative.keysClose(handle)
+        }
+        val counts = raw.lineSequence().firstOrNull { it.startsWith("#") } ?: return null
+        // "# opened <opened> <unreadable> rows <n>"
+        return counts.split(' ').getOrNull(3)?.toIntOrNull()
+    }
+
     /** One row shape, parsed in one place, whichever vault produced it. */
     private fun parseReadings(rows: String): List<Reading> =
         rows.lines().filter { it.isNotBlank() && !it.startsWith("#") }.mapNotNull { row ->

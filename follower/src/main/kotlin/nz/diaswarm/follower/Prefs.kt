@@ -163,6 +163,22 @@ object Prefs {
     fun setLastEndpointRestart(c: Context, at: Long) =
         p(c).edit().putLong(LAST_RESTART, at).apply()
 
+    /**
+     * How many segments this phone held and could not open, per subject, as of
+     * the last stall check.
+     *
+     * **SO A STALL CHECK CAN TELL TWO IDENTICAL-LOOKING THINGS APART.** Nothing
+     * arriving and everything arriving unreadable both freeze the age of the
+     * newest reading. The first is a transport fault and re-subscribing is the
+     * remedy; the second means the transport is working perfectly and
+     * re-subscribing is pure cost. The difference is whether this number moved.
+     */
+    fun lastUnreadable(c: Context, subject: String): Int =
+        p(c).getInt("unreadable_$subject", -1)
+
+    fun setLastUnreadable(c: Context, subject: String, n: Int) =
+        p(c).edit().putInt("unreadable_$subject", n).apply()
+
     fun keysVault(c: Context): Boolean = p(c).getBoolean(KEYS_VAULT, false)
     fun setKeysVault(c: Context, v: Boolean) = p(c).edit().putBoolean(KEYS_VAULT, v).apply()
 
