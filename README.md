@@ -348,8 +348,19 @@ variability, days of wear, sensor active — which validates against HL7's own
 validator with zero errors.
 
 `nightscout` writes `entries.json` and `treatments.json` in the shapes the
-ecosystem already speaks, so a follower app, watch face or clinic dashboard can
-read a diaswarm vault without knowing anything about it.
+ecosystem already speaks.
+
+⚠️ **THERE IS NO CONNECTION TO NIGHTSCOUT, AND THAT IS THE DESIGN.** Nothing
+here dials a server, holds an `API_SECRET`, or syncs. These are **files**,
+written locally by a machine that already holds a granted key — and what leaves
+is **plaintext with no access control**, because the software on the other side
+has no idea what a group secret is.
+
+If you then upload those files to a Nightscout instance, **you have chosen to
+create a custodian**: a server holding readable data behind a shared password,
+which is precisely the model this project exists to avoid. That is a legitimate
+choice about your own copy and it is not an extension of the trust model. The
+handover is a person moving a file, deliberately.
 
 **It states the window it actually holds**, read off the keys rather than off a
 flag it was passed, so it cannot claim ninety days it was not granted. And it

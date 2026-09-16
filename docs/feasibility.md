@@ -1224,6 +1224,43 @@ handed a file by a person who ran software. Export makes the *data* portable and
 leaves the *access* non-interoperable, which is the price named in
 [rights.md](rights.md) and not a defect this stage closes.
 
+#### The integration model, stated plainly because it is easy to overstate
+
+**There is no connectivity, in either direction.** `diaswarm-peer` has no HTTP
+client, holds no credential, and opens no connection to any Nightscout or FHIR
+server. It writes files. The three commands — `export`, `summary`, `nightscout`
+— differ only in the shape they write.
+
+The boundary has exactly three properties, and all three matter:
+
+1. **The exporter runs where the key already is.** It decrypts nothing that
+   machine could not already decrypt, and publishes nothing. An exporter running
+   anywhere else would be a custodian, which §9.2 removed.
+2. **What crosses the boundary is plaintext with no access control.** Inside the
+   swarm every byte at rest is sealed and a holder cannot read it; a file is a
+   file. This is not a leak, it is the *point* — the receiving software has no
+   concept of a group secret — but it means the guarantees stop at the directory
+   the file is written to, and nothing downstream inherits them.
+3. **Whoever uploads chooses to create a custodian.** Putting these files on a
+   Nightscout instance produces a server holding readable data behind a shared
+   `API_SECRET` — the model §11's comparison table scores this project
+   *against*. Their copy, their call; it is not an extension of this
+   architecture and must never be described as one.
+
+⚠️ **SO "WORKS WITH NIGHTSCOUT" IS A CLAIM THAT MUST NOT BE MADE.** It does not
+work *with* Nightscout. It produces a document Nightscout can read, which a
+person moves. The difference is the whole of §11's honesty section: a sync
+implies a standing relationship, a credential and an egress path, and there is
+none of that here.
+
+🔴 **OPEN, AND DELIBERATELY NOT DECIDED HERE: should `--upload` exist?** Against:
+the peer would hold somebody's server credential, and a standing egress path
+from a vault to a third-party server is the shape this architecture exists to
+avoid. For: people will upload anyway, and a documented path beats an
+`API_SECRET` in shell history. **Nothing should be built either way until that
+is settled as a decision**, because it is a change to what the project claims
+and not a feature.
+
 *Reopens the interoperability verdict if:* both shapes land and round-trip
 against real consumers — a Nightscout instance ingesting `entries`, and one FHIR
 server validating a bundle.
