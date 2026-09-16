@@ -1,0 +1,14 @@
+The app no longer gets killed after an hour.
+
+A bug in the networking library queued the same failed connection attempt over
+and over, and the app grew until Android reclaimed it — usually within the hour,
+and worst on a phone moving between networks. A fix from that library's issue
+thread is carried here. Six hours of watching now pass without it.
+
+The person you follow can give themselves a name, and you see the name instead
+of sixteen characters of hex. They choose it when they make the invite; if they
+have not, nothing changes.
+
+Ayni now shows what it is carrying for other people — the swarm only works
+because each phone holds a little of everyone else's, and you could not
+previously see that happening.
