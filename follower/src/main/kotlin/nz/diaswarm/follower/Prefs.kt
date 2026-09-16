@@ -67,6 +67,23 @@ object Prefs {
      * quick enough that nobody waits for it.
      */
     /**
+     * How many logs the last pass carried, and when it ran.
+     *
+     * **BECAUSE AN INVARIANT NOBODY SEES IS ONE NOBODY CONSENTED TO.** D30
+     * makes carrying the price of reading — it is the principle this app is
+     * named after — and until now it happened entirely in the log. A person
+     * running Ayni had no way to know they were holding strangers' ciphertext,
+     * which is not a thing to learn from a stack trace.
+     */
+    fun carrying(c: Context): Int = p(c).getInt("carrying_count", -1)
+
+    fun setCarrying(c: Context, n: Int) =
+        p(c).edit().putInt("carrying_count", n).putLong("carrying_at", System.currentTimeMillis())
+            .apply()
+
+    fun carryingAt(c: Context): Long = p(c).getLong("carrying_at", 0L)
+
+    /**
      * What to call a subject, as learned from their invite at pairing.
      *
      * **LOCAL, AND EDITABLE.** The handle arrives in the invite, which anyone

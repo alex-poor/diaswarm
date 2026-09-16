@@ -27,6 +27,49 @@ private val Text2 = Color(0xFF9AA3B0)
  * shown as text as well, because a camera is not always in the room and an
  * invite is short enough to send in a message.
  */
+/**
+ * What this phone is holding for other people, and what that does and does not
+ * mean.
+ *
+ * **THE CLAIMS HERE ARE CONSTRAINED, NOT WRITTEN FRESH.** `feasibility.md` §11
+ * lists sentences this project may never say, and two of them are within reach
+ * of a screen like this: that carrying gives any visibility into content, and
+ * that data is "stored across a distributed network" while the pool is a
+ * handful of devices. What it says instead — a carrier breach is not a data
+ * breach — is true, and is the sentence that makes carrying reasonable to
+ * agree to. See `docs/roles.md`.
+ */
+@Composable
+fun CarryingDialog(count: Int, at: Long, onClose: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        confirmButton = { TextButton(onClick = onClose) { Text("Close") } },
+        title = { Text("Carrying $count log${if (count == 1) "" else "s"}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "This phone holds sealed records for other people so that theirs stay " +
+                        "readable when their phone is asleep — and so yours do when yours is.",
+                    color = Text2, fontSize = 14.sp
+                )
+                Text(
+                    "You cannot read any of it. Not as a rule this app follows, but because " +
+                        "nothing here has the keys: carrying is not being granted. If this " +
+                        "phone were lost, what is carried would still be sealed.",
+                    color = Text2, fontSize = 13.sp
+                )
+                Text(
+                    "It is the other half of reading. Ayni is named for it.",
+                    color = Text2, fontSize = 13.sp
+                )
+                if (at > 0) {
+                    Text("Last counted ${Follower.ageWords(at)}", color = Text2, fontSize = 12.sp)
+                }
+            }
+        }
+    )
+}
+
 @Composable
 fun InviteDialog(invite: String, onClose: () -> Unit) {
     val context = LocalContext.current

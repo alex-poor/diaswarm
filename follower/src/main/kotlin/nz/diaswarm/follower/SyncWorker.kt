@@ -127,6 +127,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                     2
                 )
                 Log.i(TAG, if (carried < 0) "keys carry unavailable ($carried)" else "keys carrying $carried log(s)")
+                // ON SCREEN, NOT ONLY IN THE LOG. See [Prefs.carrying].
+                if (carried >= 0) Prefs.setCarrying(applicationContext, carried.toInt())
                 verifyChains(applicationContext, keysToo = carried > 0)
                 if (carried > 0) watchForAStall(applicationContext)
 

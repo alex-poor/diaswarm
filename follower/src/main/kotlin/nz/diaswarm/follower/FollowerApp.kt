@@ -30,6 +30,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     var tick by remember { mutableStateOf(0) }
     var showInvite by remember { mutableStateOf(false) }
     var showPeople by remember { mutableStateOf(false) }
+    var showCarrying by remember { mutableStateOf(false) }
 
     // Redraw on a clock, because the AGE changes even when the data does not —
     // and a stale reading that still says "1 min ago" is the failure §12.3 is
@@ -72,6 +73,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     // that silently changes looks like they edited their profile.
     val tempTarget = remember(tick, subject) { subject?.let { Follower.runningTempTarget(context, it) } }
     val followed = remember(tick) { Follower.following(context) }
+    val carrying = remember(tick) { Prefs.carrying(context) }
     val low = remember(tick) { Prefs.lowLine(context) }
     val high = remember(tick) { Prefs.highLine(context) }
     // NULLABLE ON PURPOSE — see [Follower.scheduledBasalOrNull]. Null is "this
@@ -100,7 +102,25 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("ayni", color = Text2, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text("ayni", color = Text2, fontSize = 13.sp)
+                // **NEXT TO THE NAME, BECAUSE THE NAME IS WHAT IT MEANS.** D30
+                // makes carrying the price of reading, and until now it
+                // happened only in the log — so a person could run this for
+                // months without knowing they held anyone else's ciphertext.
+                // An invariant nobody can see is one nobody agreed to.
+                //
+                // Deliberately small and always present rather than prominent
+                // and dismissible: it is a standing fact about what this phone
+                // is doing, not a notification.
+                if (carrying > 0) {
+                    Text(
+                        " · carrying $carrying",
+                        color = Text2, fontSize = 13.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                            .clickable { showCarrying = true }.padding(horizontal = 4.dp)
+                    )
+                }
+                Spacer(Modifier.weight(1f))
                 Text("···", color = Text2, fontSize = 20.sp,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { showPeople = true }.padding(8.dp))
             }
@@ -146,6 +166,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     }
 
     if (showInvite) InviteDialog(Endpoint.invite(context)) { showInvite = false }
+    if (showCarrying) CarryingDialog(carrying, Prefs.carryingAt(context)) { showCarrying = false }
     if (showPeople) PeopleSheet(
         followed = followed,
         onScan = { showPeople = false; onScan() },
