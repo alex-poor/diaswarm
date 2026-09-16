@@ -1743,21 +1743,38 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRotate(
     handle: jlong,
 ) -> jlong {
     let Some(v) = keys_vault(handle) else { return -1 };
+    rotate_and_publish(v)
+}
+
+/// Rotate the group secret and tell the group about it.
+///
+/// **SPLIT OUT OF THE JNI SO IT CAN BE TESTED WITHOUT A PHONE.** The bug this
+/// exists to prevent lived in ten lines of glue that no test could reach: a
+/// `JNIEnv` cannot be built in a unit test, so the only way to exercise the
+/// original was to install it and wait a day for `rotateIfDue` to fire. It
+/// shipped, rotated once, and blacked out a follower for five hours.
+///
+/// 🔴 **PUBLISH IT, OR THE ROTATION IS A SILENT BLACKOUT.** `Vault::rotate`
+/// mints a new group secret AND returns the control message that tells every
+/// member about it. This used to discard that message with `Ok(_)`. The secret
+/// changed locally, nobody was told, and every segment sealed afterwards was
+/// ciphertext no follower could open — while the publisher looked perfectly
+/// healthy.
+///
+/// Measured on 2026-09-16: within three minutes of the first rotation a granted
+/// follower's `unreadable` count went 0 → 1 → 2 → … one per sealing pass, with
+/// readable rows falling in step. The data was arriving; only the key was
+/// missing.
+///
+/// The grant path had this right all along — see `grant_and_publish`, which
+/// this mirrors.
+///
+/// Returns the number of secrets held, or a negative code. **-3 IS NOT -2**: a
+/// rotation that happened but could not be announced is the dangerous case, and
+/// the caller must be able to tell it from one that never happened — the secret
+/// has moved on either way, so it needs re-announcing, not re-rotating.
+fn rotate_and_publish(v: &mut KeysVault) -> jlong {
     match v.vault.rotate() {
-        // 🔴 **PUBLISH IT, OR THE ROTATION IS A SILENT BLACKOUT.**
-        // `Vault::rotate` mints a new group secret AND returns the control
-        // message that tells every member about it. This used to discard that
-        // message with `Ok(_)`. The secret changed locally, nobody was told,
-        // and every segment sealed afterwards was ciphertext no follower could
-        // open — while the publisher looked perfectly healthy.
-        //
-        // Measured on 2026-09-16: within three minutes of the first rotation a
-        // granted follower's `unreadable` count went 0 -> 1 -> 2 -> ... one per
-        // sealing pass, with readable rows falling in step. The data was
-        // arriving; only the key was missing.
-        //
-        // The grant path had this right all along — see `grant_and_publish`,
-        // which this now mirrors exactly.
         Ok(update) => {
             match v.handle.block_on(diaswarm_keys::wire::publish_control(
                 &v.store,
@@ -1768,10 +1785,6 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRotate(
                     push_live(v.push.as_ref(), &v.signing, op);
                     v.vault.secrets() as jlong
                 }
-                // **-3 IS NOT -2.** A rotation that happened but could not be
-                // announced is the dangerous case, and the caller must be able
-                // to tell it from one that never happened: the secret has moved
-                // on either way, so this needs re-announcing, not re-rotating.
                 Err(_) => -3,
             }
         }
@@ -3261,6 +3274,73 @@ mod shadow_tests {
     /// The trap it guards is the silent one. A joined vault that minted its own
     /// key manager would be a different member to the one the subject granted,
     /// and would read *nothing* — no error, no crash, an empty graph.
+    /// A ROTATION IS ANNOUNCED, OR IT IS A BLACKOUT.
+    ///
+    /// **THIS IS THE TEST THAT COULD NOT EXIST WHEN THE BUG SHIPPED.** The
+    /// publish lived inside a JNI function, and a `JNIEnv` cannot be built in a
+    /// unit test — so the only way to exercise it was to install the plugin and
+    /// wait for `rotateIfDue` to fire a day later. It shipped, rotated once at
+    /// 15:34 on 2026-09-16, and blacked out a follower for five hours.
+    ///
+    /// `rotate_and_publish` is that glue with the `JNIEnv` taken off the front.
+    /// What it asserts is the thing the outage was: after a rotation, the
+    /// control log must carry the update. Counting secrets in the rotating
+    /// vault would have passed against the broken version.
+    #[test]
+    fn a_rotation_puts_its_update_in_the_control_log() {
+        use diaswarm_keys::{Vault, wire};
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store = rt.block_on(async {
+            diaswarm_keys::SqliteStoreBuilder::memory().build().await.unwrap()
+        });
+        let rng = diaswarm_keys::Rng::default();
+
+        let signing = p2panda_core::SigningKey::generate();
+        let author = signing.verifying_key();
+        let root = dir("rotate");
+        let mut vault = Vault::open(&root, 12 * 3_600_000, &signing).unwrap();
+        let (mgr, _bundle) = Vault::key_bundle(&rng).unwrap();
+        let create = vault.create(mgr).unwrap();
+        rt.block_on(wire::publish_control(&store, &signing, &create)).unwrap();
+
+        let before = rt
+            .block_on(wire::control_from(&store, &author, None))
+            .expect("control log")
+            .len();
+
+        let mut v = super::KeysVault {
+            tag: super::KEYS_TAG,
+            handle: rt.handle().clone(),
+            store: store.clone(),
+            signing: signing.clone(),
+            vault,
+            push: None,
+        };
+
+        let held = super::rotate_and_publish(&mut v);
+        assert!(held >= 0, "rotate_and_publish returned {held}");
+
+        // **THE ASSERTION THAT MATTERS.** Not "did it rotate" — the broken
+        // version rotated perfectly — but "did anybody get told".
+        let after = rt
+            .block_on(wire::control_from(&store, &author, None))
+            .expect("control log")
+            .len();
+        assert_eq!(
+            after,
+            before + 1,
+            "the rotation published nothing: the control log went {before} -> {after}"
+        );
+
+        // And a second rotation announces itself too, because the outage was a
+        // remedy that fired repeatedly and silently.
+        let held2 = super::rotate_and_publish(&mut v);
+        assert!(held2 >= 0);
+        let after2 = rt.block_on(wire::control_from(&store, &author, None)).unwrap().len();
+        assert_eq!(after2, before + 2, "the second rotation was not announced");
+    }
+
     #[test]
     fn a_follower_joins_from_a_log_and_reads_what_it_was_granted() {
         use diaswarm_keys::{Vault, encode_bundle, wire};

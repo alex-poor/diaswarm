@@ -85,11 +85,22 @@ The case for bumping is strong: the pinned build has a visibly broken settings
 screen and a permission whose stated justification is false. Both are exactly
 what a tester checks, and both are fixed.
 
-The case for waiting one day is also real: today's diff is large and hours old,
-and **the rotation fix has never had a successful rotation run through it** —
-the first is due ~15:34 on 2026-09-17.
+✅ **THE ROTATION FIX NO LONGER NEEDS A DEVICE TO VERIFY.** The publish lived
+inside a JNI function, and a `JNIEnv` cannot be built in a unit test — which is
+precisely why it shipped broken: the only way to exercise it was to install the
+plugin and wait a day. `rotate_and_publish` is now that glue with the `JNIEnv`
+taken off the front, and `a_rotation_puts_its_update_in_the_control_log` asserts
+the thing the outage actually was — **not "did it rotate", because the broken
+version rotated perfectly, but "did anybody get told"**. Confirmed to fail
+against the original code (`the control log went 1 -> 1`) and pass against the
+fix.
 
-**So: verify that rotation, then re-pin to that commit as 0.1.7 (codes 81/82).**
-Bumping to a commit where everything shipped has been exercised at least once is
-worth one day of waiting, and re-pinning mid-review costs them a pipeline run
-either way — better to spend it once, on something finished.
+So the reason to wait has largely gone. What is left of it: today's diff is
+large and hours old, and nothing has run overnight.
+
+**So: let it run overnight, then re-pin to that commit as 0.1.7 (codes 81/82).**
+The remaining reason to wait is not the rotation any more — it is that a large
+diff written in one evening deserves one night of the daemon and both phones
+running before it is handed to somebody else to test. Re-pinning mid-review
+costs them a pipeline run either way; better to spend it once, on something that
+has survived a night.
