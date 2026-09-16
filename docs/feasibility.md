@@ -1307,8 +1307,25 @@ server validating a bundle.
 
 ✅ **BOTH SHAPES LAND, 2026-09-16**, in `crates/diaswarm-peer`: `summary` emits
 the FHIR CGM bundle and `nightscout` emits `entries.json` and
-`treatments.json`. The FHIR half **validates against HL7's own validator with
-zero errors** (`validator_cli` + `hl7.fhir.uv.cgm#1.0.0`, R4).
+`treatments.json`. Both FHIR envelopes **validate against HL7's own validator
+with zero errors** (`validator_cli` + `hl7.fhir.uv.cgm#1.0.0`, R4).
+
+🔴 **AND THE ENVELOPE HAD TO CHANGE, BECAUSE A `transaction` BUNDLE IS AN HTTP
+CONVERSATION.** The IG's `cgm-data-submission-bundle` fixes `Bundle.type` to
+`transaction`, requires `entry.request` on every entry, and exists to be POSTed
+to `[base]/$submit-cgm-bundle`. The first version emitted one **to a file** while
+[D33](decisions.md) said this project connects to nothing — the document's own
+semantics were instructing a server to execute seven POSTs that would never be
+sent.
+
+The default is now a FHIR **document**: self-contained, led by a `Composition`
+that says what it is and who it is about, carrying no request elements, and
+**carrying its own `Patient`** because a document must resolve its own
+references — `Patient/<id>` is a server-side path and means nothing in a file.
+That Patient holds the caller's identifier and nothing else: no name, no date of
+birth, nothing this gateway was not handed. `--as transaction` still produces
+the IG's submission bundle for somebody who has arranged to submit, and this
+tool still does not submit it.
 
 ⚠️ **THE VERDICT DOES NOT REOPEN YET.** The condition is *round-trip against
 real consumers*, and neither has faced one: no Nightscout instance has ingested

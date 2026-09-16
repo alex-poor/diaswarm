@@ -26,6 +26,25 @@
 //! days of wear and sensor active percentage; mean glucose is optional and is
 //! always included here because a clinic expects it.
 //!
+//! 🔴 **A `document` BUNDLE, NOT A `transaction` ONE, AND THE DIFFERENCE IS THE
+//! ARCHITECTURE.** The IG's own `cgm-data-submission-bundle` fixes
+//! `Bundle.type` to `transaction`, requires `entry.request` on every entry, and
+//! exists to be POSTed to `[base]/$submit-cgm-bundle`. **That is a queue of HTTP
+//! requests.** Writing one to a file and then saying this project never connects
+//! to anything ([D33](../../../docs/decisions.md)) was incoherent: the document's
+//! own semantics said "execute these POSTs against a server".
+//!
+//! A FHIR *document* is the construct for a structured summary that is **handed
+//! over rather than executed** — self-contained, led by a `Composition` that
+//! says what it is and who it is about, and carrying no request elements at all.
+//! It is also what SMART Health Links uses for the static-payload case. The
+//! individual Observation profiles are unchanged, because they are what carries
+//! the clinical meaning; only the envelope changed.
+//!
+//! `--as transaction` still produces the IG's submission bundle, for somebody
+//! who has actually chosen to submit. **It is not the default**, because that
+//! would describe an integration this project does not have.
+//!
 //! **COMPUTED AT THE READER, WHICH IS §10.7'S WHOLE DESIGN POINT.** Nothing new
 //! is published, no plaintext leaves anyone's phone on the way to a format, and
 //! the subject's revocation still governs — a reader whose grant stops gets no
@@ -133,28 +152,51 @@ fn urn_uuid(seed: &str) -> String {
 /// **NO `display`, DELIBERATELY.** See the header: a wrong LOINC display is a
 /// validation error and an absent one is not, and the long names drift with
 /// LOINC releases this crate does not ship.
+#[allow(clippy::too_many_arguments)]
 fn observation(
     id: &str,
     full_url: &str,
     profile: &str,
     loinc: &str,
-    subject: &str,
+    subject_ref: &str,
     start: &str,
     end: &str,
     body: &str,
+    envelope: Envelope,
 ) -> String {
+    // **`request` IS PROHIBITED OUTSIDE batch/transaction** (`bdl-3`), and it is
+    // the element that turns a document into a set of HTTP calls.
+    let request = match envelope {
+        Envelope::Transaction => r#","request":{"method":"POST","url":"Observation"}"#,
+        Envelope::Document => "",
+    };
     format!(
-        r#"{{"fullUrl":"{full_url}","resource":{{"resourceType":"Observation","id":"{id}","meta":{{"profile":["{IG}/{profile}"]}},"status":"final","code":{{"coding":[{{"system":"{LOINC}","code":"{loinc}"}}]}},"subject":{{"reference":"Patient/{}"}},"effectivePeriod":{{"start":"{start}","end":"{end}"}},{body}}},"request":{{"method":"POST","url":"Observation"}}}}"#,
-        esc(subject)
+        r#"{{"fullUrl":"{full_url}","resource":{{"resourceType":"Observation","id":"{id}","meta":{{"profile":["{IG}/{profile}"]}},"status":"final","code":{{"coding":[{{"system":"{LOINC}","code":"{loinc}"}}]}},"subject":{{"reference":"{}"}},"effectivePeriod":{{"start":"{start}","end":"{end}"}},{body}}}{request}}}"#,
+        esc(subject_ref)
     )
 }
 
-/// The whole digest as one transaction bundle.
+/// How the digest is wrapped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Envelope {
+    /// A self-contained clinical document, led by a `Composition`. What a person
+    /// hands over.
+    Document,
+    /// The IG's submission bundle: a queue of POSTs for a server that has agreed
+    /// to receive them.
+    Transaction,
+}
+
+/// The whole digest as one bundle.
 ///
 /// `subject_id` is the Patient this is about. **It is the caller's to choose
 /// and this module will not invent one**: a gateway that minted patient
 /// identifiers would be the identity broker D5 forbids.
 pub fn cgm_summary_bundle(agp: &Agp, subject_id: &str) -> String {
+    bundle(agp, subject_id, Envelope::Document)
+}
+
+pub fn bundle(agp: &Agp, subject_id: &str, envelope: Envelope) -> String {
     let start = ymd(agp.first_t);
     let end = ymd(agp.last_t);
     let s = subject_id;
@@ -170,6 +212,15 @@ pub fn cgm_summary_bundle(agp: &Agp, subject_id: &str) -> String {
     // same export is the same document.
     let stamp = format!("{s}|{start}|{end}");
     let url = |id: &str| urn_uuid(&format!("{stamp}|{id}"));
+    // **A DOCUMENT MUST RESOLVE ITS OWN REFERENCES.** `Patient/<id>` is a
+    // server-side reference and means nothing in a file, so a document carries
+    // the Patient and points at it by `fullUrl`. A transaction is submitted to
+    // a server that already knows the patient, so there it stays `Patient/<id>`.
+    let u_patient = urn_uuid(&format!("{s}|patient"));
+    let subject_ref = match envelope {
+        Envelope::Document => u_patient.clone(),
+        Envelope::Transaction => format!("Patient/{s}"),
+    };
     let (u_summary, u_ranges, u_mean, u_gmi, u_cv, u_wear, u_active) = (
         url("cgm-summary"), url("times-in-ranges"), url("mean-glucose"),
         url("gmi"), url("cv"), url("days-of-wear"), url("sensor-active"),
@@ -177,7 +228,7 @@ pub fn cgm_summary_bundle(agp: &Agp, subject_id: &str) -> String {
 
     let ranges = observation(
         "times-in-ranges", &u_ranges, "cgm-summary-times-in-ranges", "106793-3",
-        s, &start, &end,
+        &subject_ref, &start, &end,
         &format!(
             r#""component":[{}]"#,
             [
@@ -189,29 +240,35 @@ pub fn cgm_summary_bundle(agp: &Agp, subject_id: &str) -> String {
             ]
             .join(",")
         ),
+        envelope,
     );
 
     let mean = observation(
         "mean-glucose", &u_mean, "cgm-summary-mean-glucose-mass-per-volume", "97507-8",
-        s, &start, &end,
+        &subject_ref, &start, &end,
         &format!(r#""valueQuantity":{}"#, quantity(agp.mean_mgdl, "mg/dl", "mg/dL")),
+        envelope,
     );
     let gmi = observation(
-        "gmi", &u_gmi, "cgm-summary-gmi", "97506-0", s, &start, &end,
+        "gmi", &u_gmi, "cgm-summary-gmi", "97506-0", &subject_ref, &start, &end,
         &format!(r#""valueQuantity":{}"#, quantity(agp.gmi_percent, "%", "%")),
+        envelope,
     );
     let cv = observation(
-        "cv", &u_cv, "cgm-summary-coefficient-of-variation", "104638-2", s, &start, &end,
+        "cv", &u_cv, "cgm-summary-coefficient-of-variation", "104638-2", &subject_ref, &start, &end,
         &format!(r#""valueQuantity":{}"#, quantity(agp.cv_percent, "%", "%")),
+        envelope,
     );
     let wear = observation(
-        "days-of-wear", &u_wear, "cgm-summary-days-of-wear", "104636-6", s, &start, &end,
+        "days-of-wear", &u_wear, "cgm-summary-days-of-wear", "104636-6", &subject_ref, &start, &end,
         &format!(r#""valueQuantity":{}"#, quantity(agp.days_of_wear, "days", "d")),
+        envelope,
     );
     let active = observation(
         "sensor-active", &u_active, "cgm-summary-sensor-active-percentage", "104637-4",
-        s, &start, &end,
+        &subject_ref, &start, &end,
         &format!(r#""valueQuantity":{}"#, quantity(agp.sensor_active_percent, "%", "%")),
+        envelope,
     );
 
     // **hasMember POINTS AT THE fullUrls, NOT AT `Observation/<id>`.** A
@@ -224,20 +281,54 @@ pub fn cgm_summary_bundle(agp: &Agp, subject_id: &str) -> String {
         .collect::<Vec<_>>()
         .join(",");
     let summary = observation(
-        "cgm-summary", &u_summary, "cgm-summary", "107931-8", s, &start, &end,
+        "cgm-summary", &u_summary, "cgm-summary", "107931-8", &subject_ref, &start, &end,
         &format!(r#""hasMember":[{members}]"#),
+        envelope,
     );
 
-    format!(
-        r#"{{"resourceType":"Bundle","type":"transaction","entry":[{}]}}"#,
-        [summary, ranges, mean, gmi, cv, wear, active].join(",")
-    )
+    match envelope {
+        Envelope::Transaction => format!(
+            r#"{{"resourceType":"Bundle","type":"transaction","entry":[{}]}}"#,
+            [summary, ranges, mean, gmi, cv, wear, active].join(",")
+        ),
+        Envelope::Document => {
+            // **A DOCUMENT IS LED BY A `Composition`**, which is what says what
+            // this is, who it is about and when it was assembled. Without it a
+            // document bundle is invalid (`bdl-1`), and with it the file is
+            // self-describing to somebody who opens it cold.
+            let u_comp = url("composition");
+            // **AUTHOR IS THE PATIENT, AND THAT IS THE HONEST ANSWER.** FHIR
+            // requires one. Nobody else attests this: the subject's own key
+            // opened the records and the subject's own machine computed the
+            // statistics. Naming a clinic or a vendor here would assert a
+            // provenance that does not exist.
+            // **THE MINIMUM PATIENT THAT MAKES THE DOCUMENT RESOLVE, AND NOT
+            // ONE FIELD MORE.** An identifier the caller supplied, no name, no
+            // date of birth, nothing this gateway does not already hold. D5
+            // forbids becoming an identity broker; carrying the identifier you
+            // were handed so the file is self-contained is not that.
+            let patient = format!(
+                r#"{{"fullUrl":"{u_patient}","resource":{{"resourceType":"Patient","id":"subject","identifier":[{{"value":"{}"}}]}}}}"#,
+                esc(s)
+            );
+            let composition = format!(
+                r#"{{"fullUrl":"{u_comp}","resource":{{"resourceType":"Composition","id":"composition","status":"final","type":{{"coding":[{{"system":"{LOINC}","code":"107931-8"}}]}},"subject":{{"reference":"{u_patient}"}},"date":"{}","author":[{{"reference":"{u_patient}"}}],"title":"Continuous glucose monitoring summary","section":[{{"title":"CGM summary","entry":[{{"reference":"{u_summary}"}}]}}]}}}}"#,
+                crate::nightscout::iso8601(agp.last_t)
+            );
+            format!(
+                r#"{{"resourceType":"Bundle","type":"document","identifier":{{"system":"urn:ietf:rfc:3986","value":"{u_summary}"}},"timestamp":"{}","entry":[{}]}}"#,
+                crate::nightscout::iso8601(agp.last_t),
+                [composition, patient, summary, ranges, mean, gmi, cv, wear, active].join(",")
+            )
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::agp::Agp;
+    use serde_json::Value as J;
 
     fn sample() -> Agp {
         Agp {
@@ -260,6 +351,23 @@ mod tests {
 
     /// CIVIL DATES, BECAUSE THE PROFILES FIX `effectivePeriod` TO DATE
     /// PRECISION AND A WRONG DATE IS A WRONG REPORT.
+    /// Writes both envelopes out so the external validator can see them.
+    #[test]
+    fn emit_for_external_validation() {
+        if let Ok(dir) = std::env::var("DIASWARM_VALIDATE_OUT") {
+            std::fs::write(
+                format!("{dir}/tx.json"),
+                bundle(&sample(), "patient-123", Envelope::Transaction),
+            )
+            .unwrap();
+            std::fs::write(
+                format!("{dir}/doc.json"),
+                bundle(&sample(), "patient-123", Envelope::Document),
+            )
+            .unwrap();
+        }
+    }
+
     #[test]
     fn dates_are_real_civil_dates_including_a_leap_day() {
         assert_eq!(ymd(0), "1970-01-01");
@@ -272,16 +380,25 @@ mod tests {
     #[test]
     fn the_bundle_parses_and_carries_the_igs_codes() {
         let json = cgm_summary_bundle(&sample(), "patient-123");
-        let v: serde_json::Value = serde_json::from_str(&json).expect("the bundle is not valid JSON");
+        let v: J = serde_json::from_str(&json).expect("the bundle is not valid JSON");
 
         assert_eq!(v["resourceType"], "Bundle");
-        assert_eq!(v["type"], "transaction");
+        // 🔴 **A DOCUMENT, NOT A TRANSACTION.** A transaction bundle is a queue
+        // of HTTP POSTs against a server base URL; emitting one as a file while
+        // claiming no connectivity (D33) was a category error.
+        assert_eq!(v["type"], "document", "the default envelope is a set of HTTP requests");
+        assert!(v["timestamp"].is_string(), "a document bundle needs a timestamp");
         let entries = v["entry"].as_array().expect("entries");
-        assert_eq!(entries.len(), 7, "expected a grouping observation and six metrics");
+        assert_eq!(entries.len(), 9, "expected a Composition, a Patient, a grouping observation and six metrics");
+        assert_eq!(entries[0]["resource"]["resourceType"], "Composition", "a document must lead with a Composition");
+        for e in entries {
+            assert!(e["request"].is_null(), "a document carries no HTTP requests");
+        }
 
         // Every LOINC code the IG fixes, read off the StructureDefinitions.
         let codes: Vec<String> = entries
             .iter()
+            .filter(|e| e["resource"]["resourceType"] == "Observation")
             .map(|e| e["resource"]["code"]["coding"][0]["code"].as_str().unwrap().to_string())
             .collect();
         for expected in
@@ -293,13 +410,13 @@ mod tests {
         // **EVERY ENTRY NEEDS A fullUrl**, or its references do not resolve —
         // 20 of the validator's 32 first-run errors were this and its knock-ons.
         let urls: Vec<&str> = entries.iter().map(|e| e["fullUrl"].as_str().expect("fullUrl")).collect();
-        assert_eq!(urls.len(), 7);
+        assert_eq!(urls.len(), 9);
         for u in &urls {
             assert!(u.starts_with("urn:uuid:"), "fullUrl is not a urn:uuid: {u}");
             assert_eq!(u.len(), 45, "not a UUID shape: {u}");
         }
         let unique: std::collections::BTreeSet<&&str> = urls.iter().collect();
-        assert_eq!(unique.len(), 7, "two entries share a fullUrl");
+        assert_eq!(unique.len(), 9, "two entries share a fullUrl");
 
         // The grouping observation must reference the others BY THEIR fullUrls,
         // or a server receives six unrelated observations.
@@ -348,11 +465,35 @@ mod tests {
 
         // Every observation is about the patient the caller named, and covers
         // the period the data actually covers.
-        for e in entries {
-            assert_eq!(e["resource"]["subject"]["reference"], "Patient/patient-123");
+        // **SELF-CONTAINED**: the subject is carried, and every observation
+        // points at it by fullUrl rather than at a server-side path.
+        let patient = entries
+            .iter()
+            .find(|e| e["resource"]["resourceType"] == "Patient")
+            .expect("a document must carry its subject");
+        let p_url = patient["fullUrl"].as_str().unwrap();
+        assert_eq!(patient["resource"]["identifier"][0]["value"], "patient-123");
+        assert!(patient["resource"]["name"].is_null(), "a name was invented");
+        assert!(patient["resource"]["birthDate"].is_null(), "a birth date was invented");
+        for e in entries.iter().filter(|e| e["resource"]["resourceType"] == "Observation") {
+            assert_eq!(e["resource"]["subject"]["reference"], p_url);
             assert_eq!(e["resource"]["effectivePeriod"]["start"], "2024-12-31");
             assert_eq!(e["resource"]["effectivePeriod"]["end"], "2026-09-16");
             assert_eq!(e["resource"]["status"], "final");
+        }
+
+        // **AND THE SUBMISSION BUNDLE IS STILL AVAILABLE, FOR SOMEBODY WHO HAS
+        // ACTUALLY CHOSEN TO SUBMIT.**
+        let tx: J = serde_json::from_str(&bundle(&sample(), "patient-123", Envelope::Transaction))
+            .expect("transaction bundle is not JSON");
+        assert_eq!(tx["type"], "transaction");
+        assert_eq!(tx["entry"].as_array().unwrap().len(), 7, "a transaction carries no Composition or Patient");
+        assert_eq!(
+            tx["entry"][0]["resource"]["subject"]["reference"], "Patient/patient-123",
+            "a submission must reference the patient the server knows"
+        );
+        for e in tx["entry"].as_array().unwrap() {
+            assert_eq!(e["request"]["method"], "POST", "a transaction entry needs its request");
         }
     }
 
@@ -360,7 +501,7 @@ mod tests {
     #[test]
     fn a_hostile_patient_id_cannot_break_out_of_the_json() {
         let json = cgm_summary_bundle(&sample(), r#"x","evil":"1"#);
-        let v: serde_json::Value = serde_json::from_str(&json).expect("quoting failed");
+        let v: J = serde_json::from_str(&json).expect("quoting failed");
         assert!(v["entry"][0]["resource"]["evil"].is_null(), "an injected field survived");
     }
 }

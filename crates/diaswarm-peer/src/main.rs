@@ -173,6 +173,14 @@ enum Cmd {
         /// Where to write. `-` writes to stdout.
         #[arg(long, default_value = "-", value_name = "FILE")]
         out: PathBuf,
+        /// How to wrap it.
+        ///
+        /// `document` is a self-contained clinical document — what a person
+        /// hands over, and the default. `transaction` is the IG's submission
+        /// bundle: **a queue of HTTP POSTs** for somebody who has actually
+        /// arranged to submit to a server. This tool does not submit it.
+        #[arg(long = "as", default_value = "document", value_name = "ENVELOPE")]
+        envelope: String,
     },
 
     /// Nightscout `entries.json` and `treatments.json`, for the ecosystem.
@@ -545,6 +553,7 @@ async fn cmd_summary(
     days: u64,
     patient: &str,
     out: &Path,
+    envelope: fhir::Envelope,
 ) -> Result<()> {
     let g = granted_records(dir, subject, days).await?;
     let Some(summary) = agp::Agp::from_records(&g.records) else {
@@ -553,7 +562,7 @@ async fn cmd_summary(
             describe_skipped(g.opened, &g.skipped)
         );
     };
-    let bundle = fhir::cgm_summary_bundle(&summary, patient);
+    let bundle = fhir::bundle(&summary, patient, envelope);
 
     if out == Path::new("-") {
         println!("{bundle}");
@@ -644,8 +653,13 @@ async fn main() -> Result<()> {
         Some(Cmd::Export { subject, out, days }) => {
             return cmd_export(&dir, &subject, &out, days).await;
         }
-        Some(Cmd::Summary { subject, days, patient, out }) => {
-            return cmd_summary(&dir, &subject, days, &patient, &out).await;
+        Some(Cmd::Summary { subject, days, patient, out, envelope }) => {
+            let envelope = match envelope.as_str() {
+                "document" => fhir::Envelope::Document,
+                "transaction" => fhir::Envelope::Transaction,
+                other => anyhow::bail!("--as must be document or transaction, not {other}"),
+            };
+            return cmd_summary(&dir, &subject, days, &patient, &out, envelope).await;
         }
         Some(Cmd::Nightscout { subject, days, out }) => {
             return cmd_nightscout(&dir, &subject, days, &out).await;
@@ -936,15 +950,16 @@ mod tests {
         // that came out of a real grant rather than a fixture: sealed by a
         // subject, replicated as operations, opened with a granted secret.
         let bundle_path = dir.join("summary.json");
-        cmd_summary(&dir, &subject_identity_hex, 0, "patient-42", &bundle_path)
+        cmd_summary(&dir, &subject_identity_hex, 0, "patient-42", &bundle_path, fhir::Envelope::Document)
             .await
             .expect("summary");
         let bundle = std::fs::read_to_string(&bundle_path).unwrap();
         let v: serde_json::Value = serde_json::from_str(&bundle).expect("bundle is not JSON");
         assert_eq!(v["resourceType"], "Bundle");
-        assert_eq!(v["entry"].as_array().unwrap().len(), 7);
+        assert_eq!(v["type"], "document", "the handed-over file is a queue of HTTP POSTs");
+        assert_eq!(v["entry"].as_array().unwrap().len(), 9);
         assert_eq!(
-            v["entry"][0]["resource"]["subject"]["reference"], "Patient/patient-42",
+            v["entry"][1]["resource"]["identifier"][0]["value"], "patient-42",
             "the summary is about somebody else"
         );
         // The bolus must not have been counted as glucose.

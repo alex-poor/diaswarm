@@ -347,6 +347,11 @@ bundle](https://hl7.org/fhir/uv/cgm/) — time in range, mean glucose, GMI,
 variability, days of wear, sensor active — which validates against HL7's own
 validator with zero errors.
 
+It is a FHIR **document**: self-contained, carrying its own subject, and holding
+no HTTP requests. The IG's submission bundle is a queue of POSTs for a server,
+which is not what this is; `--as transaction` produces one anyway for somebody
+who has arranged to submit.
+
 `nightscout` writes `entries.json` and `treatments.json` in the shapes the
 ecosystem already speaks.
 
