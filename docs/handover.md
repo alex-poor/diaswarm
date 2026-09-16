@@ -1,287 +1,170 @@
-# Handover — 2026-09-16 11:40
+# Handover — 2026-09-16 14:15
 
-`README.md` may carry **the user's own edits — check `git status` before
-committing anything.**
+Everything is committed and pushed. Working tree clean. Fifteen commits today.
+
+⚠️ **`README.md` and `fdroid/nz.diaswarm.ayni.yml` have carried the owner's own
+edits in the past — check `git status` before committing either.**
 
 ---
 
-## 0. The memory leak is upstream, known, and worked around
+## 0. Read this first: what is running, and what is NOT installed
 
-**Ayni grew until Android killed it — 120 MB to 5.2 GB overnight.** The cause is
-in iroh, not here, and it was already reported twice before we found it.
+**Running unattended right now:**
 
-`RemoteStateActor` re-queues a failed QUIC path-open into `pending_open_paths`.
-The 333 ms retry drains the queue and calls `open_path_on_all_conns` for each
-entry — which retries the address on **every** connection to that peer, and every
-connection still at the path-id cap pushes it back again. One entry becomes C
-entries per tick. No dedup, no cap.
-
-* [iroh#4390](https://github.com/n0-computer/iroh/issues/4390) — `bug`, milestone
-  Sprint P, open since July. 24 GB single allocation on macOS. Carries the
-  hot-fix we use.
-* [iroh#4509](https://github.com/n0-computer/iroh/issues/4509) — open, Windows,
-  RSS past 100 GB.
-
-⚠️ **iroh 1.2.0 is identical here** — one variable renamed. Upgrading does not
-help. Checked, not assumed.
-
-**Measured on Android** (heapprofd, follower up 54 minutes):
-
-```
-largest SINGLE allocation   834,695,168 bytes  (796 MB)
-total allocated               1.13 GB in 150 s
-net retained                  7.5 MB      <- why sum(size) misses it entirely
-```
-
-**Our workaround:** `vendor/iroh` — iroh 1.1.0 with one deduplicating, capped
-enqueue, verbatim from #4390 so it lifts out cleanly. `[patch.crates-io]` in
-`diaswarm-net` and `diaswarm-android`. See `vendor/iroh/DIASWARM-PATCH.md`.
-`diaswarm-peer` is deliberately left on stock iroh as a control.
-
-**Measured, phone B, same phone and hour, only iroh differing:**
-
-| | unpatched | patched |
+| what | where | why |
 |---|---|---|
-| t+15m | 348 MB | — |
-| t+54m | 416 MB (+127 MB in one minute) | — |
-| t+61m | — | 144 MB |
-| t+69m | — | 126 MB, trending down |
+| memory soak | phone B, `docs/measurements/2026-09-16-ayni-memory.txt` | validating the iroh workaround; **~6 h in** |
+| burst alarm | this session's monitor | fires if native heap passes 600 MB |
+| desktop peer | laptop, `~/.local/bin/diaswarm-peer` | **stock iroh on purpose** — the control arm |
 
-⚠️ **69 minutes is not a night.** The run ended when phone B left adb, not
-because it was finished. Re-run it longer before calling this closed.
+🔴 **ALMOST NOTHING FROM TODAY IS ON A PHONE.** Built and tested is not shipped,
+and this project has been caught by that distinction before.
 
-⚠️ **THE LOOP PHONE BARELY HAS THIS.** 130 MB native after 13h49m, against the
-follower's 348 MB in fifteen minutes. The trigger is network roaming, and a
-publisher on stable home wifi rarely hits the path-id cap. Do not rush the patch
-onto the pump phone on the follower's evidence.
-
-⚠️ **PROFILE AT 40+ MINUTES.** Every capture taken in the first fifteen minutes
-misread SQLite page-cache warm-up as the cause, and a fifteen-minute flat window
-produced a "fixed" claim that was wrong within the hour. The page-cache cap in
-`diaswarm_keys::open_bounded_store` was kept (it is correct hygiene, and a
-busy timeout p2panda never set) but it is **not** what fixes this.
-
----
-
-## 1. The headline: the off-LAN outage is explained and fixed
-
-**A 71-minute outage on 2026-09-15 had one cause, and it was ours.** See D32 in
-[decisions.md](decisions.md) and the end of [migration.md](migration.md).
-
-```
-15:04:24  relay=connected(1)
-15:05:25  relay=disconnected      <- phone left the house, wifi -> mobile
-   ...    88 consecutive passes, 71 minutes
-16:16:23  relay=connected(1)      <- came home, wifi back
-```
-
-**AAPS never faltered**: 84 epochs sealed into the hole, `holds` 1470 → 1560,
-`missing 0, lost 0, failures 0`. Not doze (AAPS is whitelisted and at
-`targetSdk 32`), not the carrier, not the foreground service.
-
-**The cause:** on Android, `netwatch`'s route monitor is an empty stub — *"Very
-sad monitor. Android doesn't allow us to do this"* — and its wall-time poll is an
-hour on mobile and fires only on a *clock* jump. **iroh cannot see an Android
-network change.** Its own docs say Java must call `Endpoint::network_change()`.
-We never did.
-
-**The fix:** `NetworkWatch` (in `nz/diaswarm/jni/`, duplicated in both apps) →
-`SwarmNative.swarmNetworkChanged` → `Swarm::network_changed`.
-
-⚠️ **A BRIEF WIFI TOGGLE DOES NOT REPRODUCE THIS**, which is why it hid for
-days. Live QUIC connections keep flowing over the wildcard socket via cellular
-and nothing has to re-resolve. It needs a network change that **outlives its
-connections** — leaving, not toggling.
-
-⚠️ **"Off-LAN is proven" was over-claimed** from 2026-09-11 onward: every such
-test had the phone on mobile data *while still at home*.
-
----
-
-## 1a. The foreground-service soak: PASSED
-
-`specialUse` works. First process ran **8h03m** (07:19 → 15:22) against
-`dataSync`'s death at 6h12m, `effective=NONE` and `doze=IDLE` across all 60
-samples, two-minute cadence held. It then restarted and **came back**, which
-`dataSync` could not ("Time limit already exhausted"). The 15:22 restart is a
-separate question — most likely the known Ayni memory leak.
-
----
-
-## 1b. Device state, 2026-09-16 11:40
-
-| device | build | note |
+| device | what is actually installed | what it is missing |
 |---|---|---|
-| **loop phone** `2A28…AC` | D32 network-change fix, **stock iroh** | up 13h49m, 130 MB native — barely affected. Looping, sealing. Patched AAPS APK is **built but not installed**; see §0 for why that is deliberate. |
-| **phone B** `2C01…YL` | D32 + **patched iroh** + page-cache cap | ⚠️ unstripped diagnostic build, not a release build. Was holding 126 MB at t+69m when it left adb. **Needs replugging** to extend the soak. |
+| **phone B** `2C01…YL` | Ayni 0.1.6, installed 08:00 today — **iroh patch only** | handles, carrying display |
+| **loop phone** `2A28…AC` | AAPS from 2026-09-15 16:54 — **D32 network fix only** | iroh patch, rotation, scope picker, handle |
 
-**Open with F-Droid:** nothing. MR !48469 is green on `4bb1dc91` and mergeable;
-screenshots fixed, commit hash pinned, auto-update enabled. Waiting on them.
+⚠️ **Installing Ayni on phone B ends the soak.** The two trade against each
+other; that is why neither has happened.
 
-**Open with iroh:** a comment is drafted and unposted at
-`scratchpad/iroh-4390-comment.md` — adds Android as a third platform, the
-`max(size)` vs `sum(size)` trap, and the roam correlation.
-
-**Also unshipped:** `peer-v0.1.0` can be re-tagged now the `macos-13` runner is
-fixed; four of five targets built last time.
-
----|---|---|
-| **loop phone** `2A28…AC` | AAPS with D32, coalesced `NetworkWatch` | looping, sealing, relay connected. Pump key intact through two installs. |
-| **phone B** `2C01…YL` | ⚠️ **Ayni built UNSTRIPPED for profiling — NOT a release build**, carrying the page-cache fix (`cd8258a`) | `CARGO_PROFILE_RELEASE_STRIP=none` plus a temporary `keepDebugSymbols`. The gradle edit is reverted and NOT committed; the APK on the device still has it. Rebuild normally before testing anything about size or shipping. An overnight curve is running to `scratchpad/curve-overnight.log`: native heap should stay near 130 MB. The unfixed build passed 400 MB inside twenty minutes. |
-
-⚠️ **The unstripped build is deliberate and worth keeping until the memory work
-is done** — it is what makes a heap profile name a function instead of an
-address. See [[ayni-memory-burst]] in memory for the whole recipe.
+⚠️ **The loop phone drives an insulin pump.** Its install is the owner's call,
+every time, and phone B goes first.
 
 ---
 
-## 2. The finding this soak exists to verify
+## 1. The memory problem: one leak fixed, a second one found
 
-**Ayni could not watch overnight, and the cause was not doze.**
+**The big one was never ours.** `iroh` re-queues a failed QUIC path-open into
+`pending_open_paths`, and the 333 ms retry calls `open_path_on_all_conns` for
+each entry — which retries on *every* connection to that peer, each failing one
+pushing its own copy back. One entry becomes C per tick. No dedup, no cap.
 
-`dataSync` foreground services are time-limited by Android 15 to ~6 hours in 24.
-At the limit the system kills the process and then **refuses every restart** —
-the quota is spent. Measured:
+Measured on Android with heapprofd: **one 796 MB allocation**, 1.13 GB moved in
+150 s, **net retained only 7.5 MB** — which is why summing net allocation finds
+nothing and `max(size)` finds it at once.
+
+**Upstream is aware and stuck.** [#4390](https://github.com/n0-computer/iroh/issues/4390)
+open since July (milestone Sprint P, **overdue**), [#4509](https://github.com/n0-computer/iroh/issues/4509)
+a duplicate with no labels. Three fix PRs exist: #4398 and #4414 closed *by their
+own authors* — one saying *"without a clearer review path I do not want to leave
+this open indefinitely"* — and #4522 open with merge conflicts and no review.
+iroh 1.2.0 carries identical logic; upgrading does not help.
+
+**Our workaround:** `vendor/iroh` — iroh 1.1.0 plus cbenhagen's dedup-and-cap
+enqueue, verbatim so it lifts out cleanly. `[patch.crates-io]` in `diaswarm-net`
+and `diaswarm-android`. See `vendor/iroh/DIASWARM-PATCH.md` for removal.
 
 ```
-21:25  service starts
-03:37:54  ForegroundServiceDidNotStopInTimeException → process killed
-          ForegroundServiceStartNotAllowedException: Time limit already exhausted
-07:13  came back ONLY because the app was rebuilt and opened
+unpatched   348 MB at t+15m, 416 MB at t+54m (+127 MB in a minute), then killed
+patched     263 MB at t+368m
 ```
 
-**220 minutes down, and that number is an artefact** — Android resets the timer
-when a human brings the app to the foreground, and nothing else was going to at
-4 a.m. Unattended it is half a day.
+🔴 **BUT THE SOAK FOUND A SECOND, SLOWER LEAK.** The patched build drifts
+**+0.7 MB/min** over three hours (138 → 263 MB) — reaching 600 MB around t+14h
+and ~1 GB in a day. Survivable where the original was not. **Not flat. The
+memory problem is not solved.**
 
-**Doze was never the problem.** From deep IDLE at 21:40 until death at 03:37 the
-follower held its two-minute cadence for **5 h 57 m**, standby bucket `10
-(ACTIVE)`, `effective=NONE` throughout. The `DOZE|APP_BACKGROUND` flags that
-appear afterwards are the *absence of a process holding a foreground service*,
-not a cause. Two sessions were spent blaming doze; do not spend a third.
+⚠️ **Three consecutive samples can look flat while the hour is climbing.** That
+is how the residual was nearly missed. Read hours, not samples.
 
-**The fix, already installed on phone B:** `specialUse`, which carries no such
-limit. Verified in three places — source, binary (`0x40000000`, was
-`0x00000001`), and the live service. `onTimeout()` implemented as a clean stop
-in case a limit is ever applied to this type too.
-
-**Nothing about it is proven until 13:25.**
-
----
-
-## 3. Device state
-
-| device | serial | state |
-|---|---|---|
-| **loop phone** | `2A281FDH2006AC` | AAPS up since 21:25, looping, sealing, publishing. **Drives an insulin pump — test on phone B first, always.** |
-| **phone B** | `2C011FDH200MYL` / `192.168.88.213:5555` | AAPS + Ayni, both on the current build. Running the soak. |
-
-The third adb entry is phone B again over wifi, **not a third device** — check
-`ro.serialno` before believing otherwise. Unplugging phone B removes the USB
-transport and leaves only the wifi one.
+**Next step, and it is ready to run:** a heapprofd capture on the *current*
+6-hour-old process. That is the condition every earlier capture failed — each
+one was taken minutes after launch and misread SQLite cache warm-up as the
+cause. The recipe is in memory (`iroh-pending-open-paths-leak`): phone B is
+`userdebug` so heapprofd needs no `profileable` tag; `trace_processor` comes from
+`get.perfetto.dev`; for symbols build with `CARGO_PROFILE_RELEASE_STRIP=none`
+**and** a temporary `keepDebugSymbols`, then **install it** — an unstripped build
+that is not installed symbolises nothing, because `strip=none` changes the link
+and moves `.text`.
 
 ---
 
-## 4. What landed over the last two days
+## 2. What shipped today
 
-* **CI**: `.github/workflows/crates.yml` — all five crates on every push to
-  main. Before this, `diaswarm-net` and `diaswarm-android` had never run in CI.
-  It caught a real breakage within hours.
-* **`diaswarm-spaces` deleted** — crate, seven JNI entry points, Kotlin
-  declarations, dead tests. `p2panda-spaces` and `p2panda-auth` are gone from
-  both APKs.
-* **D28** — the pool carries keys logs. Announcing and adopting ship together;
-  announcing alone would publish the follower set.
-* **D29** — the desktop is two products. `crates/diaswarm-peer` is the carrier
-  half: works against the live pool, carried four strangers' subjects and 463
-  operations it cannot read. Packaged for five platforms, tag `peer-v*`.
-  **Never tagged — the first build for macOS and Windows will be the first.**
-* **D30** — *if you read it, you carry it*. Already structural on the keys
-  vault: a reader reads from its own store, and `carry` is the only thing that
-  fills it. Reciprocity is mandatory, generosity is sizeable.
-* **D31** — a rendezvous that depended on a locally-guessed pool size. Fixed
-  with `pool::subject_topic`. Both phones are on the fix.
-* **The loop phone's push reaches Ayni** — the open item two previous handovers
-  led with. `live op from 9eeeac47` at 16:47.
-* **Freshness is the sensor, not the transport**: `sensor 60s + drain 0.1s +
-  transport ~11s`. The transport is the smallest and least variable term.
+| | commit |
+|---|---|
+| iroh workaround vendored | `0bcdcca` |
+| scoped grants — `grant_since` + spike | `7072e37` |
+| subject handles — invite v4 | `a1d51af` |
+| subject handles — both apps | `cd3f4ac` |
+| daily secret rotation | `8988329` |
+| Ayni shows what it carries | `b5d985b` |
+| scope picker on grant | `cbfc379` |
+| F-Droid: commit hash pinned | `d72b32b` |
+| F-Droid: auto-update enabled | `d632b2d` |
+| `roles.md`, `roles-to-product.md` | `649ca82`, `aee13ba`, `2b22d69`, `6bf76cb` |
+| D31 header corrected | `5b6d0d1` |
 
----
+**The three product changes had to land together** and none was any use alone:
+`grant_since` could not express a window without rotation, and rotation was
+invisible without a picker.
 
-## 5. Open, in the order I would take them
-
-1. **Read the soak at 13:25.** Pass → the overnight failure is fixed and Ayni
-   can be released. Fail → see item 2.
-2. **If it fails, the fallback is AAPS's approach**: lower `targetSdk`. AAPS
-   runs at **32** and is thereby exempt from the entire FGS type-and-timeout
-   regime — which is why the loop phone sailed through the same night. F-Droid
-   has no targetSdk requirement, so it is available. It is a blanket opt-out
-   whose scope is hard to enumerate, so it is a retreat, not a default.
-3. **Tag `peer-v0.1.0`** if binaries are wanted. `fail-fast: false` is set
-   deliberately: four of five targets working is more useful to learn than
-   which one failed first.
-4. **Delete the legacy bucket-carry** in `share.rs` once no peer remains on the
-   old topic. `pushed` then becomes 1 and means something.
-5. **Four phones.** D28's redundancy is laptop-proven and only two-phone
-   demonstrated. The largest untested claim.
-6. **The scoped-grant spike** (D29): filter a `SecretBundle`, `Dcgka::add` with
-   it, assert the joiner opens epoch N and fails on N−1. Small, and it is the
-   gate on the entire research/clinician path.
+**Two new documents worth reading before touching any UI:**
+[roles.md](roles.md) — the five actors, what each must see and what each may
+never be told — and [roles-to-product.md](roles-to-product.md), the per-role
+deltas with status.
 
 ---
 
-## 6. A spike somebody may want: AAPS at targetSdk 36
+## 3. Open, in the order I would take it
 
-Not needed for diaswarm. Proposed because **diaswarm's two halves run under
-different Android contracts from one codebase**:
+1. **Profile the residual leak** (§1). The soak has already told us it exists;
+   more hours only refine the rate.
+2. **Install today's work.** Phone B first for Ayni, then the loop phone for the
+   plugin. **Rotation has never run on a device** — it fires once a day, so the
+   first real one is tomorrow.
+3. **Post the iroh comment.** Drafted at `docs/upstream/iroh-4390-comment.md`. Its
+   value is no longer "a third platform" but *"three PRs exist, none merged,
+   this needs a decision"*.
+4. **Two small gaps** from `roles-to-product.md`: the readers list does not say
+   what scope each reader got, and the withdrawal copy is still unwritten. The
+   true sentence is in `roles.md` — *"they lose today and keep every day that
+   already finished"*.
+5. **D29 step 1**, the desktop peer UI. Three of five roles differ only in what
+   they are granted, not in what they run.
+6. **D29 step 3**, the clinician gateway — honest for the first time, because
+   "90 days" can now mean 90 days.
 
-```
-publisher (AAPS plugin)  targetSdk 32   exempt from FGS types and timeouts
-follower  (Ayni)         targetSdk 36   fully subject to them
-```
+**Not doing, deliberately:** deleting the legacy bucket-carry in `share.rs`.
+Establishing that no peer is still on the old topic costs more than the tidier
+counter is worth, and the failure mode is a silent partition on the pump phone's
+data path.
 
-That is why the same night killed one and not the other, and it means **a
-background-behaviour lesson learned on the loop phone does not transfer to phone
-B, or the reverse.** That trap is the reason this is written down.
-
-Sized: only **two** AAPS services actually call `startForeground` —
-`DummyService` (the persistent notification that keeps AAPS alive) and
-`AlarmSoundService`. Two type declarations, two permissions. Then
-`POST_NOTIFICATIONS`, then edge-to-edge, then unknowns.
-
-**The interesting answer comes first**: does `DummyService` get time-limited?
-Phone B only, and D9 says extend upstream rather than fork — so this is a spike
-to measure and hand to AAPS, not a change to carry in the fork.
-
----
-
-## 7. Traps, all paid for
-
-* **Check the tool's own exit code, never a grep.** Three times in two days a
-  green-looking signal was hollow: a `cargo test` that reported success from a
-  trailing `echo`, one that ran in the wrong directory, and a gradle build
-  declared "compiled" while it had failed on a missing NDK — leaving the
-  previous night's APK in place with the old manifest. **Verify the artefact,
-  not the source.**
-* **Build Android through the scripts** — `./plugin/build-apk.sh`,
-  `./follower/build-apk.sh`. Calling `./gradlew` directly fails on toolchain
-  paths.
-* **`adb logcat -d | grep | tail -1` is not the newest line.** The buffers are
-  not merge-sorted. Sort on the timestamp, and bound queries with
-  `logcat -T '<time>'` or yesterday's crash becomes today's alarm — both of
-  which happened.
-* **Every counter in the replicator counts events, not things.** `received` per
-  store, `live` per p2panda increment, `sent` per topic. None bounds another.
-  The store is the only thing that counts things.
-* **Never conclude anything about overnight behaviour from a run shorter than
-  the claim.** A 51-minute measurement and a 2-hour one both "proved" the
-  foreground service was sufficient. A 6-hour limit cannot be seen in either.
+**Also still open from before today:** `peer-v0.1.0` can be re-tagged now the
+`macos-13` runner is fixed (four of five targets built last time), and the
+four-phone redundancy test remains the largest untested claim.
 
 ---
 
-## 8. Constraints
+## 4. F-Droid
 
-* `README.md` and `fdroid/nz.diaswarm.ayni.yml` have **uncommitted user edits**.
-  Leave them.
-* **No tags or releases** without the user saying so, including the F-Droid MR.
-* `2A281FDH2006AC` drives an insulin pump. Phone B first. Always.
+MR !48469 is **green and mergeable**, head `4bb1dc91`. Everything asked for is
+done: screenshots moved to `en-US/images/phoneScreenshots/`, builds pinned to a
+commit hash, auto-update enabled. Waiting on them.
+
+⚠️ **The screenshots were the real blocker for four days**, not a stale label.
+They sat one directory above where F-Droid reads, so the tooling never saw them
+and `waiting-for-upstream` was correct the whole time.
+
+---
+
+## 5. Traps paid for today
+
+* **Profile at 40+ minutes.** Every capture taken minutes after launch misread
+  cache warm-up as the cause and cost a day on the wrong theory.
+* **`max(size)`, not `sum(size)`.** The leak was one 796 MB buffer whose net
+  retention was 7 MB.
+* **Interleave A/B runs.** Measuring two configs half an hour apart read machine
+  load as a regression and nearly reverted a good change.
+* **Never conclude overnight behaviour from a run shorter than the claim.** Said
+  on 2026-09-15, then broken the same day by calling a 15-minute flat window a
+  fix that was gone within the hour.
+* **Check how someone else's tool behaves before writing it down as fact.** Two
+  comments asserted things about `p2panda-store` and `fdroid` that were wrong and
+  took two minutes each to disprove.
+
+**Five claims were withdrawn today or yesterday** — off-LAN proven, screenshots
+uploaded, a connection leak, a page-cache fix, and a flat memory curve. The
+pattern in all five is measuring for less time or less directly than the claim
+needed.
