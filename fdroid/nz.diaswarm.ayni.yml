@@ -65,16 +65,23 @@ Repo: https://github.com/alex-poor/diaswarm.git
 # arithmetic ever drifts from the numbers declared here, this build fails rather
 # than publishing an APK that claims a version it does not have.
 #
-# The base is 8 at the pinned tag below, giving 81 and 82.
+# The base is 8 at the pinned commit below, giving 81 and 82.
 #
-# **PINNED TO A TAG RATHER THAN A HASH, FROM 0.1.7.** A tag is what
-# `UpdateCheckMode` already watches, so pinning the build to the same name means
-# the recipe and the update check cannot disagree about which commit 0.1.7 is —
-# which they silently could while one named a hash and the other a tag.
+# **PINNED TO THE FULL COMMIT HASH, NEVER A TAG.** 0.1.7 briefly went back to
+# `commit: follower-v0.1.7`, on the reasoning that a tag is what
+# `UpdateCheckMode` already watches, so the recipe and the update check could
+# not then disagree about which commit 0.1.7 is. That was wrong twice over:
+# linsui had already asked for full hashes on 2026-09-15 and it had been done,
+# and the two fields are not the same kind of thing. `UpdateCheckMode` decides
+# which version EXISTS and may be mutable; `commit:` decides what gets BUILT
+# and must not be, because a tag can be moved to another commit after review
+# has passed. mezinster's static review caught the regression on 2026-10-06.
+# Resolve it by hand and paste the result:
+#   git rev-parse 'follower-v0.1.7^{commit}'
 Builds:
   - versionName: 0.1.7
     versionCode: 81
-    commit: follower-v0.1.7
+    commit: 7d0210864275d6483f752dd2fa58ae1140efd07b
     subdir: follower
     sudo:
       - apt-get update
@@ -95,7 +102,7 @@ Builds:
 
   - versionName: 0.1.7
     versionCode: 82
-    commit: follower-v0.1.7
+    commit: 7d0210864275d6483f752dd2fa58ae1140efd07b
     subdir: follower
     sudo:
       - apt-get update
@@ -113,8 +120,8 @@ Builds:
 # CHECKED AUTOMATICALLY, WRITTEN BY HAND.
 #
 # `VercodeOperation` IS NOT OPTIONAL, even with auto-update off. The update
-# check reads the versionCode out of build.gradle.kts — the base, 7 — and
-# compares it with `CurrentVersionCode`. Without these two operations to
+# check reads the versionCode out of build.gradle.kts — the base, 8 at 0.1.7 —
+# and compares it with `CurrentVersionCode`. Without these two operations to
 # reproduce the per-ABI arithmetic it reports `current version is newer: old
 # vercode=72, new vercode=7` and fails on every run. Measured with
 # `fdroid checkupdates`, not assumed.
