@@ -18,6 +18,7 @@
     <a class="brand" href="#top"><img src="assets/icon.png" alt="Ayni icon"> Ayni</a>
     <nav>
       <a href="#features">Features</a>
+      <a href="#swarm">The swarm</a>
       <a href="#connect">Connect</a>
       <a href="#how">How it works</a>
       <a href="#desktop">Desktop</a>
@@ -36,8 +37,12 @@
       <p class="lead">Ayni is a viewer for one person's continuous glucose — a partner, a parent,
         a child, someone in your care. It is nothing else: no loop, no pump, no insulin.</p>
       <p class="sub">Readings are sealed on the sender's phone before they leave it, travel
-        directly between phones, and only someone handed a key can open them. There is no
-        account, no server holding your data, and nobody in the middle who can read it.</p>
+        directly between phones, and only someone handed a key can open them. No account, no
+        server holding your data, nobody in the middle who can read it.</p>
+      <p class="sub">It runs on a <strong>swarm, not a server</strong>: every phone and desktop
+        running it quietly seeds a slice of everyone else's sealed data. The more people take
+        part, the more resilient everyone's readings become — and no device can read a byte it
+        holds for anyone else.</p>
       <div class="cta">
         <a class="btn primary" href="https://f-droid.org/packages/nz.diaswarm.ayni/" rel="noopener">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a1 1 0 0 1 1 1v2h-2V3a1 1 0 0 1 1-1zM5 9a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V9zm3 2v6h2v-6H8zm6 0v6h2v-6h-2z"/></svg>
@@ -58,9 +63,8 @@
   <div class="wrap">
     <p class="eyebrow">Read this first</p>
     <h2>What Ayni is, and what it is not</h2>
-    <p class="intro">A follower's most dangerous failure is not an error on screen — it is a
-      number that looks current and is nine hours old. Ayni is built around that fact, and it
-      is honest about its limits.</p>
+    <p class="intro">Ayni does one job well and is honest about the rest. It shows glucose — it
+      never touches a dose.</p>
     <div class="duo">
       <div class="panel yes">
         <h3>✓ It is</h3>
@@ -78,7 +82,7 @@
           <li>An artificial pancreas. It contains <strong>no closed-loop code</strong> and does not talk to a pump.</li>
           <li>Able to deliver insulin or change a dose. There is nothing in it to dose with.</li>
           <li>A Nightscout server, or a thing that needs one.</li>
-          <li>A medical device, or reviewed cryptography. See <a href="#honest">Honesty &amp; limits</a>.</li>
+          <li>A medical device. It's capable but early software — see <a href="#honest">the honest trade-offs</a>.</li>
           <li>A way to find or search for a person — there is no directory, deliberately.</li>
         </ul>
       </div>
@@ -110,13 +114,13 @@
       </div>
       <div class="feat">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
-        <h3>Always shown with its age</h3>
-        <p>No bare number pretending to be current. A stale reading is labelled stale, because that is the failure that matters.</p>
+        <h3>Fresh, and labelled with it</h3>
+        <p>Readings normally arrive about 2–3 minutes old — plenty for a CGM — and each is shown with its age, so a stale one can't pose as current. (Android power-saving can delay a backgrounded phone; excuse it from battery optimisation for the freshest data.)</p>
       </div>
       <div class="feat">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8 8l3 7M16 8l-3 7"/></svg></div>
-        <h3>A pool that carries for you</h3>
-        <p>Phones hold a share of each other's sealed records, so your data stays reachable while your phone is asleep — and they can read none of it.</p>
+        <h3>Carried by the community</h3>
+        <p>Every Ayni phone and desktop peer holds a share of other people's sealed records, so your data stays reachable while your phone sleeps. More participants, more resilient — and none can read it.</p>
       </div>
       <div class="feat">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg></div>
@@ -124,6 +128,40 @@
         <p>On the same wifi it's direct. Anywhere else, an iroh relay introduces the two phones — and still cannot read a byte.</p>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- THE SWARM / WHO CARRIES -->
+<section id="swarm">
+  <div class="wrap">
+    <p class="eyebrow">The swarm</p>
+    <h2>A community holds the data up — not a company</h2>
+    <p class="intro">There is no server behind Ayni. The swarm is simply everyone taking part,
+      each holding a small, unreadable slice of everyone else's records, so no single phone has
+      to be awake for the data to be there. Three kinds of device make it up:</p>
+    <div class="grid">
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/></svg></div>
+        <h3>Ayni phones</h3>
+        <p>Every follower seeds a share of the pool for people it has never met — the app is
+          <em>named</em> for that reciprocity. Following someone and carrying for the swarm are the same app.</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
+        <h3>Desktop peers</h3>
+        <p>A <code>diaswarm-peer</code> on a machine that never sleeps turns "probably reachable"
+          into "reliably reachable". One in a friend group lifts everyone in it.</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+        <h3>The sender</h3>
+        <p>The phone sharing its own loop — the diaswarm fork of AndroidAPS — publishes its sealed
+          records into the same swarm, and hands no one a readable copy.</p>
+      </div>
+    </div>
+    <p class="intro mt">The more people share and seed, the more copies of everything exist and the
+      more resilient everyone's data becomes. Every byte any device holds for anyone else is
+      unreadable ciphertext.</p>
   </div>
 </section>
 
@@ -266,24 +304,34 @@ diaswarm-peer nightscout --subject &lt;id&gt; --out ./ns</code></pre>
 <!-- HONESTY -->
 <section id="honest">
   <div class="wrap">
-    <p class="eyebrow">Honesty &amp; limits</p>
-    <h2>What you give up, and what isn't proven</h2>
-    <p class="intro">Someone may make a 3&nbsp;a.m. decision based on what this shows. So the costs are
-      stated plainly, not buried.</p>
-    <ul class="limits">
-      <li><strong>The cryptography has not been reviewed.</strong> Standard primitives, composed by hand. Don't rely on it where being wrong would matter.</li>
-      <li><strong>No forward secrecy.</strong> A key that leaks opens everything it was ever wrapped for. A leaked invite never expires.</li>
-      <li><strong>Deletion is impossible.</strong> Publication is permanent; revocation stops <em>future</em> readings, not past ones already downloaded.</li>
-      <li><strong>Reads are invisible.</strong> Nobody can tell who has read their copy, or when.</li>
-      <li><strong>A relay sees metadata.</strong> It reads no content, but it sees which node ids talk, from which addresses, and how often. The default is run by a third party in Singapore; you can run your own.</li>
-      <li><strong>Membership is visible.</strong> Being in the pool is not secret, though every byte you hold is unreadable ciphertext.</li>
-      <li><strong>Background sync is at Android's mercy.</strong> Two minutes while awake; Doze stretches it. Excuse a follower phone from battery optimisation.</li>
-      <li><strong>Storage only grows.</strong> There is no pruning yet and no way to hold only recent days.</li>
-      <li><strong>The clinical summary has never been accepted by a real system.</strong> It validates cleanly, which is not the same as a clinic ingesting it.</li>
-      <li><strong>iOS is out of scope.</strong></li>
-    </ul>
-    <p class="intro mt">The full assessment — architecture, costs, and the language that must never be
-      used about this — lives in the repository's <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/feasibility.md" rel="noopener">feasibility notes</a> and <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md" rel="noopener">decision log</a>.</p>
+    <p class="eyebrow">Honest about the trade</p>
+    <h2>What to know before you rely on it</h2>
+    <p class="intro">Someone may make a decision at 3&nbsp;a.m. based on what this shows, so the
+      trade-offs are stated plainly rather than buried.</p>
+    <div class="duo">
+      <div class="panel">
+        <h3>Built on proven foundations</h3>
+        <p>The hard parts aren't home-made. Transport, membership and gossip are
+          <a href="https://p2panda.org" rel="noopener">p2panda-net</a> over
+          <a href="https://www.iroh.computer" rel="noopener">iroh</a>, and the group encryption
+          that manages keys is <a href="https://p2panda.org" rel="noopener">p2panda-encryption</a>
+          — mainline, open-source libraries, not cryptography invented here. diaswarm adds a thin
+          custody layer on top of them with standard, well-known primitives (X25519,
+          ChaCha20-Poly1305). That layer hasn't yet had a formal third-party audit, so treat the
+          whole as capable, actively developed software rather than something battle-hardened.</p>
+      </div>
+      <div class="panel">
+        <h3>The honest costs</h3>
+        <ul>
+          <li><strong>A relay sees metadata</strong> — never your readings, but which devices talk and when. The default is third-party; you can run your own.</li>
+          <li><strong>Nothing can be un-published.</strong> Revocation stops <em>future</em> readings; it can't recall what was already shared.</li>
+          <li><strong>Being in the swarm is visible</strong>, even though everything you hold for others is unreadable ciphertext.</li>
+          <li><strong>Early days:</strong> no iOS yet, and storage grows over time — there's no pruning.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="intro mt">The full technical assessment lives in the repository's
+      <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/feasibility.md" rel="noopener">feasibility notes</a> and <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md" rel="noopener">decision log</a>.</p>
   </div>
 </section>
 
