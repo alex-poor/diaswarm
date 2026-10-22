@@ -1,6 +1,13 @@
 [package]
 name = "diaswarm-peer"
-version = "0.1.0"
+# TRACKS THE FOLLOWER'S PROTOCOL GENERATION, NOT ITS OWN HISTORY. `peer-v0.1.0`
+# was cut at 924eb18 (2026-09-15), before the follower-v0.1.7 wire changes
+# (diaswarm-keys/wire.rs, scoped grants, the invite handle field). A peer built
+# from that tag cannot follow or carry for a 0.1.7 phone. Jumping straight to
+# 0.1.7 so `--version` names the protocol generation it is actually compatible
+# with — an 0.1.1..0.1.6 peer never existed, and a peer that claimed one would
+# imply a lineage of carrier releases that was never built.
+version = "0.1.7"
 edition = "2021"
 publish = false
 description = "An always-on diaswarm pool member for a machine that does not sleep"

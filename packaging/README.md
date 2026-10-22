@@ -50,7 +50,7 @@ you are logged in — which on a server is rarely.
 
 ```
 $ diaswarm-peer
-diaswarm-peer 0.1.0 — /home/you/.local/share/diaswarm
+diaswarm-peer 0.1.7 — /home/you/.local/share/diaswarm
   node 122dc922…
   adopting up to 4 new subject(s) a pass; it can read none of them
 pool 4 · carrying 4 (+3) · 463 operations · pushes yes · 28.4 MB

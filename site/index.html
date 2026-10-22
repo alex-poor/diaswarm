@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ayni — see the glucose of someone who shares it with you</title>
+<meta name="description" content="Ayni shows the glucose of someone who has chosen to share it with you — sealed end to end, revocable by key, with no account and no server in the middle. Part of diaswarm.">
+<meta property="og:title" content="Ayni — glucose sharing with nobody in the middle">
+<meta property="og:description" content="A viewer for someone else's glucose. Sealed on the sender's phone, revocable by key, no server, no account.">
+<meta property="og:type" content="website">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/icon.png" alt="Ayni icon"> Ayni</a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#connect">Connect</a>
+      <a href="#how">How it works</a>
+      <a href="#desktop">Desktop</a>
+      <a href="#share">Share your data</a>
+      <a href="#honest">Honesty</a>
+    </nav>
+  </div>
+</header>
+
+<a id="top"></a>
+<section class="hero plain">
+  <div class="wrap">
+    <div class="copy">
+      <p class="kicker">Part of the diaswarm project</p>
+      <h1>See the glucose of someone who shares it with you.</h1>
+      <p class="lead">Ayni is a viewer for one person's continuous glucose — a partner, a parent,
+        a child, someone in your care. It is nothing else: no loop, no pump, no insulin.</p>
+      <p class="sub">Readings are sealed on the sender's phone before they leave it, travel
+        directly between phones, and only someone handed a key can open them. There is no
+        account, no server holding your data, and nobody in the middle who can read it.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://f-droid.org/packages/nz.diaswarm.ayni/" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a1 1 0 0 1 1 1v2h-2V3a1 1 0 0 1 1-1zM5 9a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V9zm3 2v6h2v-6H8zm6 0v6h2v-6h-2z"/></svg>
+          Get Ayni on F-Droid
+        </a>
+        <a class="btn" href="#desktop">Desktop peer</a>
+        <a class="btn" href="https://github.com/alex-poor/diaswarm" rel="noopener">View on GitHub</a>
+      </div>
+    </div>
+    <div class="shot">
+      <img src="assets/screen-1.png" alt="The Ayni app showing a shared glucose trend line with the reading's age.">
+    </div>
+  </div>
+</section>
+
+<!-- WHAT IT IS / IS NOT -->
+<section id="what">
+  <div class="wrap">
+    <p class="eyebrow">Read this first</p>
+    <h2>What Ayni is, and what it is not</h2>
+    <p class="intro">A follower's most dangerous failure is not an error on screen — it is a
+      number that looks current and is nine hours old. Ayni is built around that fact, and it
+      is honest about its limits.</p>
+    <div class="duo">
+      <div class="panel yes">
+        <h3>✓ It is</h3>
+        <ul>
+          <li>A viewer for one person's glucose, with every reading shown <strong>with its age</strong>.</li>
+          <li>End-to-end sealed: records are encrypted on the sender's phone, openable only with a key.</li>
+          <li>Revocable by <strong>key</strong>, not by a server's goodwill — stop wrapping the next key and sharing ends.</li>
+          <li>Serverless and accountless — readings travel directly between phones.</li>
+          <li>A standalone app (<code>nz.diaswarm.ayni</code>) that installs alongside AndroidAPS, never over it.</li>
+        </ul>
+      </div>
+      <div class="panel no">
+        <h3>✕ It is not</h3>
+        <ul>
+          <li>An artificial pancreas. It contains <strong>no closed-loop code</strong> and does not talk to a pump.</li>
+          <li>Able to deliver insulin or change a dose. There is nothing in it to dose with.</li>
+          <li>A Nightscout server, or a thing that needs one.</li>
+          <li>A medical device, or reviewed cryptography. See <a href="#honest">Honesty &amp; limits</a>.</li>
+          <li>A way to find or search for a person — there is no directory, deliberately.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="wrap">
+    <p class="eyebrow">Features</p>
+    <h2>Sharing that you hold the key to</h2>
+    <p class="intro">The whole design removes the server and puts access in one place: who holds a key.</p>
+    <div class="grid">
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+        <h3>Sealed in the middle</h3>
+        <p>Records are sealed on the sender's phone before they are sent. Every holder in between stores ciphertext and can read none of it.</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 2.6-6.3M3 4v5h5"/></svg></div>
+        <h3>Revoke by key</h3>
+        <p>Withdrawing access doesn't ask a server to stop serving. The departing reader is simply not wrapped for the next segment.</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="1.6" fill="currentColor"/><circle cx="16" cy="12" r="1.6" fill="currentColor"/><circle cx="10" cy="18" r="1.6" fill="currentColor"/></svg></div>
+        <h3>No account, no server</h3>
+        <p>There is nobody to sign up with and no cloud holding your data. Readings travel phone to phone.</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <h3>Always shown with its age</h3>
+        <p>No bare number pretending to be current. A stale reading is labelled stale, because that is the failure that matters.</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8 8l3 7M16 8l-3 7"/></svg></div>
+        <h3>A pool that carries for you</h3>
+        <p>Phones hold a share of each other's sealed records, so your data stays reachable while your phone is asleep — and they can read none of it.</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg></div>
+        <h3>Works off your network</h3>
+        <p>On the same wifi it's direct. Anywhere else, an iroh relay introduces the two phones — and still cannot read a byte.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- GET THE APP / CONNECT -->
+<section id="connect">
+  <div class="wrap">
+    <p class="eyebrow">Get connected</p>
+    <h2>Install, then pair with one scan</h2>
+    <p class="intro">Install Ayni from F-Droid. On its own it does nothing until someone shares with you —
+      that's not a bug. Pairing is a single scan, and it works in both directions at once.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="n">1</div>
+        <h3>Install Ayni</h3>
+        <p>From <a href="https://f-droid.org/packages/nz.diaswarm.ayni/" rel="noopener">F-Droid</a>.
+          It installs alongside any other app and asks for nothing to open.</p>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <h3>Show your code</h3>
+        <p>Ayni shows a QR invite. Showing it opens a short window in which the sender's phone
+          will accept being paired back — outside that moment, an uninvited offer is refused.</p>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <h3>They scan it once</h3>
+        <p>The person sharing scans your code. Their phone grants you access <em>and</em> hands back
+          its own address in the same movement. The trend line appears.</p>
+      </div>
+    </div>
+
+    <div class="callout info mt">
+      <strong>One scan, not two.</strong> The invite's subject field is exactly the key someone would
+      grant, so a single code works in both directions. An invite is <strong>not a secret and not a
+      grant</strong> — anyone holding it can download your ciphertext and open none of it. A camera
+      isn't always in the room, so an invite can also be pasted as text.
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="wrap">
+    <p class="eyebrow">How it works</p>
+    <h2>One reading, from the phone that recorded it to the phone that draws it</h2>
+    <p class="intro">The padlock is on for the whole of the middle. The pool holds the ciphertext
+      and serves it to anyone; only a granted reader's private key — which never leaves their
+      device — can open it.</p>
+    <figure class="diagram">
+      <img src="assets/journey.png" alt="A three-lane diagram: the sender's phone records a reading in plain form, seals it into a segment and wraps the key to one chosen reader; the sealed segment publishes to strangers' phones that hold it and cannot open it; the reader fetches the ciphertext and opens it with a private key that never left their device.">
+      <figcaption>Where one glucose reading goes. Revocation is the absence of a file: tomorrow's
+        reading is simply never wrapped for a withdrawn reader — nothing on the network is asked to stop.</figcaption>
+    </figure>
+    <div class="shots-row mt">
+      <img src="assets/screen-1.png" alt="Ayni trend screen.">
+      <img src="assets/screen-2.png" alt="Ayni showing a reading with its age.">
+    </div>
+  </div>
+</section>
+
+<!-- DESKTOP -->
+<section id="desktop">
+  <div class="wrap">
+    <p class="eyebrow">Desktop apps</p>
+    <h2>A machine that doesn't sleep: <code>diaswarm-peer</code></h2>
+    <p class="intro">Every other holder is a phone, and the promise that your data stays reachable
+      while your phone is asleep rests on someone having the bytes. One mains-powered desktop peer
+      makes that structural rather than a matter of luck. It can read none of what it carries.</p>
+
+    <div class="callout info">
+      <strong>Match the version to your phone.</strong> The desktop peer and the Ayni app speak one
+      wire protocol, and a mismatched build simply won't carry for a newer phone. Download the
+      <strong>peer release that matches your Ayni version</strong> — current line is
+      <code>peer-v0.1.7</code>, compatible with Ayni&nbsp;0.1.7 — from
+      <a href="https://github.com/alex-poor/diaswarm/releases" rel="noopener">the releases page</a>.
+      There's a native build for each platform, so running one is downloading a file, not installing a toolchain.
+    </div>
+
+    <div class="tablecard mt">
+      <table>
+        <thead><tr><th>Platform</th><th>Binary goes</th><th>Service file (keeps it running)</th></tr></thead>
+        <tbody>
+          <tr><td>Linux</td><td><code>~/.local/bin/diaswarm-peer</code></td><td><code>systemd/diaswarm-peer.service</code> → <code>~/.config/systemd/user/</code></td></tr>
+          <tr><td>macOS</td><td><code>/usr/local/bin/diaswarm-peer</code></td><td><code>launchd/nz.diaswarm.peer.plist</code> → <code>~/Library/LaunchAgents/</code></td></tr>
+          <tr><td>Windows</td><td><code>%LOCALAPPDATA%\Programs\diaswarm\</code></td><td>run <code>windows/install-task.ps1</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="intro mt">Run it with no arguments and it carries a share of the pool. It can also follow a
+      subject you've been granted and turn that into something a clinic can use:</p>
+    <pre><code>diaswarm-peer                                 # carry a share of the pool, read nothing
+diaswarm-peer identity                        # the string a subject grants
+diaswarm-peer read      --subject &lt;id&gt; --days 1
+diaswarm-peer export    --subject &lt;id&gt; --out day.csv
+diaswarm-peer summary   --subject &lt;id&gt; --days 90 --patient &lt;id&gt; --report agp.html
+diaswarm-peer nightscout --subject &lt;id&gt; --out ./ns</code></pre>
+    <p class="intro"><code>summary</code> is the clinician's view: an HL7 CGM FHIR document — time in
+      range, mean glucose, GMI, variability, days of wear — that validates against HL7's own validator
+      with zero errors. Nothing here ever dials a server; these are files you choose to hand over.</p>
+
+    <div class="callout mt">
+      <strong>Note on Linux:</strong> run <code>loginctl enable-linger "$USER"</code> after enabling the
+      service, or systemd stops it when you log out — so an "always-on" carrier runs only while you're
+      logged in, which on a server is rarely.
+    </div>
+  </div>
+</section>
+
+<!-- SHARE YOUR OWN DATA -->
+<section id="share">
+  <div class="wrap">
+    <p class="eyebrow">Sending your own data</p>
+    <h2>To share your own loop, you run the diaswarm fork of AndroidAPS</h2>
+    <p class="intro">Ayni only receives. To be a <strong>sender</strong> — to share the glucose your
+      own insulin-pump loop is already writing — the diaswarm module has to run inside AndroidAPS, and
+      that means building AndroidAPS yourself.</p>
+
+    <div class="callout">
+      <strong>Building AndroidAPS from source is normal — that part isn't new.</strong> The one thing
+      that is specific to diaswarm: you must build from <strong>the diaswarm fork of AndroidAPS</strong>
+      (the <code>diaswarm-addon</code> branch, which wires the module in), <strong>not upstream
+      AndroidAPS</strong>. Upstream has no diaswarm module and cannot send. There is deliberately
+      <strong>no pre-built loop APK</strong> distributed anywhere — running a loop is running a medical
+      device you assembled, from source you have read.
+    </div>
+
+    <p class="intro mt">The module ships <strong>disabled</strong> in the fork and is structurally
+      incapable of dosing: it holds no pump reference and has no path into the loop. It only drains your
+      own sealed records outward, and only once you've chosen to share. Build instructions and the full
+      safety rationale are in the project repository.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/alex-poor/diaswarm#building-the-aaps-add-on" rel="noopener">Build instructions</a>
+      <a class="btn" href="https://github.com/alex-poor/diaswarm" rel="noopener">The diaswarm repository</a>
+    </div>
+  </div>
+</section>
+
+<!-- HONESTY -->
+<section id="honest">
+  <div class="wrap">
+    <p class="eyebrow">Honesty &amp; limits</p>
+    <h2>What you give up, and what isn't proven</h2>
+    <p class="intro">Someone may make a 3&nbsp;a.m. decision based on what this shows. So the costs are
+      stated plainly, not buried.</p>
+    <ul class="limits">
+      <li><strong>The cryptography has not been reviewed.</strong> Standard primitives, composed by hand. Don't rely on it where being wrong would matter.</li>
+      <li><strong>No forward secrecy.</strong> A key that leaks opens everything it was ever wrapped for. A leaked invite never expires.</li>
+      <li><strong>Deletion is impossible.</strong> Publication is permanent; revocation stops <em>future</em> readings, not past ones already downloaded.</li>
+      <li><strong>Reads are invisible.</strong> Nobody can tell who has read their copy, or when.</li>
+      <li><strong>A relay sees metadata.</strong> It reads no content, but it sees which node ids talk, from which addresses, and how often. The default is run by a third party in Singapore; you can run your own.</li>
+      <li><strong>Membership is visible.</strong> Being in the pool is not secret, though every byte you hold is unreadable ciphertext.</li>
+      <li><strong>Background sync is at Android's mercy.</strong> Two minutes while awake; Doze stretches it. Excuse a follower phone from battery optimisation.</li>
+      <li><strong>Storage only grows.</strong> There is no pruning yet and no way to hold only recent days.</li>
+      <li><strong>The clinical summary has never been accepted by a real system.</strong> It validates cleanly, which is not the same as a clinic ingesting it.</li>
+      <li><strong>iOS is out of scope.</strong></li>
+    </ul>
+    <p class="intro mt">The full assessment — architecture, costs, and the language that must never be
+      used about this — lives in the repository's <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/feasibility.md" rel="noopener">feasibility notes</a> and <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md" rel="noopener">decision log</a>.</p>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="wrap">
+    <div>
+      <strong>Ayni</strong> · part of the diaswarm project · AGPL-3.0<br>
+      <span>Not affiliated with, endorsed by, or part of the AndroidAPS project.</span>
+    </div>
+    <div class="links">
+      <a href="https://f-droid.org/packages/nz.diaswarm.ayni/" rel="noopener">F-Droid</a>
+      <a href="https://github.com/alex-poor/diaswarm" rel="noopener">GitHub</a>
+      <a href="https://github.com/alex-poor/diaswarm/releases" rel="noopener">Desktop releases</a>
+      <a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md" rel="noopener">Security</a>
+      <a href="https://github.com/alex-poor/diaswarm/issues" rel="noopener">Report an issue</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

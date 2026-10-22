@@ -1,5 +1,13 @@
 # diaswarm
 
+**[🌐 Website &amp; setup guide](https://alex-poor.github.io/diaswarm/)** &nbsp;·&nbsp;
+[📱 Get Ayni on F-Droid](https://f-droid.org/packages/nz.diaswarm.ayni/) &nbsp;·&nbsp;
+[💻 Desktop peer releases](https://github.com/alex-poor/diaswarm/releases)
+
+> The customer-facing splash page — features, pairing, desktop apps, and how to send
+> your own data — lives at **alex-poor.github.io/diaswarm**. This README is the
+> engineering record behind it. Source for the site is in [`site/`](site).
+
 Share the data your insulin pump loop is already writing — with your partner, your
 parent, your clinician — **revocably, and with nobody who can read it in the
 middle**.

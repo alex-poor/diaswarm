@@ -168,3 +168,38 @@ costs them a pipeline run either way; better to spend it once, on something that
 has survived a night.
 
 </details>
+
+---
+
+## 📝 NEXT PUSH — reformat the F-Droid store description (2026-10-23)
+
+**Problem.** `fastlane/metadata/android/en-US/full_description.txt` is ~1.8 kB of
+unbroken prose paragraphs — **zero markdown** (`grep -c '\*\|^-\|^#\|http'` → 0).
+F-Droid renders the description verbatim, so the store page is one long
+wall of text with no structure. It reads as unfinished.
+
+**Fix for the next version bump** (do it in the same commit as the versionName
+change so it ships with a release, not on its own):
+
+- Restructure into short labelled sections with blank lines between them, e.g.
+  **What it is** / **What it is NOT** (no loop, no pump, viewer only) /
+  **How it works** (direct, sealed, no server) / **Pairing** / **To share your
+  own data** / **About the relay**.
+- Use bullet lists for the enumerable bits (the "no account, no server, nobody
+  in the middle" trio; the costs).
+- Keep it within F-Droid's **supported markdown subset only**: bold/italic,
+  bullet + numbered lists, and `[text](https://…)` links. Do **not** rely on
+  `#` headings — they render inconsistently across F-Droid clients; use **bold**
+  line labels instead. No raw HTML. Keep under the 4000-char limit.
+- Verify the rendered result two ways before the MR: the F-Droid *client* app
+  preview, and the web `f-droid.org/packages/nz.diaswarm.ayni/` page — they
+  render the subset differently.
+- `short_description.txt` (80-char limit) is fine as-is; leave it.
+
+**Also check the CHANGELOG at the same time.** The `changelogs/<versionCode>.txt`
+files are rendered on the same page under "What's New" and have the same
+no-markdown treatment — keep each to one or two short lines.
+
+Owner decision needed at push time: whether the metadata lives here (read out of
+source by F-Droid) or is edited directly in the fdroiddata MR. It lives here —
+see `fdroid/nz.diaswarm.ayni.yml` ("NO Summary OR Description HERE").

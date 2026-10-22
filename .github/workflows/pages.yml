@@ -1,0 +1,44 @@
+# Publish the customer-facing splash site in `site/` to GitHub Pages.
+#
+# ONE-TIME SETUP, IN THE REPO SETTINGS, NOT HERE: Settings → Pages → Build and
+# deployment → Source → "GitHub Actions". Until that is set, this workflow runs
+# green but nothing is served. It is a setting, not a file, so it cannot be
+# committed.
+#
+# The site is plain static HTML/CSS with no build step — `site/` is uploaded as
+# it stands. It is served under /<repo>/ (https://alex-poor.github.io/diaswarm/),
+# which is why every asset path in site/index.html is relative, never rooted at /.
+
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+# Pages needs these; nothing else in the repo does, so they are scoped to this job.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two Pages deploys race; let a running one finish rather than cancel it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
