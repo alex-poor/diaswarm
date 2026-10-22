@@ -1,7 +1,8 @@
 # diaswarm
 
+<a href="https://f-droid.org/packages/nz.diaswarm.ayni/"><img src="site/assets/fdroid-badge.png" alt="Get it on F-Droid" height="60"></a>
+
 **[🌐 Website &amp; setup guide](https://alex-poor.github.io/diaswarm/)** &nbsp;·&nbsp;
-[📱 Get Ayni on F-Droid](https://f-droid.org/packages/nz.diaswarm.ayni/) &nbsp;·&nbsp;
 [💻 Desktop peer releases](https://github.com/alex-poor/diaswarm/releases)
 
 > The customer-facing splash page — features, pairing, desktop apps, and how to send
@@ -456,8 +457,13 @@ Released builds are signed by CI on a `follower-v*` tag; the workflow is
 
 ## Limits
 
-- **The cryptography has not been reviewed.** Standard primitives, composed by
-  hand. Do not rely on this where being wrong would matter.
+- **No formal cryptographic audit.** The foundations are mainline, not home-made:
+  transport and membership are [p2panda-net](https://p2panda.org) over iroh, and the
+  key layer is [p2panda-encryption](https://p2panda.org) ([D26](docs/decisions.md)).
+  On top of those, diaswarm adds its own segment-custody layer using standard
+  primitives (X25519, ChaCha20-Poly1305, HKDF-SHA256) from the dalek/RustCrypto
+  crates. Standard parts, but a novel composition that has had no third-party review —
+  so do not rely on it where being wrong would matter.
 - **No forward secrecy.** A key that leaks opens everything it was ever wrapped for.
 - **Reads are invisible.** Nobody can tell you who has read their copy, or when.
 - **Peers find each other; people do not.** Joining the pool needs nothing, but to

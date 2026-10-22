@@ -106,7 +106,10 @@ header.nav {
 .hero .kicker { color: var(--accent); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; font-size: 13px; margin: 0 0 14px; }
 .hero p.lead { font-size: 19px; color: var(--fg-soft); margin: 0 0 12px; }
 .hero p.sub { font-size: 15px; color: var(--fg-faint); margin: 0 0 24px; }
-.hero .cta { display: flex; flex-wrap: wrap; gap: 12px; }
+.hero .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.badge-link { display: inline-flex; align-items: center; transition: transform .06s ease; }
+.badge-link:hover { transform: translateY(-1px); }
+.badge-link img { height: 58px; width: auto; display: block; }
 .hero .shot { justify-self: center; }
 .hero .shot img {
   width: 260px; max-width: 70vw; border-radius: 26px;
