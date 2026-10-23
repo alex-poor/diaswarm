@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="auto">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,346 +9,447 @@
 <meta property="og:description" content="A viewer for someone else's glucose. Sealed on the sender's phone, revocable by key, no server, no account.">
 <meta property="og:type" content="website">
 <link rel="icon" href="assets/icon.png">
-<link rel="stylesheet" href="styles.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,400;0,700;0,800;1,400&amp;family=Atkinson+Hyperlegible+Mono:wght@400;600&amp;family=Newsreader:ital,opsz,wght@1,6..72,400&amp;display=swap" rel="stylesheet">
+<style>
+html{scroll-behavior:smooth}
+body{margin:0;background:#f2efe7;color:#1a1d20;font-family:'Atkinson Hyperlegible Next',system-ui,sans-serif;font-size:18px;line-height:1.55;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:inherit;text-decoration:underline;text-decoration-thickness:1.5px;text-underline-offset:3px}
+a:hover{color:#c03d16}
+::selection{background:#3ad68e;color:#0f1317}
+h1,h2,h3,p{margin:0}
+.hv1:hover{color:#3ad68e !important}
+.hv2:hover{color:#3ad68e !important}
+.hv3:hover{color:#3ad68e !important}
+.hv4:hover{color:#3ad68e !important}
+.hv5:hover{color:#3ad68e !important}
+.hv6:hover{color:#3ad68e !important}
+.hv7:hover{color:#3ad68e !important}
+.hv8:hover{color:#3ad68e !important}
+.hv9:hover{color:#3ad68e !important}
+.hv10:hover{color:#3ad68e !important}
+.hv11:hover{background:#0c6e45 !important;color:#ffffff !important}
+.hv12:hover{background:#1a1d20 !important;color:#f2efe7 !important}
+.hv13:hover{color:#3ad68e !important}
+.hv14:hover{color:#3ad68e !important}
+.hv15:hover{color:#3ad68e !important}
+.hv16:hover{color:#3ad68e !important}
+.hv17:hover{color:#3ad68e !important}
+</style>
 </head>
 <body>
-
-<header class="nav">
-  <div class="wrap">
-    <a class="brand" href="#top"><img src="assets/icon.png" alt="Ayni icon"> Ayni</a>
-    <nav>
-      <a href="#features">Features</a>
-      <a href="#swarm">The swarm</a>
-      <a href="#connect">Connect</a>
-      <a href="#how">How it works</a>
-      <a href="#desktop">Desktop</a>
-      <a href="#share">Share your data</a>
-      <a href="#honest">Honesty</a>
+<div id="top" style="background:#0f1317;color:#e9ebe6">
+  <div style="max-width:1280px;margin:0 auto;padding:22px 32px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px 32px;border-bottom:1px solid #262c33">
+    <a href="#top" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:#e9ebe6">
+      <img src="assets/icon.png" alt="Ayni icon" style="width:30px;height:30px;border-radius:7px;display:block">
+      <span style="font-weight:800;font-size:22px;letter-spacing:-0.02em">ayni</span>
+      <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#8b939b">/ diaswarm</span>
+    </a>
+    <nav style="display:flex;flex-wrap:wrap;gap:8px 30px;font-size:16px;font-weight:700">
+      <a href="#is" style="text-decoration:none;color:#b8bec4" class="hv1">what it is</a>
+      <a href="#features" style="text-decoration:none;color:#b8bec4" class="hv2">features</a>
+      <a href="#swarm" style="text-decoration:none;color:#b8bec4" class="hv3">swarm</a>
+      <a href="#connect" style="text-decoration:none;color:#b8bec4" class="hv4">connect</a>
+      <a href="#how" style="text-decoration:none;color:#b8bec4" class="hv5">how</a>
+      <a href="#desktop" style="text-decoration:none;color:#b8bec4" class="hv6">desktop</a>
+      <a href="#share" style="text-decoration:none;color:#b8bec4" class="hv7">share yours</a>
+      <a href="#honest" style="text-decoration:none;color:#b8bec4" class="hv8">honesty</a>
     </nav>
   </div>
-</header>
 
-<a id="top"></a>
-<section class="hero plain">
-  <div class="wrap">
-    <div class="copy">
-      <p class="kicker">Part of the diaswarm project</p>
-      <h1>See the glucose of someone who shares it with you.</h1>
-      <p class="lead">Ayni is a viewer for one person's continuous glucose — a partner, a parent,
-        a child, someone in your care. It is nothing else: no loop, no pump, no insulin.</p>
-      <p class="sub">Readings are sealed on the sender's phone before they leave it, travel
-        directly between phones, and only someone handed a key can open them. No account, no
-        server holding your data, nobody in the middle who can read it.</p>
-      <p class="sub">It runs on a <strong>swarm, not a server</strong>: every phone and desktop
-        running it quietly seeds a slice of everyone else's sealed data. The more people take
-        part, the more resilient everyone's readings become — and no device can read a byte it
-        holds for anyone else.</p>
-      <div class="cta">
-        <a class="badge-link" href="https://f-droid.org/packages/nz.diaswarm.ayni/" rel="noopener">
-          <img src="assets/fdroid-badge.png" alt="Get it on F-Droid" width="150" height="58">
-        </a>
-        <a class="btn" href="#desktop">Desktop peer</a>
-        <a class="btn" href="https://github.com/alex-poor/diaswarm" rel="noopener">View on GitHub</a>
+  <div style="max-width:1280px;margin:0 auto;padding:72px 32px 88px;display:flex;flex-wrap:wrap;gap:56px 72px;align-items:flex-end">
+    <div style="flex:1 1 520px;min-width:0;display:flex;flex-direction:column;gap:28px">
+      <p style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#8b939b">part of the diaswarm project</p>
+      <h1 style="font-size:clamp(44px,6.2vw,86px);line-height:0.98;font-weight:800;letter-spacing:-0.035em;text-wrap:balance">See the glucose of someone who shares it with you.</h1>
+      <p style="font-size:21px;line-height:1.5;color:#d4d8dc;max-width:36em;text-wrap:pretty">Ayni is a viewer for one person's continuous glucose — a partner, a parent, a child, someone in your care. It is nothing else: no loop, no pump, no insulin.</p>
+      <p style="color:#a9b0b7;max-width:38em;text-wrap:pretty">Readings are sealed on the sender's phone before they leave it, travel directly between phones, and only someone handed a key can open them. No account, no server holding your data, nobody in the middle who can read it.</p>
+      <p style="color:#a9b0b7;max-width:38em;text-wrap:pretty">It runs on a <strong style="color:#e9ebe6">swarm, not a server</strong>: every phone and desktop running it quietly seeds a slice of everyone else's sealed data. The more people take part, the more resilient everyone's readings become — and no device can read a byte it holds for anyone else.</p>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px 28px;padding-top:6px">
+        <a href="https://f-droid.org/packages/nz.diaswarm.ayni/" style="display:block;line-height:0"><img src="assets/fdroid-badge.png" alt="Get it on F-Droid" style="height:58px;display:block"></a>
+        <a href="#desktop" style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:15px;color:#e9ebe6" class="hv9">desktop peer →</a>
+        <a href="https://github.com/alex-poor/diaswarm" style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:15px;color:#e9ebe6" class="hv10">view on github →</a>
       </div>
     </div>
-    <div class="shot">
-      <img src="assets/screen-1.png" alt="The Ayni app showing a shared glucose trend line with the reading's age.">
-    </div>
-  </div>
-</section>
 
-<!-- WHAT IT IS / IS NOT -->
-<section id="what">
-  <div class="wrap">
-    <p class="eyebrow">Read this first</p>
-    <h2>What Ayni is, and what it is not</h2>
-    <p class="intro">Ayni does one job well and is honest about the rest. It shows glucose — it
-      never touches a dose.</p>
-    <div class="duo">
-      <div class="panel yes">
-        <h3>✓ It is</h3>
-        <ul>
-          <li>A viewer for one person's glucose, with every reading shown <strong>with its age</strong>.</li>
-          <li>End-to-end sealed: records are encrypted on the sender's phone, openable only with a key.</li>
-          <li>Revocable by <strong>key</strong>, not by a server's goodwill — stop wrapping the next key and sharing ends.</li>
-          <li>Serverless and accountless — readings travel directly between phones.</li>
-          <li>A standalone app (<code>nz.diaswarm.ayni</code>) that installs alongside AndroidAPS, never over it.</li>
-        </ul>
+    <div style="flex:1 1 380px;min-width:0;max-width:520px;display:flex;flex-direction:column;gap:18px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#8b939b;border-bottom:1px solid #262c33;padding-bottom:12px">
+        <span style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:50%;background:#3ad68e;display:inline-block;opacity:1" id="live-dot"></span>mum · shared with you</span>
+        <span style="color:#e9ebe6;font-variant-numeric:tabular-nums"><span id="age">23s ago</span></span>
       </div>
-      <div class="panel no">
-        <h3>✕ It is not</h3>
-        <ul>
-          <li>An artificial pancreas. It contains <strong>no closed-loop code</strong> and does not talk to a pump.</li>
-          <li>Able to deliver insulin or change a dose. There is nothing in it to dose with.</li>
-          <li>A Nightscout server, or a thing that needs one.</li>
-          <li>A medical device. It's capable but early software — see <a href="#honest">the honest trade-offs</a>.</li>
-          <li>A way to find or search for a person — there is no directory, deliberately.</li>
-        </ul>
+      <div style="display:flex;align-items:flex-start;gap:16px">
+        <span style="font-size:clamp(150px,19vw,250px);line-height:0.8;font-weight:800;letter-spacing:-0.05em;color:#3ad68e;font-variant-numeric:tabular-nums"><span id="val">5.9</span></span>
+        <span style="font-size:32px;font-weight:700;color:#3ad68e;padding-top:14px;font-variant-numeric:tabular-nums"><span id="delta">+0.1</span></span>
       </div>
+      <svg viewBox="0 0 400 110" preserveAspectRatio="none" style="width:100%;height:110px;display:block">
+        <rect x="0" y="22" width="400" height="66" style="fill:#16251f"></rect>
+        <line x1="0" y1="22" x2="400" y2="22" style="stroke:#2a4a3b;stroke-width:1"></line>
+        <line x1="0" y1="88" x2="400" y2="88" style="stroke:#2a4a3b;stroke-width:1"></line>
+        <polyline id="spark" points="2.0,52.0 13.2,50.8 24.4,52.8 35.6,55.1 46.8,54.7 58.0,55.3 69.2,56.8 80.4,56.2 91.6,55.6 102.8,56.1 114.0,55.8 125.2,55.8 136.4,54.9 147.6,56.9 158.8,58.2 170.0,57.7 181.2,57.3 192.4,60.1 203.6,59.6 214.8,60.2 226.0,58.5 237.2,57.5 248.4,59.9 259.6,60.3 270.8,58.6 282.0,58.2 293.2,58.0 304.4,58.2 315.6,56.7 326.8,55.3 338.0,56.6 349.2,58.1 360.4,56.9 371.6,58.4 382.8,60.6 394.0,67.1" style="fill:none;stroke:#e9ebe6;stroke-width:2;stroke-linejoin:round;stroke-linecap:round"></polyline>
+        <circle id="spark-dot" cx="394.0" cy="67.1" r="5" style="fill:#0f1317;stroke:#e9ebe6;stroke-width:2.5"></circle>
+      </svg>
+      <div style="display:flex;justify-content:space-between;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#8b939b">
+        <span>3h · in range 3.9–10.0</span><span>mmol/L</span>
+      </div>
+      
+        <p style="font-family:Newsreader,serif;font-style:italic;font-size:20px;line-height:1.35;color:#ff8a5c;padding-top:8px">every reading carries its age — so a stale one can't pose as current.</p>
+      
     </div>
   </div>
-</section>
+</div>
 
-<!-- FEATURES -->
-<section id="features">
-  <div class="wrap">
-    <p class="eyebrow">Features</p>
-    <h2>Sharing that you hold the key to</h2>
-    <p class="intro">The whole design removes the server and puts access in one place: who holds a key.</p>
-    <div class="grid">
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
-        <h3>Sealed in the middle</h3>
-        <p>Records are sealed on the sender's phone before they are sent. Every holder in between stores ciphertext and can read none of it.</p>
+<section id="is" style="border-bottom:1px solid #cfc9bb;scroll-margin-top:0">
+  <div style="max-width:1280px;margin:0 auto;padding:80px 32px;display:flex;flex-wrap:wrap;gap:24px 56px">
+    <div style="flex:0 0 170px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#4d5157;display:flex;flex-direction:column;gap:4px">
+      <span style="font-size:40px;font-weight:600;color:#1a1d20;line-height:1">01</span><span>read this first</span>
+    </div>
+    <div style="flex:1 1 640px;min-width:0;display:flex;flex-direction:column;gap:40px">
+      <div style="display:flex;flex-direction:column;gap:14px;max-width:760px">
+        <h2 style="font-size:clamp(34px,4.2vw,54px);line-height:1.02;font-weight:800;letter-spacing:-0.03em;text-wrap:balance">What Ayni is, and what it is not</h2>
+        <p style="font-size:20px;color:#4d5157;text-wrap:pretty">Ayni does one job well and is honest about the rest. It shows glucose — it never touches a dose.</p>
       </div>
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 2.6-6.3M3 4v5h5"/></svg></div>
-        <h3>Revoke by key</h3>
-        <p>Withdrawing access doesn't ask a server to stop serving. The departing reader is simply not wrapped for the next segment.</p>
-      </div>
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="1.6" fill="currentColor"/><circle cx="16" cy="12" r="1.6" fill="currentColor"/><circle cx="10" cy="18" r="1.6" fill="currentColor"/></svg></div>
-        <h3>No account, no server</h3>
-        <p>There is nobody to sign up with and no cloud holding your data. Readings travel phone to phone.</p>
-      </div>
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
-        <h3>Fresh, and labelled with it</h3>
-        <p>Readings normally arrive about 2–3 minutes old — plenty for a CGM — and each is shown with its age, so a stale one can't pose as current. (Android power-saving can delay a backgrounded phone; excuse it from battery optimisation for the freshest data.)</p>
-      </div>
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8 8l3 7M16 8l-3 7"/></svg></div>
-        <h3>Carried by the community</h3>
-        <p>Every Ayni phone and desktop peer holds a share of other people's sealed records, so your data stays reachable while your phone sleeps. More participants, more resilient — and none can read it.</p>
-      </div>
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg></div>
-        <h3>Works off your network</h3>
-        <p>On the same wifi it's direct. Anywhere else, an iroh relay introduces the two phones — and still cannot read a byte.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));border-top:2px solid #1a1d20">
+        <div style="padding:24px 40px 8px 0;display:flex;flex-direction:column">
+          <h3 style="font-size:64px;font-weight:800;letter-spacing:-0.04em;line-height:1;color:#0c6e45;padding-bottom:18px">is</h3>
+          <div style="display:flex;gap:16px;padding:16px 0;border-top:1px solid #cfc9bb"><span style="color:#0c6e45;font-weight:800;flex:none">✓</span><span>A viewer for one person's glucose, with every reading shown <strong>with its age</strong>.</span></div>
+          <div style="display:flex;gap:16px;padding:16px 0;border-top:1px solid #cfc9bb"><span style="color:#0c6e45;font-weight:800;flex:none">✓</span><span>End-to-end sealed: records are encrypted on the sender's phone, openable only with a key.</span></div>
+          <div style="display:flex;gap:16px;padding:16px 0;border-top:1px solid #cfc9bb"><span style="color:#0c6e45;font-weight:800;flex:none">✓</span><span>Revocable by <strong>key</strong>, not by a server's goodwill — stop wrapping the next key and sharing ends.</span></div>
+          <div style="display:flex;gap:16px;padding:16px 0;border-top:1px solid #cfc9bb"><span style="color:#0c6e45;font-weight:800;flex:none">✓</span><span>Serverless and accountless — readings travel directly between phones.</span></div>
+          <div style="display:flex;gap:16px;padding:16px 0;border-top:1px solid #cfc9bb"><span style="color:#0c6e45;font-weight:800;flex:none">✓</span><span>A standalone app (<code style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:16px">nz.diaswarm.ayni</code>) that installs alongside AndroidAPS, never over it.</span></div>
+        </div>
+        <div style="padding:24px 0 8px 40px;border-left:1px solid #cfc9bb;display:flex;flex-direction:column">
+          <h3 style="font-size:64px;font-weight:800;letter-spacing:-0.04em;line-height:1;color:#c03d16;padding-bottom:18px">is not</h3>
+          <div style="display:flex;gap:16px;padding:16px 0;border-top:1px solid #cfc9bb"><span style="color:#c03d16;font-weight:800;flex:none">✕</span><span>An artificial pancreas. It contains <strong>no closed-loop code</strong> and does not talk to a pump.</span></div>
+          <div style="display:flex;gap:16px;padding:16px 0;border-top:1px solid #cfc9bb"><span style="color:#c03d16;font-weight:800;flex:none">✕</span><span>Able to deliver insulin or change a dose. There is nothing in it to dose with.</span></div>
+          <div style="display:flex;gap:16px;padding:16px 0;border-top:1px solid #cfc9bb"><span style="color:#c03d16;font-weight:800;flex:none">✕</span><span>A Nightscout server, or a thing that needs one.</span></div>
+          <div style="display:flex;gap:16px;padding:16px 0;border-top:1px solid #cfc9bb"><span style="color:#c03d16;font-weight:800;flex:none">✕</span><span>A medical device. It's capable but early software — see <a href="#honest">the honest trade-offs</a>.</span></div>
+          <div style="display:flex;gap:16px;padding:16px 0;border-top:1px solid #cfc9bb"><span style="color:#c03d16;font-weight:800;flex:none">✕</span><span>A way to find or search for a person — there is no directory, deliberately.</span></div>
+        </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- THE SWARM / WHO CARRIES -->
-<section id="swarm">
-  <div class="wrap">
-    <p class="eyebrow">The swarm</p>
-    <h2>A community holds the data up — not a company</h2>
-    <p class="intro">There is no server behind Ayni. The swarm is simply everyone taking part,
-      each holding a small, unreadable slice of everyone else's records, so no single phone has
-      to be awake for the data to be there. Three kinds of device make it up:</p>
-    <div class="grid">
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/></svg></div>
-        <h3>Ayni phones</h3>
-        <p>Every follower seeds a share of the pool for people it has never met — the app is
-          <em>named</em> for that reciprocity. Following someone and carrying for the swarm are the same app.</p>
-      </div>
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
-        <h3>Desktop peers</h3>
-        <p>A <code>diaswarm-peer</code> on a machine that never sleeps turns "probably reachable"
-          into "reliably reachable". One in a friend group lifts everyone in it.</p>
-      </div>
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
-        <h3>The sender</h3>
-        <p>The phone sharing its own loop — the diaswarm fork of AndroidAPS — publishes its sealed
-          records into the same swarm, and hands no one a readable copy.</p>
-      </div>
+<section id="features" style="border-bottom:1px solid #cfc9bb">
+  <div style="max-width:1280px;margin:0 auto;padding:80px 32px;display:flex;flex-wrap:wrap;gap:24px 56px">
+    <div style="flex:0 0 170px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#4d5157;display:flex;flex-direction:column;gap:4px">
+      <span style="font-size:40px;font-weight:600;color:#1a1d20;line-height:1">02</span><span>features</span>
     </div>
-    <p class="intro mt">The more people share and seed, the more copies of everything exist and the
-      more resilient everyone's data becomes. Every byte any device holds for anyone else is
-      unreadable ciphertext.</p>
-  </div>
-</section>
-
-<!-- GET THE APP / CONNECT -->
-<section id="connect">
-  <div class="wrap">
-    <p class="eyebrow">Get connected</p>
-    <h2>Install, then pair with one scan</h2>
-    <p class="intro">Install Ayni from F-Droid. On its own it does nothing until someone shares with you —
-      that's not a bug. Pairing is a single scan, and it works in both directions at once.</p>
-
-    <div class="steps">
-      <div class="step">
-        <div class="n">1</div>
-        <h3>Install Ayni</h3>
-        <p>From <a href="https://f-droid.org/packages/nz.diaswarm.ayni/" rel="noopener">F-Droid</a>.
-          It installs alongside any other app and asks for nothing to open.</p>
+    <div style="flex:1 1 640px;min-width:0;display:flex;flex-direction:column;gap:44px">
+      <div style="display:flex;flex-direction:column;gap:14px;max-width:760px">
+        <h2 style="font-size:clamp(34px,4.2vw,54px);line-height:1.02;font-weight:800;letter-spacing:-0.03em;text-wrap:balance">Sharing that you hold the key to</h2>
+        <p style="font-size:20px;color:#4d5157;text-wrap:pretty">The whole design removes the server and puts access in one place: who holds a key.</p>
       </div>
-      <div class="step">
-        <div class="n">2</div>
-        <h3>Show your code</h3>
-        <p>Ayni shows a QR invite. Showing it opens a short window in which the sender's phone
-          will accept being paired back — outside that moment, an uninvited offer is refused.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:44px 40px">
+        <div style="border-top:2px solid #1a1d20;padding-top:18px;display:flex;flex-direction:column;gap:10px">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#4d5157">a</span>
+          <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em">Sealed in the middle</h3>
+          <p style="color:#3d4146;text-wrap:pretty">Records are sealed on the sender's phone before they are sent. Every holder in between stores ciphertext and can read none of it.</p>
+        </div>
+        <div style="border-top:2px solid #1a1d20;padding-top:18px;display:flex;flex-direction:column;gap:10px">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#4d5157">b</span>
+          <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em">Revoke by key</h3>
+          <p style="color:#3d4146;text-wrap:pretty">Withdrawing access doesn't ask a server to stop serving. The departing reader is simply not wrapped for the next segment.</p>
+        </div>
+        <div style="border-top:2px solid #1a1d20;padding-top:18px;display:flex;flex-direction:column;gap:10px">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#4d5157">c</span>
+          <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em">No account, no server</h3>
+          <p style="color:#3d4146;text-wrap:pretty">There is nobody to sign up with and no cloud holding your data. Readings travel phone to phone.</p>
+        </div>
+        <div style="border-top:2px solid #0c6e45;padding-top:18px;display:flex;flex-direction:column;gap:10px">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#0c6e45">d · ~2–3 min</span>
+          <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em">Fresh, and labelled with it</h3>
+          <p style="color:#3d4146;text-wrap:pretty">Readings normally arrive about 2–3 minutes old — plenty for a CGM — and each is shown with its age, so a stale one can't pose as current.</p>
+          <p style="color:#4d5157;font-size:15px;text-wrap:pretty">Android power-saving can delay a backgrounded phone; excuse it from battery optimisation for the freshest data.</p>
+        </div>
+        <div style="border-top:2px solid #1a1d20;padding-top:18px;display:flex;flex-direction:column;gap:10px">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#4d5157">e</span>
+          <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em">Carried by the community</h3>
+          <p style="color:#3d4146;text-wrap:pretty">Every Ayni phone and desktop peer holds a share of other people's sealed records, so your data stays reachable while your phone sleeps. More participants, more resilient — and none can read it.</p>
+        </div>
+        <div style="border-top:2px solid #1a1d20;padding-top:18px;display:flex;flex-direction:column;gap:10px">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#4d5157">f</span>
+          <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em">Works off your network</h3>
+          <p style="color:#3d4146;text-wrap:pretty">On the same wifi it's direct. Anywhere else, an iroh relay introduces the two phones — and still cannot read a byte.</p>
+        </div>
       </div>
-      <div class="step">
-        <div class="n">3</div>
-        <h3>They scan it once</h3>
-        <p>The person sharing scans your code. Their phone grants you access <em>and</em> hands back
-          its own address in the same movement. The trend line appears.</p>
-      </div>
-    </div>
-
-    <div class="callout info mt">
-      <strong>One scan, not two.</strong> The invite's subject field is exactly the key someone would
-      grant, so a single code works in both directions. An invite is <strong>not a secret and not a
-      grant</strong> — anyone holding it can download your ciphertext and open none of it. A camera
-      isn't always in the room, so an invite can also be pasted as text.
     </div>
   </div>
 </section>
 
-<!-- HOW IT WORKS -->
-<section id="how">
-  <div class="wrap">
-    <p class="eyebrow">How it works</p>
-    <h2>One reading, from the phone that recorded it to the phone that draws it</h2>
-    <p class="intro">The padlock is on for the whole of the middle. The pool holds the ciphertext
-      and serves it to anyone; only a granted reader's private key — which never leaves their
-      device — can open it.</p>
-    <figure class="diagram">
-      <img src="assets/journey.png" alt="A three-lane diagram: the sender's phone records a reading in plain form, seals it into a segment and wraps the key to one chosen reader; the sealed segment publishes to strangers' phones that hold it and cannot open it; the reader fetches the ciphertext and opens it with a private key that never left their device.">
-      <figcaption>Where one glucose reading goes. Revocation is the absence of a file: tomorrow's
-        reading is simply never wrapped for a withdrawn reader — nothing on the network is asked to stop.</figcaption>
-    </figure>
-    <div class="shots-row mt">
-      <img src="assets/screen-1.png" alt="Ayni trend screen.">
-      <img src="assets/screen-2.png" alt="Ayni showing a reading with its age.">
+<section id="swarm" style="background:#0f1317;color:#e9ebe6">
+  <div style="max-width:1280px;margin:0 auto;padding:88px 32px;display:flex;flex-wrap:wrap;gap:24px 56px">
+    <div style="flex:0 0 170px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#8b939b;display:flex;flex-direction:column;gap:4px">
+      <span style="font-size:40px;font-weight:600;color:#e9ebe6;line-height:1">03</span><span>the swarm</span>
+    </div>
+    <div style="flex:1 1 640px;min-width:0;display:flex;flex-direction:column;gap:44px">
+      <div style="display:flex;flex-wrap:wrap;gap:32px 56px;align-items:flex-start">
+        <div style="flex:1 1 380px;min-width:0;display:flex;flex-direction:column;gap:18px">
+          <h2 style="font-size:clamp(34px,4.2vw,54px);line-height:1.02;font-weight:800;letter-spacing:-0.03em;text-wrap:balance">A community holds the data up — not a company</h2>
+          <p style="font-size:19px;color:#c3c8cd;text-wrap:pretty">There is no server behind Ayni. The swarm is simply everyone taking part, each holding a small, unreadable slice of everyone else's records, so no single phone has to be awake for the data to be there.</p>
+        </div>
+        <div style="flex:1 1 340px;min-width:0;border:1px solid #2a3139;background:#0b0e11">
+          <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid #2a3139;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:12px;color:#8b939b">
+            <span>stranger's phone · bucket 0x3</span><span>146 segments · 219 wraps</span>
+          </div>
+          <p style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;line-height:1.6;color:#3f5a4c;padding:14px;word-break:break-all;height:196px;overflow:hidden">6d 4b ef 8e ba e0 0f 46 8f 82 6b 31 e8 0e 5d 58 aa ec 83 2a 67 48 5d 6c 55 88 9d 3b e8 75 dc a2 a2 84 81 b0 f0 65 b5 40 96 59 54 64 cb e0 1c d1 13 68 27 13 ff 38 a1 24 75 97 23 eb e2 e3 e2 e8 c2 46 02 3f 13 00 9d 3b bd 7d b0 3c e1 3c 5f e4 1e 7d 00 e9 a3 ec 05 e6 30 f7 90 ad 44 39 35 90 0d c4 b3 b6 7f 08 1c eb 21 b0 e4 09 e2 dc fe f4 c3 6b 3f ba e1 65 3c 67 e3 8f 59 9f bc 55 b9 6c 32 4f fc fe a1 df eb 33 a5 22 7f 8e c5 f2 7b 2f 72 2a a9 85 8f 81 c1 5c c0 06 4c 8a 33 b9 4a 3c a8 6d 13 c5 d2 ea e8 ae f5 06 c3 99 b9 e5 09 22 14 1b 15 02 9a f2 31 22 33 ac 3e 74 fe 6c ac c6 65 6a 0f 3a ce f9 27 ec 82 1f 35 9a 2b 13 45 a5 8e 7b fe 13 69 50 01 01 69 17 3b ec c7 c3 6f da f6 cd a9 92 59 68 7f 7e 91 b8 aa a2 ba e2 d8 fc 70 7c f5 f9 5b 14 57 e1 b5 bc f4 c9 35 3c cc 1a ea cc a2 b6 89 71 df 90 df 45 af 6f 65 30 96 3b e6 d2 56 ae e0 1d 4e eb 00 21 65 05 b1 e5 2c 36 f2 b3 2c 1d a0 04 cf 97 c0 20 54 b6 f4 8c 96 c7 b3 bb 98 19 0b 9c 39 94 40 39 9e a1 d0 3d e7 0d b0 68 ca a8 cd 1a eb 80 d2 6c dd ca ba e8 db 30 b8 27 20 f2 f4 0e 13 43 f0 de f4 46 32 07 78 8f 24 52 7b 3a 0e 0b 17 a1 77 ce ba 82 b3 63 9d f7 c5 f6 b6 9a cd 2b 10 ba a5 6e 8b 63 7e 1f 10 14 5a 58 33 a3 20 0d 00 d5 de 0b c4 51 66 e8 cb 02 fe 34 a4 6d 08 2c c1 c0 3f db d0 51 75 4c 40 e1 de ad 7f dd d1 d0 c2 f8 b0 49 b6 53 dd 29 d8 a8 d0 77 cb d4 0a 3b 32 05 93 cf a0 da dd d0 35 8f 75 62 89 c0 84 62 7f 3e b4 c5 4c 41 9d 8d f0 91 50 99 92 a2 92 29 35 1e 55 a2 df a4 63 58 65 20 27 0d 79 60 17 a2 67 75 19 d7 46 4d 1f 33 6f 33 9b 93 c1 c8 7e dd af 1e 9f bc e4 94 f7 4a fe 09 1a 4e db e6 b9 8b 3d 88</p>
+          <div style="padding:10px 14px;border-top:1px solid #2a3139;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:12px;color:#ff8a5c">↑ your readings, as a stranger's phone stores them. It can't read a byte.</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:0;border-top:1px solid #2a3139">
+        <div style="padding:26px 28px 26px 0;display:flex;flex-direction:column;gap:10px;border-right:1px solid #2a3139">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#3ad68e">follower</span>
+          <h3 style="font-size:24px;font-weight:800;letter-spacing:-0.015em">Ayni phones</h3>
+          <p style="color:#b4bac0;text-wrap:pretty">Every follower seeds a share of the pool for people it has never met — the app is <em>named</em> for that reciprocity. Following someone and carrying for the swarm are the same app.</p>
+        </div>
+        <div style="padding:26px 28px;display:flex;flex-direction:column;gap:10px;border-right:1px solid #2a3139">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#3ad68e">always on</span>
+          <h3 style="font-size:24px;font-weight:800;letter-spacing:-0.015em">Desktop peers</h3>
+          <p style="color:#b4bac0;text-wrap:pretty">A <code style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:16px;color:#e9ebe6">diaswarm-peer</code> on a machine that never sleeps turns "probably reachable" into "reliably reachable". One in a friend group lifts everyone in it.</p>
+        </div>
+        <div style="padding:26px 0 26px 28px;display:flex;flex-direction:column;gap:10px">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#ff8a5c">publisher</span>
+          <h3 style="font-size:24px;font-weight:800;letter-spacing:-0.015em">The sender</h3>
+          <p style="color:#b4bac0;text-wrap:pretty">The phone sharing its own loop — the diaswarm fork of AndroidAPS — publishes its sealed records into the same swarm, and hands no one a readable copy.</p>
+        </div>
+      </div>
+      <p style="font-size:21px;line-height:1.45;color:#e9ebe6;max-width:40em;border-left:3px solid #3ad68e;padding-left:22px;text-wrap:pretty">The more people share and seed, the more copies of everything exist and the more resilient everyone's data becomes. Every byte any device holds for anyone else is unreadable ciphertext.</p>
     </div>
   </div>
 </section>
 
-<!-- DESKTOP -->
-<section id="desktop">
-  <div class="wrap">
-    <p class="eyebrow">Desktop apps</p>
-    <h2>A machine that doesn't sleep: <code>diaswarm-peer</code></h2>
-    <p class="intro">Every other holder is a phone, and the promise that your data stays reachable
-      while your phone is asleep rests on someone having the bytes. One mains-powered desktop peer
-      makes that structural rather than a matter of luck. It can read none of what it carries.</p>
-
-    <div class="callout info">
-      <strong>Match the version to your phone.</strong> The desktop peer and the Ayni app speak one
-      wire protocol, and a mismatched build simply won't carry for a newer phone. Download the
-      <strong>peer release that matches your Ayni version</strong> — current line is
-      <code>peer-v0.1.7</code>, compatible with Ayni&nbsp;0.1.7 — from
-      <a href="https://github.com/alex-poor/diaswarm/releases" rel="noopener">the releases page</a>.
-      There's a native build for each platform, so running one is downloading a file, not installing a toolchain.
+<section id="connect" style="border-bottom:1px solid #cfc9bb">
+  <div style="max-width:1280px;margin:0 auto;padding:80px 32px;display:flex;flex-wrap:wrap;gap:24px 56px">
+    <div style="flex:0 0 170px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#4d5157;display:flex;flex-direction:column;gap:4px">
+      <span style="font-size:40px;font-weight:600;color:#1a1d20;line-height:1">04</span><span>get connected</span>
     </div>
-
-    <div class="tablecard mt">
-      <table>
-        <thead><tr><th>Platform</th><th>Binary goes</th><th>Service file (keeps it running)</th></tr></thead>
-        <tbody>
-          <tr><td>Linux</td><td><code>~/.local/bin/diaswarm-peer</code></td><td><code>systemd/diaswarm-peer.service</code> → <code>~/.config/systemd/user/</code></td></tr>
-          <tr><td>macOS</td><td><code>/usr/local/bin/diaswarm-peer</code></td><td><code>launchd/nz.diaswarm.peer.plist</code> → <code>~/Library/LaunchAgents/</code></td></tr>
-          <tr><td>Windows</td><td><code>%LOCALAPPDATA%\Programs\diaswarm\</code></td><td>run <code>windows/install-task.ps1</code></td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p class="intro mt">Run it with no arguments and it carries a share of the pool. It can also follow a
-      subject you've been granted and turn that into something a clinic can use:</p>
-    <pre><code>diaswarm-peer                                 # carry a share of the pool, read nothing
-diaswarm-peer identity                        # the string a subject grants
-diaswarm-peer read      --subject &lt;id&gt; --days 1
-diaswarm-peer export    --subject &lt;id&gt; --out day.csv
-diaswarm-peer summary   --subject &lt;id&gt; --days 90 --patient &lt;id&gt; --report agp.html
-diaswarm-peer nightscout --subject &lt;id&gt; --out ./ns</code></pre>
-    <p class="intro"><code>summary</code> is the clinician's view: an HL7 CGM FHIR document — time in
-      range, mean glucose, GMI, variability, days of wear — that validates against HL7's own validator
-      with zero errors. Nothing here ever dials a server; these are files you choose to hand over.</p>
-
-    <div class="callout mt">
-      <strong>Note on Linux:</strong> run <code>loginctl enable-linger "$USER"</code> after enabling the
-      service, or systemd stops it when you log out — so an "always-on" carrier runs only while you're
-      logged in, which on a server is rarely.
+    <div style="flex:1 1 640px;min-width:0;display:flex;flex-direction:column;gap:44px">
+      <div style="display:flex;flex-direction:column;gap:14px;max-width:760px">
+        <h2 style="font-size:clamp(34px,4.2vw,54px);line-height:1.02;font-weight:800;letter-spacing:-0.03em;text-wrap:balance">Install, then pair with one scan</h2>
+        <p style="font-size:20px;color:#4d5157;text-wrap:pretty">Install Ayni from F-Droid. On its own it does nothing until someone shares with you — that's not a bug. Pairing is a single scan, and it works in both directions at once.</p>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:40px">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <span style="font-size:120px;font-weight:800;line-height:0.8;letter-spacing:-0.06em">1</span>
+          <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em;padding-top:10px;border-top:2px solid #1a1d20">Install Ayni</h3>
+          <p style="color:#3d4146;text-wrap:pretty">From <a href="https://f-droid.org/packages/nz.diaswarm.ayni/">F-Droid</a>. It installs alongside any other app and asks for nothing to open.</p>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <span style="font-size:120px;font-weight:800;line-height:0.8;letter-spacing:-0.06em">2</span>
+          <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em;padding-top:10px;border-top:2px solid #1a1d20">Show your code</h3>
+          <p style="color:#3d4146;text-wrap:pretty">Ayni shows a QR invite. Showing it opens a short window in which the sender's phone will accept being paired back — outside that moment, an uninvited offer is refused.</p>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <span style="font-size:120px;font-weight:800;line-height:0.8;letter-spacing:-0.06em;color:#0c6e45">3</span>
+          <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em;padding-top:10px;border-top:2px solid #0c6e45">They scan it once</h3>
+          <p style="color:#3d4146;text-wrap:pretty">The person sharing scans your code. Their phone grants you access <em>and</em> hands back its own address in the same movement. The trend line appears.</p>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:20px 40px;align-items:flex-start">
+        <div style="flex:1 1 480px;min-width:0;background:#e6e1d4;padding:24px 28px;display:flex;flex-direction:column;gap:10px">
+          <p style="font-weight:800;font-size:20px">One scan, not two.</p>
+          <p style="color:#3d4146;text-wrap:pretty">The invite's subject field is exactly the key someone would grant, so a single code works in both directions. An invite is <strong>not a secret and not a grant</strong> — anyone holding it can download your ciphertext and open none of it. A camera isn't always in the room, so an invite can also be pasted as text.</p>
+        </div>
+        
+          <p style="flex:0 1 230px;font-family:Newsreader,serif;font-style:italic;font-size:20px;line-height:1.35;color:#c03d16;padding-top:20px">an invite is not a secret, and not a grant.</p>
+        
+      </div>
     </div>
   </div>
 </section>
 
-<!-- SHARE YOUR OWN DATA -->
-<section id="share">
-  <div class="wrap">
-    <p class="eyebrow">Sending your own data</p>
-    <h2>To share your own loop, you run the diaswarm fork of AndroidAPS</h2>
-    <p class="intro">Ayni only receives. To be a <strong>sender</strong> — to share the glucose your
-      own insulin-pump loop is already writing — the diaswarm module has to run inside AndroidAPS, and
-      that means building AndroidAPS yourself.</p>
-
-    <div class="callout">
-      <strong>Building AndroidAPS from source is normal — that part isn't new.</strong> The one thing
-      that is specific to diaswarm: you must build from <strong>the diaswarm fork of AndroidAPS</strong>
-      (the <code>diaswarm-addon</code> branch, which wires the module in), <strong>not upstream
-      AndroidAPS</strong>. Upstream has no diaswarm module and cannot send. There is deliberately
-      <strong>no pre-built loop APK</strong> distributed anywhere — running a loop is running a medical
-      device you assembled, from source you have read.
+<section id="how" style="border-bottom:1px solid #cfc9bb">
+  <div style="max-width:1280px;margin:0 auto;padding:80px 32px;display:flex;flex-wrap:wrap;gap:24px 56px">
+    <div style="flex:0 0 170px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#4d5157;display:flex;flex-direction:column;gap:4px">
+      <span style="font-size:40px;font-weight:600;color:#1a1d20;line-height:1">05</span><span>how it works</span>
     </div>
-
-    <p class="intro mt">The module ships <strong>disabled</strong> in the fork and is structurally
-      incapable of dosing: it holds no pump reference and has no path into the loop. It only drains your
-      own sealed records outward, and only once you've chosen to share. Build instructions and the full
-      safety rationale are in the project repository.</p>
-    <div class="cta">
-      <a class="btn primary" href="https://github.com/alex-poor/diaswarm#building-the-aaps-add-on" rel="noopener">Build instructions</a>
-      <a class="btn" href="https://github.com/alex-poor/diaswarm" rel="noopener">The diaswarm repository</a>
+    <div style="flex:1 1 640px;min-width:0;display:flex;flex-direction:column;gap:36px">
+      <div style="display:flex;flex-direction:column;gap:14px;max-width:820px">
+        <h2 style="font-size:clamp(34px,4.2vw,54px);line-height:1.02;font-weight:800;letter-spacing:-0.03em;text-wrap:balance">One reading, from the phone that recorded it to the phone that draws it</h2>
+        <p style="font-size:20px;color:#4d5157;text-wrap:pretty">The padlock is on for the whole of the middle. The pool holds the ciphertext and serves it to anyone; only a granted reader's private key — which never leaves their device — can open it.</p>
+      </div>
+      <figure style="margin:0;display:flex;flex-direction:column;gap:14px">
+        <img src="assets/journey.png" alt="A three-lane diagram: the sender's phone records a reading in plain form, seals it into a segment and wraps the key to one chosen reader; the sealed segment publishes to strangers' phones that hold it and cannot open it; the reader fetches the ciphertext and opens it with a private key that never left their device." style="width:100%;height:auto;display:block;border:1px solid #cfc9bb;background:#f5f5f5">
+        <figcaption style="display:flex;flex-wrap:wrap;gap:8px 32px;justify-content:space-between;font-size:16px;color:#4d5157">
+          <span style="flex:1 1 420px;text-wrap:pretty">Where one glucose reading goes. Tomorrow's reading is simply never wrapped for a withdrawn reader — nothing on the network is asked to stop.</span>
+          
+            <span style="font-family:Newsreader,serif;font-style:italic;font-size:21px;color:#c03d16">revocation is the absence of a file.</span>
+          
+        </figcaption>
+      </figure>
+      <div style="display:flex;flex-wrap:wrap;gap:24px;padding-top:12px">
+        <img src="assets/screen-1.png" alt="Ayni trend screen." style="width:230px;max-width:46%;height:auto;display:block;border:8px solid #0f1317;border-radius:30px;background:#0f1317">
+        <img src="assets/screen-2.png" alt="Ayni showing a reading with its age." style="width:230px;max-width:46%;height:auto;display:block;border:8px solid #0f1317;border-radius:30px;background:#0f1317">
+      </div>
     </div>
   </div>
 </section>
 
-<!-- HONESTY -->
+<section id="desktop" style="border-bottom:1px solid #cfc9bb">
+  <div style="max-width:1280px;margin:0 auto;padding:80px 32px;display:flex;flex-wrap:wrap;gap:24px 56px">
+    <div style="flex:0 0 170px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#4d5157;display:flex;flex-direction:column;gap:4px">
+      <span style="font-size:40px;font-weight:600;color:#1a1d20;line-height:1">06</span><span>desktop apps</span>
+    </div>
+    <div style="flex:1 1 640px;min-width:0;display:flex;flex-direction:column;gap:36px">
+      <div style="display:flex;flex-direction:column;gap:14px;max-width:820px">
+        <h2 style="font-size:clamp(34px,4.2vw,54px);line-height:1.02;font-weight:800;letter-spacing:-0.03em;text-wrap:balance">A machine that doesn't sleep: <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-weight:600;letter-spacing:-0.04em">diaswarm-peer</span></h2>
+        <p style="font-size:20px;color:#4d5157;text-wrap:pretty">Every other holder is a phone, and the promise that your data stays reachable while your phone is asleep rests on someone having the bytes. One mains-powered desktop peer makes that structural rather than a matter of luck. It can read none of what it carries.</p>
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;border:2px solid #1a1d20">
+        <div style="flex:0 1 300px;min-width:0;background:#1a1d20;color:#f2efe7;padding:22px 24px;display:flex;flex-direction:column;gap:6px;justify-content:center">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#a9b0b7">match the version</span>
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:22px;font-weight:600">peer-v0.1.7</span>
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:15px;color:#3ad68e">↔ Ayni 0.1.7</span>
+        </div>
+        <p style="flex:1 1 360px;min-width:0;padding:22px 26px;color:#3d4146;text-wrap:pretty">The desktop peer and the Ayni app speak one wire protocol, and a mismatched build simply won't carry for a newer phone. Download the <strong style="color:#1a1d20">peer release that matches your Ayni version</strong> from <a href="https://github.com/alex-poor/diaswarm/releases">the releases page</a>. There's a native build for each platform, so running one is downloading a file, not installing a toolchain.</p>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table style="width:100%;min-width:640px;border-collapse:collapse;font-size:15px">
+          <thead>
+            <tr style="text-align:left;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#4d5157">
+              <th style="font-weight:400;padding:10px 16px 10px 0;border-bottom:2px solid #1a1d20">platform</th>
+              <th style="font-weight:400;padding:10px 16px;border-bottom:2px solid #1a1d20">binary goes</th>
+              <th style="font-weight:400;padding:10px 0 10px 16px;border-bottom:2px solid #1a1d20">service file (keeps it running)</th>
+            </tr>
+          </thead>
+          <tbody style="font-family:'Atkinson Hyperlegible Mono',monospace">
+            <tr>
+              <td style="padding:14px 16px 14px 0;border-bottom:1px solid #cfc9bb;font-family:'Atkinson Hyperlegible Next',sans-serif;font-weight:800;font-size:17px">Linux</td>
+              <td style="padding:14px 16px;border-bottom:1px solid #cfc9bb">~/.local/bin/diaswarm-peer</td>
+              <td style="padding:14px 0 14px 16px;border-bottom:1px solid #cfc9bb">systemd/diaswarm-peer.service → ~/.config/systemd/user/</td>
+            </tr>
+            <tr>
+              <td style="padding:14px 16px 14px 0;border-bottom:1px solid #cfc9bb;font-family:'Atkinson Hyperlegible Next',sans-serif;font-weight:800;font-size:17px">macOS</td>
+              <td style="padding:14px 16px;border-bottom:1px solid #cfc9bb">/usr/local/bin/diaswarm-peer</td>
+              <td style="padding:14px 0 14px 16px;border-bottom:1px solid #cfc9bb">launchd/nz.diaswarm.peer.plist → ~/Library/LaunchAgents/</td>
+            </tr>
+            <tr>
+              <td style="padding:14px 16px 14px 0;border-bottom:1px solid #cfc9bb;font-family:'Atkinson Hyperlegible Next',sans-serif;font-weight:800;font-size:17px">Windows</td>
+              <td style="padding:14px 16px;border-bottom:1px solid #cfc9bb">%LOCALAPPDATA%\Programs\diaswarm\</td>
+              <td style="padding:14px 0 14px 16px;border-bottom:1px solid #cfc9bb">run windows/install-task.ps1</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p style="max-width:44em;color:#3d4146;text-wrap:pretty">Run it with no arguments and it carries a share of the pool. It can also follow a subject you've been granted and turn that into something a clinic can use:</p>
+
+      <div style="background:#0f1317;color:#e9ebe6;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:15px;line-height:1.85;padding:24px 28px;overflow-x:auto">
+        <div style="display:flex;gap:10px;padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid #262c33;font-size:12px;color:#8b939b"><span>~</span><span>$</span></div>
+        <div style="display:grid;grid-template-columns:max-content max-content;column-gap:40px;row-gap:2px;white-space:nowrap">
+          <span><span style="color:#3ad68e">diaswarm-peer</span></span><span style="color:#7b848c"># carry a share of the pool, read nothing</span>
+          <span><span style="color:#3ad68e">diaswarm-peer</span> identity</span><span style="color:#7b848c"># the string a subject grants</span>
+          <span><span style="color:#3ad68e">diaswarm-peer</span> read --subject &lt;id&gt; --days 1</span><span style="color:#7b848c"># print readings</span>
+          <span><span style="color:#3ad68e">diaswarm-peer</span> export --subject &lt;id&gt; --out day.csv</span><span style="color:#7b848c"># spreadsheet</span>
+          <span><span style="color:#3ad68e">diaswarm-peer</span> summary --subject &lt;id&gt; --days 90 --patient &lt;id&gt; --report agp.html</span><span style="color:#7b848c"># clinician report</span>
+          <span><span style="color:#3ad68e">diaswarm-peer</span> nightscout --subject &lt;id&gt; --out ./ns</span><span style="color:#7b848c"># nightscout-format files</span>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:28px 48px">
+        <p style="color:#3d4146;text-wrap:pretty"><code style="font-family:'Atkinson Hyperlegible Mono',monospace;font-weight:600;color:#1a1d20">summary</code> is the clinician's view: an HL7 CGM FHIR document — time in range, mean glucose, GMI, variability, days of wear — that validates against HL7's own validator with zero errors. Nothing here ever dials a server; these are files you choose to hand over.</p>
+        <div style="border-top:2px solid #c03d16;padding-top:14px;display:flex;flex-direction:column;gap:8px">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#c03d16">note on linux</span>
+          <p style="color:#3d4146;text-wrap:pretty">Run <code style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:15px;background:#e6e1d4;padding:2px 6px;color:#1a1d20">loginctl enable-linger "$USER"</code> after enabling the service, or systemd stops it when you log out — so an "always-on" carrier runs only while you're logged in, which on a server is rarely.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="share" style="border-bottom:1px solid #cfc9bb">
+  <div style="max-width:1280px;margin:0 auto;padding:80px 32px;display:flex;flex-wrap:wrap;gap:24px 56px">
+    <div style="flex:0 0 170px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#4d5157;display:flex;flex-direction:column;gap:4px">
+      <span style="font-size:40px;font-weight:600;color:#1a1d20;line-height:1">07</span><span>sending your own data</span>
+    </div>
+    <div style="flex:1 1 640px;min-width:0;display:flex;flex-wrap:wrap;gap:36px 56px;align-items:flex-start">
+      <div style="flex:1 1 440px;min-width:0;display:flex;flex-direction:column;gap:20px">
+        <h2 style="font-size:clamp(34px,4.2vw,54px);line-height:1.02;font-weight:800;letter-spacing:-0.03em;text-wrap:balance">To share your own loop, you run the diaswarm fork of AndroidAPS</h2>
+        <p style="font-size:20px;color:#4d5157;text-wrap:pretty">Ayni only receives. To be a <strong style="color:#1a1d20">sender</strong> — to share the glucose your own insulin-pump loop is already writing — the diaswarm module has to run inside AndroidAPS, and that means building AndroidAPS yourself.</p>
+        <p style="color:#3d4146;text-wrap:pretty"><strong style="color:#1a1d20">Building AndroidAPS from source is normal — that part isn't new.</strong> The one thing that is specific to diaswarm: you must build from <strong style="color:#1a1d20">the diaswarm fork of AndroidAPS</strong> (the <code style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:16px">diaswarm-addon</code> branch, which wires the module in), <strong style="color:#1a1d20">not upstream AndroidAPS</strong>. Upstream has no diaswarm module and cannot send.</p>
+        <p style="color:#3d4146;text-wrap:pretty">The module ships <strong style="color:#1a1d20">disabled</strong> in the fork and is structurally incapable of dosing: it holds no pump reference and has no path into the loop. It only drains your own sealed records outward, and only once you've chosen to share. Build instructions and the full safety rationale are in the project repository.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;padding-top:6px">
+          <a href="https://github.com/alex-poor/diaswarm#building-the-aaps-add-on" style="text-decoration:none;background:#1a1d20;color:#f2efe7;padding:14px 22px;font-weight:700;font-size:16px" class="hv11">Build instructions →</a>
+          <a href="https://github.com/alex-poor/diaswarm" style="text-decoration:none;border:2px solid #1a1d20;color:#1a1d20;padding:12px 20px;font-weight:700;font-size:16px" class="hv12">The diaswarm repository</a>
+        </div>
+      </div>
+      <div style="flex:0 1 320px;min-width:0;border:3px solid #c03d16;padding:24px;display:flex;flex-direction:column;gap:12px">
+        <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#c03d16">deliberately</span>
+        <p style="font-size:30px;line-height:1.05;font-weight:800;letter-spacing:-0.025em;color:#1a1d20">No pre-built loop APK. Anywhere.</p>
+        <p style="color:#3d4146;font-size:16px;text-wrap:pretty">Running a loop is running a medical device you assembled, from source you have read.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="honest">
-  <div class="wrap">
-    <p class="eyebrow">Honest about the trade</p>
-    <h2>What to know before you rely on it</h2>
-    <p class="intro">Someone may make a decision at 3&nbsp;a.m. based on what this shows, so the
-      trade-offs are stated plainly rather than buried.</p>
-    <div class="duo">
-      <div class="panel">
-        <h3>Built on proven foundations</h3>
-        <p>The hard parts aren't home-made. Transport, membership and gossip are
-          <a href="https://p2panda.org" rel="noopener">p2panda-net</a> over
-          <a href="https://www.iroh.computer" rel="noopener">iroh</a>, and the group encryption
-          that manages keys is <a href="https://p2panda.org" rel="noopener">p2panda-encryption</a>
-          — mainline, open-source libraries, not cryptography invented here. diaswarm adds a thin
-          custody layer on top of them with standard, well-known primitives (X25519,
-          ChaCha20-Poly1305). That layer hasn't yet had a formal third-party audit, so treat the
-          whole as capable, actively developed software rather than something battle-hardened.</p>
-      </div>
-      <div class="panel">
-        <h3>The honest costs</h3>
-        <ul>
-          <li><strong>A relay sees metadata</strong> — never your readings, but which devices talk and when. The default is third-party; you can run your own.</li>
-          <li><strong>Nothing can be un-published.</strong> Revocation stops <em>future</em> readings; it can't recall what was already shared.</li>
-          <li><strong>Being in the swarm is visible</strong>, even though everything you hold for others is unreadable ciphertext.</li>
-          <li><strong>Early days:</strong> no iOS yet, and storage grows over time — there's no pruning.</li>
-        </ul>
-      </div>
+  <div style="max-width:1280px;margin:0 auto;padding:80px 32px 96px;display:flex;flex-wrap:wrap;gap:24px 56px">
+    <div style="flex:0 0 170px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#4d5157;display:flex;flex-direction:column;gap:4px">
+      <span style="font-size:40px;font-weight:600;color:#1a1d20;line-height:1">08</span><span>honest about the trade</span>
     </div>
-    <p class="intro mt">The full technical assessment lives in the repository's
-      <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/feasibility.md" rel="noopener">feasibility notes</a> and <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md" rel="noopener">decision log</a>.</p>
+    <div style="flex:1 1 640px;min-width:0;display:flex;flex-direction:column;gap:48px">
+      <div style="display:flex;flex-direction:column;gap:18px">
+        <h2 style="font-size:clamp(34px,4.2vw,54px);line-height:1.02;font-weight:800;letter-spacing:-0.03em">What to know before you rely on it</h2>
+        <p style="font-size:clamp(28px,3.4vw,44px);line-height:1.15;font-weight:400;letter-spacing:-0.02em;max-width:22em;text-wrap:balance;color:#1a1d20">Someone may make a decision at <span style="font-weight:800;color:#c03d16">3 a.m.</span> based on what this shows, so the trade-offs are stated plainly rather than buried.</p>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:40px 56px">
+        <div style="border-top:2px solid #1a1d20;padding-top:18px;display:flex;flex-direction:column;gap:14px">
+          <h3 style="font-size:24px;font-weight:800;letter-spacing:-0.015em">Built on proven foundations</h3>
+          <p style="color:#3d4146;text-wrap:pretty">The hard parts aren't home-made. Transport, membership and gossip are <a href="https://p2panda.org">p2panda-net</a> over <a href="https://www.iroh.computer">iroh</a>, and the group encryption that manages keys is <a href="https://p2panda.org">p2panda-encryption</a> — mainline, open-source libraries, not cryptography invented here.</p>
+          <p style="color:#3d4146;text-wrap:pretty">diaswarm adds a thin custody layer on top of them with standard, well-known primitives (<span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:16px">X25519</span>, <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:16px">ChaCha20-Poly1305</span>). That layer hasn't yet had a formal third-party audit, so treat the whole as capable, actively developed software rather than something battle-hardened.</p>
+        </div>
+        <div style="border-top:2px solid #c03d16;padding-top:18px;display:flex;flex-direction:column">
+          <h3 style="font-size:24px;font-weight:800;letter-spacing:-0.015em;padding-bottom:6px">The honest costs</h3>
+          <p style="padding:14px 0;border-bottom:1px solid #cfc9bb;color:#3d4146;text-wrap:pretty"><strong style="color:#1a1d20">A relay sees metadata</strong> — never your readings, but which devices talk and when. The default is third-party; you can run your own.</p>
+          <p style="padding:14px 0;border-bottom:1px solid #cfc9bb;color:#3d4146;text-wrap:pretty"><strong style="color:#1a1d20">Nothing can be un-published.</strong> Revocation stops <em>future</em> readings; it can't recall what was already shared.</p>
+          <p style="padding:14px 0;border-bottom:1px solid #cfc9bb;color:#3d4146;text-wrap:pretty"><strong style="color:#1a1d20">Being in the swarm is visible</strong>, even though everything you hold for others is unreadable ciphertext.</p>
+          <p style="padding:14px 0;color:#3d4146;text-wrap:pretty"><strong style="color:#1a1d20">Early days:</strong> no iOS yet, and storage grows over time — there's no pruning.</p>
+        </div>
+      </div>
+      <p style="color:#4d5157;max-width:44em;text-wrap:pretty">The full technical assessment lives in the repository's <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/feasibility.md">feasibility notes</a> and <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md">decision log</a>.</p>
+    </div>
   </div>
 </section>
 
-<footer class="foot">
-  <div class="wrap">
-    <div>
-      <strong>Ayni</strong> · part of the diaswarm project · AGPL-3.0<br>
-      <span>Not affiliated with, endorsed by, or part of the AndroidAPS project.</span>
+<footer style="background:#0f1317;color:#a9b0b7">
+  <div style="max-width:1280px;margin:0 auto;padding:48px 32px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:28px 48px;align-items:flex-end">
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <img src="assets/icon.png" alt="" style="width:36px;height:36px;border-radius:8px;display:block">
+        <span style="font-weight:800;font-size:26px;color:#e9ebe6;letter-spacing:-0.02em">ayni</span>
+      </div>
+      <p style="font-size:15px">part of the diaswarm project · AGPL-3.0</p>
+      <p style="font-size:15px">Not affiliated with, endorsed by, or part of the AndroidAPS project.</p>
     </div>
-    <div class="links">
-      <a href="https://f-droid.org/packages/nz.diaswarm.ayni/" rel="noopener">F-Droid</a>
-      <a href="https://github.com/alex-poor/diaswarm" rel="noopener">GitHub</a>
-      <a href="https://github.com/alex-poor/diaswarm/releases" rel="noopener">Desktop releases</a>
-      <a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md" rel="noopener">Security</a>
-      <a href="https://github.com/alex-poor/diaswarm/issues" rel="noopener">Report an issue</a>
-    </div>
+    <nav style="display:flex;flex-wrap:wrap;gap:8px 24px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px">
+      <a href="https://f-droid.org/packages/nz.diaswarm.ayni/" style="color:#e9ebe6" class="hv13">F-Droid</a>
+      <a href="https://github.com/alex-poor/diaswarm" style="color:#e9ebe6" class="hv14">GitHub</a>
+      <a href="https://github.com/alex-poor/diaswarm/releases" style="color:#e9ebe6" class="hv15">Desktop releases</a>
+      <a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md" style="color:#e9ebe6" class="hv16">Security</a>
+      <a href="https://github.com/alex-poor/diaswarm/issues" style="color:#e9ebe6" class="hv17">Report an issue</a>
+    </nav>
   </div>
 </footer>
-
+<script>
+(function(){
+  var age=23,val=5.9,prev=5.8,tick=0,series=[7.27,7.38,7.2,6.99,7.03,6.97,6.83,6.89,6.95,6.9,6.92,6.92,7.01,6.82,6.71,6.76,6.79,6.54,6.58,6.53,6.68,6.77,6.55,6.52,6.67,6.71,6.73,6.71,6.85,6.97,6.85,6.72,6.82,6.69,6.49,5.9];
+  var s=99;function rnd(){s=(s*16807)%2147483647;return(s-1)/2147483646;}
+  var $=function(id){return document.getElementById(id)};
+  function y(g){return 110-((g-2)/10)*110}
+  function draw(){var p=series.map(function(g,i){return[(i/(series.length-1))*392+2,y(g)]});
+    $('spark').setAttribute('points',p.map(function(q){return q[0].toFixed(1)+','+q[1].toFixed(1)}).join(' '));
+    var l=p[p.length-1];$('spark-dot').setAttribute('cx',l[0].toFixed(1));$('spark-dot').setAttribute('cy',l[1].toFixed(1));}
+  setInterval(function(){
+    age++;tick++;
+    if(age>=180){age=0;prev=val;val=Math.max(4.4,Math.min(8.5,+(val+(rnd()-0.5)*0.4).toFixed(1)));series=series.slice(1).concat([val]);
+      var d=+(val-prev).toFixed(1);$('val').textContent=val.toFixed(1);$('delta').textContent=(d>=0?'+':'\u2212')+Math.abs(d).toFixed(1);draw();}
+    $('age').textContent=age<60?age+'s ago':Math.floor(age/60)+'m '+String(age%60).padStart(2,'0')+'s ago';
+    $('live-dot').style.opacity=tick%2?0.35:1;
+  },1000);
+})();
+</script>
 </body>
 </html>
