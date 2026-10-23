@@ -64,7 +64,7 @@ h1,h2,h3,p{margin:0}
       <p style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#8b939b">part of the diaswarm project</p>
       <h1 style="font-size:clamp(44px,6.2vw,86px);line-height:0.98;font-weight:800;letter-spacing:-0.035em;text-wrap:balance">See the glucose of someone who shares it with you.</h1>
       <p style="font-size:21px;line-height:1.5;color:#d4d8dc;max-width:36em;text-wrap:pretty">Ayni is a viewer for one person's continuous glucose — a partner, a parent, a child, someone in your care. It is nothing else: no loop, no pump, no insulin.</p>
-      <p style="color:#a9b0b7;max-width:38em;text-wrap:pretty">Readings are sealed on the sender's phone before they leave it, travel directly between phones, and only someone handed a key can open them. No account, no server holding your data, nobody in the middle who can read it.</p>
+      <p style="color:#a9b0b7;max-width:38em;text-wrap:pretty">Readings are sealed on the sender's phone before they leave it, travel directly between phones — on the same network, with no internet in the middle at all — and only someone handed a key can open them. No account, no server holding your data, nobody who can read it.</p>
       <p style="color:#a9b0b7;max-width:38em;text-wrap:pretty">It runs on a <strong style="color:#e9ebe6">swarm, not a server</strong>: every phone and desktop running it quietly seeds a slice of everyone else's sealed data. The more people take part, the more resilient everyone's readings become — and no device can read a byte it holds for anyone else.</p>
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px 28px;padding-top:6px">
         <a href="https://f-droid.org/packages/nz.diaswarm.ayni/" style="display:block;line-height:0"><img src="assets/fdroid-badge.png" alt="Get it on F-Droid" style="height:58px;display:block"></a>
@@ -168,10 +168,10 @@ h1,h2,h3,p{margin:0}
           <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em">Carried by the community</h3>
           <p style="color:#3d4146;text-wrap:pretty">Every Ayni phone and desktop peer holds a share of other people's sealed records, so your data stays reachable while your phone sleeps. More participants, more resilient — and none can read it.</p>
         </div>
-        <div style="border-top:2px solid #1a1d20;padding-top:18px;display:flex;flex-direction:column;gap:10px">
-          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#4d5157">f</span>
-          <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em">Works off your network</h3>
-          <p style="color:#3d4146;text-wrap:pretty">On the same wifi it's direct. Anywhere else, an iroh relay introduces the two phones — and still cannot read a byte.</p>
+        <div style="border-top:2px solid #0c6e45;padding-top:18px;display:flex;flex-direction:column;gap:10px">
+          <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#0c6e45">f · no internet needed</span>
+          <h3 style="font-size:23px;font-weight:800;letter-spacing:-0.015em">On the same network, phones connect directly</h3>
+          <p style="color:#3d4146;text-wrap:pretty">Two phones on the same wifi find each other and sync with <strong style="color:#1a1d20">no internet and no server at all</strong> — the <a href="https://p2panda.org">offline-first</a> property of the p2panda stack it's built on. Off that network, an iroh relay just introduces the two phones, and still cannot read a byte.</p>
         </div>
       </div>
     </div>
