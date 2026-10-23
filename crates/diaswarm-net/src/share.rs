@@ -138,6 +138,26 @@ pub async fn carry_share(
         // project has spent days misreading.
         let legacy = crate::pool::bucket_topic(depth, crate::pool::bucket_of(subject, depth));
         let _ = replicator.carry(legacy, subject).await;
+
+        // **AND THE GRANTS ON A TOPIC OF THEIR OWN.** The two topics above each
+        // carry both of a subject's logs, and `TopicLogSync` drains them in one
+        // session, segments before grants. A subject with a long history offers
+        // thousands of segment operations ahead of its handful of grants, so a
+        // follower on a link that drops before the segments are through dies
+        // inside them and never reaches the grant log — the welcome it was
+        // granted stranded in a log it cannot get to (`control_from` empty,
+        // "no grant has arrived yet", measured as 257/5063 segments and 0/76
+        // control on a phone). Carrying the control log alone on its own topic
+        // gives the grants a session that completes in one round trip whatever
+        // the segment backlog is. Additive: the segments still arrive by the
+        // topics above, exactly as before.
+        let _ = replicator
+            .carry_logs(
+                crate::pool::control_topic(subject),
+                subject,
+                &[diaswarm_keys::wire::CONTROL_LOG_ID],
+            )
+            .await;
     }
     let after = replicator.carried();
 

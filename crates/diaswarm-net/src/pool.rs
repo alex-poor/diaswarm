@@ -160,6 +160,37 @@ pub fn subject_topic(subject: &str) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// Where a subject's *control* log alone is synced: a second subject-derived
+/// topic, carrying only the grants.
+///
+/// **BECAUSE ONE SESSION PER TOPIC SENDS THE WHOLE SEGMENT LOG FIRST.**
+/// p2panda's `TopicLogSync` resolves every log a topic covers and syncs them in
+/// a single ordered session — segments (log 0) before grants (log 1), per
+/// author. A subject with a long history offers thousands of segment operations
+/// ahead of its handful of grants, so on a link that drops before the segment
+/// backlog is drained the session dies inside the segments and the grant log
+/// never transfers. Measured on a phone: a follower holding 257 of 5063
+/// segments and 0 of 76 control operations, both logs associated, the welcome
+/// stranded in the log it never reached — so `control_from` stayed empty and
+/// the reader could not join a group it had genuinely been granted.
+///
+/// A topic that resolves to the control log *alone* gives the grants their own
+/// sync session — a few dozen operations that complete in one round trip,
+/// independent of however far behind the segments are. [`subject_topic`] and
+/// the legacy bucket still carry both logs, so the segments arrive the same way
+/// they always did; this only stops the grants being held hostage to them.
+///
+/// Domain-separated from [`subject_topic`] so the two are unrelated 32-byte
+/// identifiers: a peer joins this one in addition, and a peer that has not been
+/// upgraded simply never subscribes to it (the grants then still travel the old
+/// way, slowly — this makes them reliable, it is not the only path).
+pub fn control_topic(subject: &str) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"diaswarm-control-v1");
+    h.update(subject.to_ascii_lowercase().as_bytes());
+    h.finalize().into()
+}
+
 /// The gossip topic for a bucket, as 32 bytes.
 ///
 /// Depth is mixed in so that a bucket at depth 6 and its child at depth 7 are
