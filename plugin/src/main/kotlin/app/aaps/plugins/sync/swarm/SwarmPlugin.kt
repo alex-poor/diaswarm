@@ -394,16 +394,12 @@ class SwarmPlugin @Inject constructor(
     }
 
     private fun grantedReaders(): String {
-        // TODO keys-only: this reads the CORE vault's readers book and is gated
-        // on the core vault's meta.json, which a keys-only phone never writes —
-        // so "Who can read" shows nothing post-cutover even though readers.json
-        // is still populated at grant time. There is no keysReaders JNI yet;
-        // closing this gap needs a Rust/JNI addition that lists the keys vault's
-        // granted members (or a vaultReaders variant that reads readers.json
-        // without requiring meta.json). Left as-is deliberately.
+        // KEYS-ONLY: vaultReaders now reads readers.json directly (no meta.json
+        // precondition), so "Who can read" works after the cutover — the book
+        // is still populated at grant time by vaultNoteReaderKeys/Scope. The
+        // reader/purpose/scope columns are unchanged.
         SwarmNative.check()
         val vault = SwarmPaths.vault(context, this::class.java)
-        if (!java.io.File(vault, "meta.json").exists()) return ""
         return SwarmNative.vaultReaders(vault.absolutePath)
     }
 

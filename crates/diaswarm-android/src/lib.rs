@@ -1158,11 +1158,11 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultReaders<'a>(
     vault_path: JString<'a>,
 ) -> JString<'a> {
     let Ok(v) = env.get_string(&vault_path) else { return to_jstring(env, String::new()) };
-    let Ok(vault) = Vault::open(Path::new(&String::from(v))) else {
-        return to_jstring(env, String::new());
-    };
-    let listing = vault
-        .readers()
+    // KEYS-ONLY: read the private readers book directly rather than through
+    // Vault::open, which requires a meta.json the keys-only cutover never
+    // writes. The book (readers.json) is independent and still populated at
+    // grant time, so "who can read" works with no core vault on disk.
+    let listing = diaswarm_core::vault::read_readers_book(Path::new(&String::from(v)))
         .unwrap_or_default()
         .iter()
         // Three fields now. The scope is "" when nobody wrote it down, which

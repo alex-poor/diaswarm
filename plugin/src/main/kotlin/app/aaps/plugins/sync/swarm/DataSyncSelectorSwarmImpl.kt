@@ -237,6 +237,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         SwarmNative.check()
         emitter = SwarmNative.emitterNew(preferences.get(SwarmLongKey.CgmBucketHighWater))
         try {
+            // DURABILITY: reload any records that were drained and buffered on a
+            // previous run but not yet sealed (process killed between passes).
+            // Must happen BEFORE this pass drains, so this pass's own records are
+            // not double-counted against the on-disk buffer. Once per process.
+            restorePendingOnce()
             backfillIfShadowJustEnabled()
             drained.clear()
             drainedThisPass = 0
@@ -362,6 +367,18 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      */
     private val shadowPending = mutableMapOf<Long, StringBuilder>()
     private var shadowSealedAt = 0L
+
+    /**
+     * Durable mirror of [shadowPending]: one file per epoch under
+     * files/diaswarm/keys-pending, each holding records drained for that epoch
+     * but not yet confirmed sealed into the keys vault. Written before the seal
+     * and deleted only once the vault confirms it holds the epoch, so a process
+     * killed between draining and sealing re-seals on the next run rather than
+     * losing the records — the per-source high-water marks advance at drain
+     * time, so an in-memory-only buffer would otherwise be unrecoverable.
+     */
+    private val pendingDir: File by lazy { File(storage, "keys-pending") }
+    private var pendingRestored = false
 
     /**
      * The most a single pass will drain before stopping and coming back.
@@ -647,7 +664,15 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         // real one and the shadow was discardable; that is no longer true.)
         try {
         for ((epoch, body) in pending) {
-            shadowPending.getOrPut(epoch) { StringBuilder() }.append(body.toString())
+            val text = body.toString()
+            shadowPending.getOrPut(epoch) { StringBuilder() }.append(text)
+            // DURABLE MIRROR: append this pass's records for the epoch to disk
+            // BEFORE the seal. If the seal cannot happen (pool down) or the
+            // process dies before it, the records survive on disk and re-seal on
+            // a later pass — the per-source marks have already advanced, so an
+            // in-memory-only buffer would otherwise be lost. The file is deleted
+            // only once the keys vault CONFIRMS it holds the epoch (flushShadow).
+            persistPendingAppend(epoch, text)
         }
             flushShadow(shadow)
         } finally {
@@ -786,7 +811,17 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         if (ready.isEmpty()) return
 
         for (epoch in ready) {
-            shadowPending.remove(epoch)?.let { shadowSeal(handle, epoch, it.toString()) }
+            val text = shadowPending[epoch]?.toString() ?: continue
+            // ONLY DROP IT ONCE IT IS SAFE. shadowSeal returns true when the
+            // keys vault confirmed it holds every record (missing 0, lost 0).
+            // On anything less the buffer stays — in memory AND on disk — and is
+            // retried next pass, rather than being removed before sealing (which
+            // is what the old `remove().let { seal }` did: a failed seal lost the
+            // records outright). A confirmed seal deletes the durable copy.
+            if (shadowSeal(handle, epoch, text)) {
+                shadowPending.remove(epoch)
+                persistPendingDelete(epoch)
+            }
         }
         shadowSealedAt = now
     }
@@ -810,8 +845,17 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * `keysSealChecked` seals, re-opens the segment from disk, and counts what
      * did not come back.
      */
-    private fun shadowSeal(handle: Long, epoch: Long, ndjson: String) {
-        if (handle == 0L || ndjson.isBlank()) return
+    /**
+     * Seal one epoch into the keys vault and read it back.
+     *
+     * Returns true ONLY when the vault confirmed it holds every record handed
+     * to it (ok, missing 0, lost 0). The caller uses that to decide whether the
+     * durable buffer for the epoch may be dropped: anything less — a failure, an
+     * unreadable report, a throw, or a partial survival — returns false so the
+     * records are retried rather than lost.
+     */
+    private fun shadowSeal(handle: Long, epoch: Long, ndjson: String): Boolean {
+        if (handle == 0L || ndjson.isBlank()) return false
         try {
             val report = SwarmNative.keysSealChecked(handle, epoch, ndjson)
             val fields = report.split(' ')
@@ -821,7 +865,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             if (!report.startsWith("ok ")) {
                 shadowFailures += 1
                 aapsLogger.error(LTag.CORE, "swarm: shadow seal: $report")
-                return
+                return false
             }
             // **A REPORT THIS CANNOT READ IS A FAILURE, NOT A ZERO.** Falling
             // back to 0 for a field that is not there turns "the Kotlin and the
@@ -836,7 +880,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             if (given == null || held == null || missing == null || lost == null) {
                 shadowFailures += 1
                 aapsLogger.error(LTag.CORE, "swarm: shadow report not understood: $report")
-                return
+                return false
             }
             shadowSealed += given
             shadowHeld += held
@@ -852,12 +896,81 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             if (missing > 0 || lost > 0) {
                 aapsLogger.error(LTag.CORE, "swarm: shadow DISAGREES: $report")
             }
+            // CONFIRMED only when nothing was missing or lost. The caller keeps
+            // the durable buffer for a later retry otherwise.
+            return missing == 0L && lost == 0L
         } catch (e: Throwable) {
             // CAUGHT, INCLUDING ERRORS. This runs on a phone driving an insulin
             // pump and is worth precisely nothing; an UnsatisfiedLinkError from
             // a stale .so must not take the sync worker down with it.
             shadowFailures += 1
             aapsLogger.error(LTag.CORE, "swarm: shadow seal threw: $e")
+            return false
+        }
+    }
+
+    /** Append this pass's records for an epoch to its durable buffer on disk. */
+    private fun persistPendingAppend(epoch: Long, text: String) {
+        if (text.isEmpty()) return
+        try {
+            val dir = pendingDir
+            if (!dir.exists()) dir.mkdirs()
+            File(dir, epoch.toString()).appendText(text)
+        } catch (e: Throwable) {
+            // Best-effort: if the write fails the in-memory buffer still seals
+            // this pass; only a crash before that seal would then lose it, which
+            // is no worse than the pre-cutover behaviour.
+            aapsLogger.error(LTag.CORE, "swarm: could not persist unsealed records for epoch $epoch: $e")
+        }
+    }
+
+    /** Drop an epoch's durable buffer once the keys vault has confirmed it. */
+    private fun persistPendingDelete(epoch: Long) {
+        try {
+            File(pendingDir, epoch.toString()).delete()
+        } catch (e: Throwable) {
+            // Harmless if it lingers: a stale file only causes the epoch to be
+            // re-sealed with records the vault already holds, and a follower
+            // dedups those on read (by timestamp).
+            aapsLogger.error(LTag.CORE, "swarm: could not delete sealed buffer for epoch $epoch: $e")
+        }
+    }
+
+    /**
+     * Reload unsealed records left on disk by a previous run into [shadowPending].
+     *
+     * Once per process, and BEFORE this process drains anything, so a pass's own
+     * freshly drained records are not counted twice against the file it is about
+     * to append to.
+     */
+    private fun restorePendingOnce() {
+        if (pendingRestored) return
+        pendingRestored = true
+        val files = try {
+            if (!pendingDir.exists()) return
+            pendingDir.listFiles()
+        } catch (e: Throwable) {
+            aapsLogger.error(LTag.CORE, "swarm: could not list persisted pending buffers: $e")
+            return
+        } ?: return
+        var restored = 0
+        for (f in files) {
+            val epoch = f.name.toLongOrNull() ?: continue
+            val text = try {
+                f.readText()
+            } catch (e: Throwable) {
+                aapsLogger.error(LTag.CORE, "swarm: could not read persisted buffer ${f.name}: $e")
+                continue
+            }
+            if (text.isEmpty()) {
+                f.delete()
+                continue
+            }
+            shadowPending.getOrPut(epoch) { StringBuilder() }.append(text)
+            restored += text.count { it == '\n' }
+        }
+        if (restored > 0) {
+            aapsLogger.info(LTag.CORE, "swarm: restored $restored unsealed record(s) from disk to re-seal")
         }
     }
 
