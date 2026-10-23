@@ -1276,6 +1276,26 @@ This narrows what a *new* grant hands over. [`Vault::revoke`] is what bites.
 Step 1 is worth having even if step 2 stalls. Step 3 without step 2 is a
 misrepresentation, which is why it is third rather than merely last.
 
+#### ✅ Step 1 shipped — `diaswarm-peer`, and it tracks the wire, not semver
+
+The desktop peer is released: `crates/diaswarm-peer`, native builds for five
+targets attached to a GitHub release by `peer.yml` on a `peer-v*` tag. It carries
+a share of the pool, follows a granted subject, and emits the clinician outputs
+(AGP / CGM-FHIR / Nightscout / CSV). Step 2's `grant_since` is in it too, so a
+follow can already be scoped.
+
+**IT IS VERSIONED TO THE PROTOCOL, NOT TO ITS OWN FEATURES.** Because it links the
+same `diaswarm-core`/`-net`/`-keys` as the phone, compatibility is the wire
+protocol, not semver — so the peer's crate version is set to **match the
+follower's protocol generation**, and must be re-cut whenever that bumps.
+`peer-v0.1.0` was cut before the `follower-v0.1.7` wire changes and could not
+carry for a 0.1.7 phone; the live release is **`peer-v0.1.7`**, built from the
+same commit as Ayni 0.1.7. `peer.yml` fails the build unless the tag equals the
+crate version.
+
+*Reopens if:* the carry and clinician halves diverge enough to want separate
+release cadences — today one binary is both.
+
 **And [D5](#d5--the-commons-is-a-gateway-not-a-bigger-phone)'s constraint stands
 over all of it:** the gateway is how data comes *back* — cohort baselines, and a
 record of what somebody's data supported. *"A commons that only takes is the
@@ -1592,10 +1612,30 @@ from the removed SmsCommunicator. The invite QR is now encoded with
 `kulid` looked like blockers and were not — declared in the version catalog,
 referenced by nothing, never resolved.
 
-**What still stands between this and F-Droid**, so nobody reads the above as
-"done": F-Droid builds one repository and this is two, which needs `srclibs` in
-the metadata; a tagged release with a monotonic versionCode; and their build
-server has to complete an AAPS build. Only the dependency half is settled.
+**What stood between this and F-Droid**, when this was written: F-Droid builds
+one repository and this is two, which needs `srclibs` in the metadata; a tagged
+release with a monotonic versionCode; and their build server has to complete an
+AAPS build.
+
+#### ✅ Published, 2026-10-22 — and under a new name
+
+All three are resolved and **Ayni is live on F-Droid as `nz.diaswarm.ayni`**:
+`srclibs` pulls the AAPS fork, the per-ABI versionCode is monotonic (base × 10 +
+ABI), and F-Droid's server completes the AAPS build and signs with their own key.
+The recipe is pinned to the 0.1.7 commit hash, not the tag.
+
+**THE APP WAS RENAMED, AND THE applicationId CHANGED WITH IT.** The viewer is now
+**Ayni** (Quechua for reciprocity — see [D30](#d30--if-you-read-it-you-carry-it--ayni-as-an-invariant)),
+`applicationId = "nz.diaswarm.ayni"`, deliberately nothing like `info.nightscout.*`
+so it is not mistaken for AAPS in a launcher or package list. Android treats a
+changed applicationId as a different app, so this is permanent: **0.1.0 shipped
+under `nz.diaswarm.follower` and stands as history with no update path; 0.1.1 was
+the first Ayni, and the live release is 0.1.7.** The Kotlin namespace stays
+`nz.diaswarm.follower` — only the published identity moved.
+
+*Reopens if:* the next-push store-description reformat (tracked in
+[fdroid-review-readiness.md](fdroid-review-readiness.md)) or a reproducible-build
+request from F-Droid changes what the recipe has to assert.
 
 ### D23 · Peers meet through a relay, not only on the same wifi
 

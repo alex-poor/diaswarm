@@ -2,17 +2,27 @@
 
 ## The state of this, plainly
 
-**The cryptography here has not been reviewed by anyone qualified.** It is
-standard primitives — X25519, HKDF-SHA256, ChaCha20-Poly1305, Ed25519 — composed
-by hand into a scheme nobody has audited. It is tested, it is documented, and
-two independent implementations agree byte for byte. None of that is a review.
+**The foundations are mainline, the thin layer on top is not audited.** The hard
+parts are not home-made: transport, membership and gossip are
+[p2panda-net](https://p2panda.org) over [iroh](https://www.iroh.computer), and the
+group encryption that manages and rotates keys is
+[p2panda-encryption](https://p2panda.org) — open-source libraries, not
+cryptography invented here. On top of them diaswarm adds a **segment-custody
+layer** of its own, composed from standard primitives (X25519, HKDF-SHA256,
+ChaCha20-Poly1305; Ed25519 header signing comes from p2panda-core).
+
+**That custody layer has had no formal third-party review.** It is tested, it is
+documented, and two independent implementations agree byte for byte — none of
+that is an audit. So the novel composition is the part to distrust, not the
+primitives and not the p2panda stack beneath it.
 
 This project is about diabetes data. Being wrong about who can read it is a real
-harm to real people, so nothing here should be described as secure until
+harm to real people, so the composition should not be described as secure until
 somebody who does this for a living has said so.
 
-**If you are deciding whether to trust this with your data today: don't, unless
-you are willing to be the person who finds the problem.**
+**If you are deciding whether to trust this with your data today:** treat it as
+capable, actively developed software, not something battle-hardened — and if you
+rely on it, be ready to be the person who finds the problem.
 
 ## Reporting something
 
