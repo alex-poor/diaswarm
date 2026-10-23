@@ -2,7 +2,6 @@ package app.aaps.plugins.sync.swarm
 
 import android.content.Context
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.plugins.sync.swarm.keys.SwarmBooleanKey
 import nz.diaswarm.jni.SwarmNative
 import java.io.File
 import java.util.TimeZone
@@ -28,13 +27,14 @@ object SwarmKeys {
     /**
      * This phone's keys identity for an invite, or empty.
      *
-     * **EMPTY UNLESS THE KEYS VAULT IS ACTUALLY BEING WRITTEN**, and empty
-     * means a v2 invite — which every build already installed can read. Only a
-     * phone that can genuinely grant on the keys vault emits something older
-     * builds refuse, and they then say so clearly rather than half-working.
+     * KEYS-ONLY CUTOVER: the keys vault is now the only (authoritative) vault,
+     * so this always provides the identity — every invite is v3+ and carries
+     * the keys bundle. Empty here means only "not serving yet" (no pool), never
+     * "feature off". The [preferences] parameter is retained for call-site
+     * compatibility and is no longer read.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun identity(context: Context, preferences: Preferences): String {
-        if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return ""
         val pool = SwarmEndpoint.handle
         if (pool == 0L) return ""
         return try {
