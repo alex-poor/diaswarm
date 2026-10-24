@@ -12,7 +12,6 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sync.DataSyncSelector
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.plugins.sync.swarm.keys.SwarmBooleanKey
 import app.aaps.plugins.sync.swarm.keys.SwarmLongKey
 import app.aaps.plugins.sync.swarm.keys.SwarmStringKey
 import org.json.JSONObject
@@ -238,6 +237,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         SwarmNative.check()
         emitter = SwarmNative.emitterNew(preferences.get(SwarmLongKey.CgmBucketHighWater))
         try {
+            // DURABILITY: reload any records that were drained and buffered on a
+            // previous run but not yet sealed (process killed between passes).
+            // Must happen BEFORE this pass drains, so this pass's own records are
+            // not double-counted against the on-disk buffer. Once per process.
+            restorePendingOnce()
             backfillIfShadowJustEnabled()
             drained.clear()
             drainedThisPass = 0
@@ -365,6 +369,18 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private var shadowSealedAt = 0L
 
     /**
+     * Durable mirror of [shadowPending]: one file per epoch under
+     * files/diaswarm/keys-pending, each holding records drained for that epoch
+     * but not yet confirmed sealed into the keys vault. Written before the seal
+     * and deleted only once the vault confirms it holds the epoch, so a process
+     * killed between draining and sealing re-seals on the next run rather than
+     * losing the records — the per-source high-water marks advance at drain
+     * time, so an in-memory-only buffer would otherwise be unrecoverable.
+     */
+    private val pendingDir: File by lazy { File(storage, "keys-pending") }
+    private var pendingRestored = false
+
+    /**
      * The most a single pass will drain before stopping and coming back.
      *
      * **A BOUND, NOT A TUNING KNOB.** A full re-drain of 74 days is 31,000
@@ -399,7 +415,9 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * in the backfill.
      */
     private fun backfillIfShadowJustEnabled() {
-        if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return
+        // KEYS-ONLY: the keys vault is always on, so this always runs once per
+        // generation — it fills the keys vault from existing history the first
+        // time this build runs. (Previously gated on the ShadowSpacesVault toggle.)
         if (preferences.get(SwarmLongKey.ShadowFilled) == SHADOW_GENERATION) return
 
         // A GENERATION, NOT A FLAG, AND NOT A TRANSITION.
@@ -615,8 +633,6 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     }
 
     private fun sealPending() {
-        val vault = SwarmPaths.vault(context, this::class.java).absolutePath
-        val identity = SwarmPaths.identity(context).absolutePath
         val shadow = openShadow()
         rotateIfDue(shadow)
         ensureEachDayCarriesItsProfile()
@@ -638,17 +654,25 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         // before the preference was switched on came along with the rest.
         // Harmless in itself — `missing 0` — and the only visible symptom of
         // something that is not harmless at all.
-        if (shadow == 0L) shadowPending.clear()
+        // KEYS-ONLY CUTOVER: the keys (p2panda) vault is authoritative now; the
+        // hand-rolled core-vault seal (SwarmNative.vaultSeal) is gone. Every
+        // pass's records are accumulated into the keys buffer UNCONDITIONALLY —
+        // even if the keys vault could not open this pass (pool still coming
+        // up, shadow == 0), the records stay queued in `shadowPending` and seal
+        // on a later pass via flushShadow, so nothing is dropped. (The old code
+        // cleared shadowPending when shadow == 0 because the core vault was the
+        // real one and the shadow was discardable; that is no longer true.)
         try {
         for ((epoch, body) in pending) {
             val text = body.toString()
-            if (shadow != 0L) shadowPending.getOrPut(epoch) { StringBuilder() }.append(text)
-            val n = SwarmNative.vaultSeal(vault, identity, epoch, offsetMs, text)
-            if (n < 0) {
-                aapsLogger.error(LTag.CORE, "swarm: sealing epoch $epoch failed with $n")
-            } else {
-                aapsLogger.info(LTag.CORE, "swarm: sealed epoch $epoch, $n records")
-            }
+            shadowPending.getOrPut(epoch) { StringBuilder() }.append(text)
+            // DURABLE MIRROR: append this pass's records for the epoch to disk
+            // BEFORE the seal. If the seal cannot happen (pool down) or the
+            // process dies before it, the records survive on disk and re-seal on
+            // a later pass — the per-source marks have already advanced, so an
+            // in-memory-only buffer would otherwise be lost. The file is deleted
+            // only once the keys vault CONFIRMS it holds the epoch (flushShadow).
+            persistPendingAppend(epoch, text)
         }
             flushShadow(shadow)
         } finally {
@@ -661,7 +685,10 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             if (shadow != 0L) SwarmNative.keysClose(shadow)
         }
         pending.clear()
-        aapsLogger.info(LTag.CORE, "swarm: ${SwarmNative.vaultStatus(vault)}")
+        // KEYS-ONLY: the core-vault status line (SwarmNative.vaultStatus) is
+        // gone with the core seal. The keys-vault integrity verdict below —
+        // "given/holds/missing/lost", from reading every sealed record back off
+        // disk — is now the authoritative "did every record survive" check.
         // ONE LINE THAT SAYS WHETHER IT AGREED, which is what four doc
         // comments and a user-facing preference summary have always claimed
         // this printed.
@@ -696,7 +723,8 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * immediately. The symptom is a plugin that has silently stopped.
      */
     private fun openShadow(): Long {
-        if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return 0L
+        // KEYS-ONLY: always attempt to open the keys vault (it is authoritative
+        // now). 0 means only "no pool yet", never "feature off".
         return try {
             // **THE KEYS VAULT, NOT THE SPACES ONE.** D26 decided against the
             // spaces message layer — it cannot express a follower who reads
@@ -783,7 +811,17 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         if (ready.isEmpty()) return
 
         for (epoch in ready) {
-            shadowPending.remove(epoch)?.let { shadowSeal(handle, epoch, it.toString()) }
+            val text = shadowPending[epoch]?.toString() ?: continue
+            // ONLY DROP IT ONCE IT IS SAFE. shadowSeal returns true when the
+            // keys vault confirmed it holds every record (missing 0, lost 0).
+            // On anything less the buffer stays — in memory AND on disk — and is
+            // retried next pass, rather than being removed before sealing (which
+            // is what the old `remove().let { seal }` did: a failed seal lost the
+            // records outright). A confirmed seal deletes the durable copy.
+            if (shadowSeal(handle, epoch, text)) {
+                shadowPending.remove(epoch)
+                persistPendingDelete(epoch)
+            }
         }
         shadowSealedAt = now
     }
@@ -807,8 +845,17 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * `keysSealChecked` seals, re-opens the segment from disk, and counts what
      * did not come back.
      */
-    private fun shadowSeal(handle: Long, epoch: Long, ndjson: String) {
-        if (handle == 0L || ndjson.isBlank()) return
+    /**
+     * Seal one epoch into the keys vault and read it back.
+     *
+     * Returns true ONLY when the vault confirmed it holds every record handed
+     * to it (ok, missing 0, lost 0). The caller uses that to decide whether the
+     * durable buffer for the epoch may be dropped: anything less — a failure, an
+     * unreadable report, a throw, or a partial survival — returns false so the
+     * records are retried rather than lost.
+     */
+    private fun shadowSeal(handle: Long, epoch: Long, ndjson: String): Boolean {
+        if (handle == 0L || ndjson.isBlank()) return false
         try {
             val report = SwarmNative.keysSealChecked(handle, epoch, ndjson)
             val fields = report.split(' ')
@@ -818,7 +865,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             if (!report.startsWith("ok ")) {
                 shadowFailures += 1
                 aapsLogger.error(LTag.CORE, "swarm: shadow seal: $report")
-                return
+                return false
             }
             // **A REPORT THIS CANNOT READ IS A FAILURE, NOT A ZERO.** Falling
             // back to 0 for a field that is not there turns "the Kotlin and the
@@ -833,7 +880,7 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             if (given == null || held == null || missing == null || lost == null) {
                 shadowFailures += 1
                 aapsLogger.error(LTag.CORE, "swarm: shadow report not understood: $report")
-                return
+                return false
             }
             shadowSealed += given
             shadowHeld += held
@@ -849,12 +896,81 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             if (missing > 0 || lost > 0) {
                 aapsLogger.error(LTag.CORE, "swarm: shadow DISAGREES: $report")
             }
+            // CONFIRMED only when nothing was missing or lost. The caller keeps
+            // the durable buffer for a later retry otherwise.
+            return missing == 0L && lost == 0L
         } catch (e: Throwable) {
             // CAUGHT, INCLUDING ERRORS. This runs on a phone driving an insulin
             // pump and is worth precisely nothing; an UnsatisfiedLinkError from
             // a stale .so must not take the sync worker down with it.
             shadowFailures += 1
             aapsLogger.error(LTag.CORE, "swarm: shadow seal threw: $e")
+            return false
+        }
+    }
+
+    /** Append this pass's records for an epoch to its durable buffer on disk. */
+    private fun persistPendingAppend(epoch: Long, text: String) {
+        if (text.isEmpty()) return
+        try {
+            val dir = pendingDir
+            if (!dir.exists()) dir.mkdirs()
+            File(dir, epoch.toString()).appendText(text)
+        } catch (e: Throwable) {
+            // Best-effort: if the write fails the in-memory buffer still seals
+            // this pass; only a crash before that seal would then lose it, which
+            // is no worse than the pre-cutover behaviour.
+            aapsLogger.error(LTag.CORE, "swarm: could not persist unsealed records for epoch $epoch: $e")
+        }
+    }
+
+    /** Drop an epoch's durable buffer once the keys vault has confirmed it. */
+    private fun persistPendingDelete(epoch: Long) {
+        try {
+            File(pendingDir, epoch.toString()).delete()
+        } catch (e: Throwable) {
+            // Harmless if it lingers: a stale file only causes the epoch to be
+            // re-sealed with records the vault already holds, and a follower
+            // dedups those on read (by timestamp).
+            aapsLogger.error(LTag.CORE, "swarm: could not delete sealed buffer for epoch $epoch: $e")
+        }
+    }
+
+    /**
+     * Reload unsealed records left on disk by a previous run into [shadowPending].
+     *
+     * Once per process, and BEFORE this process drains anything, so a pass's own
+     * freshly drained records are not counted twice against the file it is about
+     * to append to.
+     */
+    private fun restorePendingOnce() {
+        if (pendingRestored) return
+        pendingRestored = true
+        val files = try {
+            if (!pendingDir.exists()) return
+            pendingDir.listFiles()
+        } catch (e: Throwable) {
+            aapsLogger.error(LTag.CORE, "swarm: could not list persisted pending buffers: $e")
+            return
+        } ?: return
+        var restored = 0
+        for (f in files) {
+            val epoch = f.name.toLongOrNull() ?: continue
+            val text = try {
+                f.readText()
+            } catch (e: Throwable) {
+                aapsLogger.error(LTag.CORE, "swarm: could not read persisted buffer ${f.name}: $e")
+                continue
+            }
+            if (text.isEmpty()) {
+                f.delete()
+                continue
+            }
+            shadowPending.getOrPut(epoch) { StringBuilder() }.append(text)
+            restored += text.count { it == '\n' }
+        }
+        if (restored > 0) {
+            aapsLogger.info(LTag.CORE, "swarm: restored $restored unsealed record(s) from disk to re-seal")
         }
     }
 
@@ -887,16 +1003,13 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         // **CARRY THE KEYS LOGS TOO.** Without this the replicator exists,
         // subscribes to nothing, and every keys read finds an empty store —
         // which looks exactly like "not granted yet".
-        // **NOT CALLED AT ALL WHEN THE FEATURE IS OFF.** It returned -3 every
-        // pass and logged it, which is harmless and is still this feature
-        // running on a phone whose owner switched it off. The gate belongs at
-        // the caller, not in the error path.
-        if (preferences.get(SwarmBooleanKey.ShadowSpacesVault)) {
+        // KEYS-ONLY: always carry the keys logs — they are the data now.
+        // (Previously gated on the ShadowSpacesVault toggle.)
         val carried = SwarmNative.keysCarryAll(
             handle,
             SwarmPaths.store(context).absolutePath,
             SwarmPaths.identity(context).absolutePath,
-            // The same budget this pass gives the core vault above.
+            // The same budget this pass gives the pool above.
             2
         )
         // **SAY WHAT IT DID, NOT ONLY WHEN IT FAILED.** The first version of
@@ -908,7 +1021,6 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             carried < 0 -> aapsLogger.info(LTag.CORE, "swarm: keys carry unavailable ($carried)")
             carried == 0L -> aapsLogger.info(LTag.CORE, "swarm: keys carrying nothing")
             else -> aapsLogger.info(LTag.CORE, "swarm: keys carrying $carried log(s)")
-        }
         }
 
         val f = report.split('\t')
@@ -1028,7 +1140,10 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
      * member" look identical from the outside and only one of them is fine.
      */
     private fun revokeOnKeys(who: String) {
-        if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return
+        // KEYS-ONLY: the keys vault is the only vault, so withdrawal always
+        // targets it. The reader's keys identity is still looked up in the
+        // local readers book (readers.json) — the keys vault has no readers
+        // book of its own yet (no keysReaders JNI).
         val theirKeys = try {
             SwarmNative.vaultReaderKeys(
                 SwarmPaths.vault(context, this::class.java).absolutePath,
@@ -1079,7 +1194,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private val grantedHandovers = mutableSetOf<String>()
 
     private fun applyHandovers() {
-        if (!preferences.get(SwarmBooleanKey.ShadowSpacesVault)) return
+        // KEYS-ONLY: always process handovers — this is how an existing reader
+        // (granted on the old core vault before the cutover, or any follower
+        // that already follows us) is granted on the keys vault with nobody
+        // scanning anything. Verification is still against the local readers
+        // book (readers.json).
         val verified = try {
             SwarmNative.vaultAcceptHandovers(
                 SwarmPaths.store(context).absolutePath,
@@ -1146,79 +1265,74 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     private fun applyPendingGrants() {
         applyHandovers()
         val vault = SwarmPaths.vault(context, this::class.java).absolutePath
-        val identity = SwarmPaths.identity(context).absolutePath
 
         preferences.get(SwarmStringKey.GrantReader).trim().takeIf { it.isNotEmpty() }?.let { asked ->
-            // Either a bare 64-hex reader key, as this field has always taken,
-            // or a whole invite scanned from their screen. An invite carries
-            // where they are as well as who they are, which is what lets this
-            // finish the job without them scanning anything back.
+            // A whole invite scanned/pasted from their screen (or a bare key).
+            // KEYS-ONLY CUTOVER: granting now happens ONLY on the keys (p2panda)
+            // vault, which needs the reader's keys bundle — carried in a v3+
+            // invite. The hand-rolled core-vault grant (vaultGrant) is gone.
             val fields = SwarmNative.inviteParse(asked).split('\t')
             val who = fields.getOrNull(0)?.takeIf { it.isNotEmpty() } ?: asked
-
-            val n = SwarmNative.vaultGrant(vault, identity, who, PURPOSE)
             preferences.put(SwarmStringKey.GrantReader, "")
-            if (n < 0) {
-                aapsLogger.error(LTag.CORE, "swarm: grant refused ($n) for ${who.take(16)}…")
+
+            val theirKeys = fields.getOrNull(4).orEmpty()
+            if (theirKeys.isEmpty()) {
+                // No keys bundle = an old-format (v1/v2) invite or a bare key.
+                // There is nothing to grant against on the keys vault, so say so
+                // plainly instead of silently half-working (the old core-only
+                // grant that used to happen here is gone).
+                aapsLogger.error(
+                    LTag.CORE,
+                    "swarm: cannot share with ${who.take(16)}… — this code carries no vault " +
+                        "identity (old-format invite). Ask them for a new-vault (keys) code."
+                )
                 return@let
             }
-            aapsLogger.info(LTag.CORE, "swarm: granted ${who.take(16)}… — $n wraps published")
 
-            // **AND ON THE KEYS VAULT TOO, IF THEY PUBLISHED AN IDENTITY.**
-            // Without this a scan grants half of what the invite offers: the
-            // reader gets wraps for the old vault and is not a member of the
-            // new one, so the day the old vault goes away they stop reading
-            // with nothing to say why. Empty is a v1 or v2 invite — somebody
-            // whose app has no keys vault — and is not a failure.
-            val theirKeys = fields.getOrNull(4).orEmpty()
-            if (theirKeys.isNotEmpty()) {
-                val handle = openShadow()
-                if (handle == 0L) {
-                    aapsLogger.error(LTag.CORE, "swarm: keys grant skipped — no keys vault")
-                } else {
-                    try {
-                        // **SCOPED, IF THE SUBJECT HAS CHOSEN A WINDOW.**
-                        // 0 is everything and is the default, because that is
-                        // what this did yesterday — narrowing silently would
-                        // take history from people already relying on it. See
-                        // [SwarmLongKey.KeysGrantDays], and note the window is
-                        // only as fine as `rotateIfDue`'s cadence.
-                        val days =
-                            preferences.get(SwarmStringKey.GrantWindowDays).toLongOrNull() ?: 0L
-                        val tag = if (days > 0) {
-                            SwarmNative.keysGrantSince(handle, theirKeys, PURPOSE, days)
-                        } else {
-                            SwarmNative.keysGrant(handle, theirKeys, PURPOSE)
-                        }
-                        if (tag.startsWith("error")) {
-                            aapsLogger.error(LTag.CORE, "swarm: keys grant failed: $tag")
-                        } else {
-                            // **WRITTEN DOWN HERE, where both halves are in
-                            // hand.** The tag is derived and so never needs
-                            // keeping; the identity it is derived FROM does, or
-                            // withdrawing later has nobody to name. This is the
-                            // only moment a scan has it.
-                            SwarmNative.vaultNoteReaderKeys(vault, who, PURPOSE, theirKeys)
-                            // **AND WHAT THEY CAN OPEN**, in the same breath
-                            // and for the same reason: this is the only moment
-                            // that holds both the reader and the window. Show
-                            // readers had no way to answer "what did I share
-                            // with them?" without it. Widens only — see
-                            // [SwarmNative.vaultNoteReaderScope].
-                            SwarmNative.vaultNoteReaderScope(vault, who, PURPOSE, days)
-                            aapsLogger.info(
-                                LTag.CORE,
-                                "swarm: keys granted as ${tag.take(16)}… — " +
-                                    if (days > 0) "last $days day(s)" else "whole history"
-                            )
-                        }
-                    } catch (e: Throwable) {
-                        aapsLogger.error(LTag.CORE, "swarm: keys grant threw: $e")
-                    } finally {
-                        SwarmNative.keysClose(handle)
-                    }
-                }
+            val handle = openShadow()
+            if (handle == 0L) {
+                aapsLogger.error(
+                    LTag.CORE,
+                    "swarm: cannot share yet — the keys vault is not open (is the plugin " +
+                        "serving and the pool up?). Try sharing again in a moment."
+                )
+                return@let
             }
+            val granted = try {
+                // SCOPED IF A WINDOW WAS CHOSEN; 0 = whole history (the default,
+                // because narrowing silently would take history from people
+                // already relying on it). Only as fine as rotateIfDue's cadence.
+                val days = preferences.get(SwarmStringKey.GrantWindowDays).toLongOrNull() ?: 0L
+                val tag = if (days > 0) {
+                    SwarmNative.keysGrantSince(handle, theirKeys, PURPOSE, days)
+                } else {
+                    SwarmNative.keysGrant(handle, theirKeys, PURPOSE)
+                }
+                if (tag.startsWith("error")) {
+                    aapsLogger.error(LTag.CORE, "swarm: keys grant failed: $tag")
+                    false
+                } else {
+                    // The local readers book (readers.json) still records the
+                    // reader, their keys identity and the scope: revokeOnKeys and
+                    // the "Who can read" screen read it, and the keys vault has
+                    // no readers book of its own yet. This is the only moment
+                    // that holds both the reader and the window.
+                    SwarmNative.vaultNoteReaderKeys(vault, who, PURPOSE, theirKeys)
+                    SwarmNative.vaultNoteReaderScope(vault, who, PURPOSE, days)
+                    aapsLogger.info(
+                        LTag.CORE,
+                        "swarm: shared with ${who.take(16)}… as ${tag.take(16)}… — " +
+                            if (days > 0) "last $days day(s)" else "whole history"
+                    )
+                    true
+                }
+            } catch (e: Throwable) {
+                aapsLogger.error(LTag.CORE, "swarm: keys grant threw: $e")
+                false
+            } finally {
+                SwarmNative.keysClose(handle)
+            }
+            if (!granted) return@let
 
             // AND TELL THEM WHERE TO LOOK. Granting somebody who cannot find
             // you is half a share; they would otherwise have to scan a second
@@ -1258,20 +1372,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         }
 
         preferences.get(SwarmStringKey.RevokeReader).trim().takeIf { it.isNotEmpty() }?.let { who ->
-            val from = SwarmNative.vaultRevoke(vault, identity, who, PURPOSE)
             preferences.put(SwarmStringKey.RevokeReader, "")
-            if (from < 0) aapsLogger.error(LTag.CORE, "swarm: withdrawal refused ($from)")
-            else aapsLogger.info(
-                LTag.CORE,
-                "swarm: withdrew ${who.take(16)}… from segment $from — immediate"
-            )
-            // **AND FROM THE KEYS VAULT, WHICH IS WHERE THE DATA IS GOING.**
-            // Without this, withdrawing after the cutover removes somebody from
-            // the vault that no longer holds anything and leaves them reading
-            // the one that does — the exact mirror of the scan that used to
-            // grant on only one of the two. Attempted even when the core half
-            // failed: the two are independent, and half a withdrawal is still
-            // better than none.
+            // KEYS-ONLY: withdrawal targets the keys vault only — the hand-rolled
+            // core-vault revoke (vaultRevoke) is gone. revokeOnKeys looks the
+            // reader's keys identity up in the local readers book and removes
+            // them from the group (which rotates, so it bites the current day).
             revokeOnKeys(who)
         }
     }

@@ -440,6 +440,81 @@ pub async fn segments_from(
     Ok(collect(entries)?.into_iter().filter(|s| s.epoch >= from_epoch).collect())
 }
 
+/// The current tips of both of a subject's logs: `(segment, control)`.
+///
+/// **A READER'S MEMO KEY NEEDS BOTH.** A live display that re-reads its window
+/// on every refresh can skip the whole decrypt when nothing changed — but
+/// "nothing changed" is not just "no new segment". A rotation or a fresh grant
+/// lands in the *control* log and leaves the segment tip untouched, yet it
+/// changes what the reader can open: the 2026-09-16 incident was exactly a
+/// rotation that had not been noticed, a reader reporting "outside your window"
+/// about data squarely inside it. So a cache that keys only on the segment tip
+/// would serve a stale read straight past a rotation. Keying on both tips makes
+/// a control-log change invalidate the read, which is correct and cheap — both
+/// heights come from one indexed query.
+pub async fn log_tips(store: &SqliteStore, author: &VerifyingKey) -> Result<(SeqNum, SeqNum), Error> {
+    let heights = <SqliteStore as LogStore<
+        KeysOperation,
+        VerifyingKey,
+        LogId,
+        SeqNum,
+        Hash,
+    >>::get_log_heights(store, author, &LOG_IDS)
+    .await?;
+    let at = |id: LogId| heights.as_ref().and_then(|h| h.get(&id).copied()).unwrap_or(0);
+    Ok((at(LOG_ID), at(CONTROL_LOG_ID)))
+}
+
+/// Only the segments appended *after* a sequence-number mark, plus the log's
+/// current tip so the caller can persist a new mark.
+///
+/// **THIS IS THE INCREMENTAL READ A LIVE FOLLOWER WANTS.** [`read`] and
+/// [`segments_covering`] answer "the last N days" and re-fetch, re-verify and
+/// re-decrypt that whole window on every call — which is cheap on a laptop and,
+/// measured on a phone, is 64% of its native cycles and 28% of its allocator in
+/// the follow path. A display that already showed everything up to seq `m` does
+/// not need the window again; it needs whatever arrived since. `after = Some(m)`
+/// returns exactly the entries with `seq > m` (the store does the skipping, the
+/// same exclusive `after` [`segments_tail`] uses), so a steady poll fetches,
+/// verifies and decrypts only the new operations.
+///
+/// Returns `(segments, tip)`. `tip` is the newest sequence number now in the
+/// log; the caller passes it back as `after` next time. `after = None` is the
+/// first read and returns the whole log, with the tip to start marking from.
+///
+/// 🔴 **A RE-DRAIN LANDS HERE TOO.** A subject that re-publishes records it
+/// already sent gives them new sequence numbers, so they are "after" the mark
+/// and come back again. That is correct — they are new log entries — but it
+/// means the caller must still dedup what it accumulates, exactly as [`read`]
+/// does within one window. The mark bounds the common case (append-only); it is
+/// not a promise that a record is delivered once.
+pub async fn segments_after(
+    store: &SqliteStore,
+    author: &VerifyingKey,
+    after: Option<SeqNum>,
+) -> Result<(Vec<Segment>, SeqNum), Error> {
+    let heights = <SqliteStore as LogStore<
+        KeysOperation,
+        VerifyingKey,
+        LogId,
+        SeqNum,
+        Hash,
+    >>::get_log_heights(store, author, &[LOG_ID])
+    .await?;
+    let tip = heights.and_then(|h| h.get(&LOG_ID).copied()).unwrap_or(0);
+
+    // No `tx!` — this is a plain read; see the note on `segments_from`.
+    let entries = <SqliteStore as LogStore<
+        KeysOperation,
+        VerifyingKey,
+        LogId,
+        SeqNum,
+        Hash,
+    >>::get_log_entries(store, author, &LOG_ID, after, None)
+    .await?;
+    Ok((collect(entries)?, tip))
+}
+
 /// **THE SECOND HALF OF A `LogEntries` TUPLE IS THE HEADER, NOT THE BODY.**
 ///
 /// `p2panda_store`'s type is `Vec<(T, Vec<u8>)>` and its SQL selects `hash,

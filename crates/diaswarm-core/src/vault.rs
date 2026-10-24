@@ -303,6 +303,23 @@ pub struct KnownReader {
     pub scope_days: Option<u64>,
 }
 
+/// Read a subject's private readers book (`readers.json`) straight off disk,
+/// without opening the whole vault.
+///
+/// **WHY A FREE FUNCTION AND NOT JUST [`Vault::readers`].** `Vault::open`
+/// requires `meta.json`, which the keys-only cutover never writes — a phone
+/// that seals only through the keys vault has a populated `readers.json` and no
+/// `meta.json` at all. The book is an independent file, so listing who has been
+/// granted must not be gated on a vault the publisher no longer keeps. Empty if
+/// there is no book.
+pub fn read_readers_book(root: &Path) -> Result<Vec<KnownReader>, VaultError> {
+    let path = root.join("readers.json");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_slice(&fs::read(path)?).map_err(|e| VaultError::Malformed(e.to_string()))
+}
+
 pub struct Vault {
     root: PathBuf,
     subject_pub: [u8; 32],
@@ -699,11 +716,7 @@ impl Vault {
 
     /// The subject's private book of who reads. Empty if there is none.
     pub fn readers(&self) -> Result<Vec<KnownReader>, VaultError> {
-        let path = self.root.join("readers.json");
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-        serde_json::from_slice(&fs::read(path)?).map_err(|e| VaultError::Malformed(e.to_string()))
+        read_readers_book(&self.root)
     }
 
     /// Accept a reader's `diaswarm-keys` identity, if they can prove it is

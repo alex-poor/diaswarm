@@ -37,3 +37,7 @@ sqlx = { version = "=0.8.6", features = ["runtime-tokio", "sqlite"] }
 # and the instructions for removing this again.
 [patch.crates-io]
 iroh = { path = "../../vendor/iroh" }
+# Local fork of p2panda-sync 0.7.1 with the session-channel leak fixed
+# (from_session_tx/rx removal). See vendor/p2panda-sync and the memory note
+# diaswarm-ayni-leak-is-reader-readcost. Remove once upstreamed.
+p2panda-sync = { path = "../../vendor/p2panda-sync" }

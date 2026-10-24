@@ -1158,11 +1158,11 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultReaders<'a>(
     vault_path: JString<'a>,
 ) -> JString<'a> {
     let Ok(v) = env.get_string(&vault_path) else { return to_jstring(env, String::new()) };
-    let Ok(vault) = Vault::open(Path::new(&String::from(v))) else {
-        return to_jstring(env, String::new());
-    };
-    let listing = vault
-        .readers()
+    // KEYS-ONLY: read the private readers book directly rather than through
+    // Vault::open, which requires a meta.json the keys-only cutover never
+    // writes. The book (readers.json) is independent and still populated at
+    // grant time, so "who can read" works with no core vault on disk.
+    let listing = diaswarm_core::vault::read_readers_book(Path::new(&String::from(v)))
         .unwrap_or_default()
         .iter()
         // Three fields now. The scope is "" when nobody wrote it down, which
@@ -1242,7 +1242,23 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_inviteParse<'a>(
                 i.subject, i.endpoint, i.purpose, i.relay, i.keys, i.handle
             ),
         ),
-        Err(_) => to_jstring(env, String::new()),
+        // **SURFACE THE REASON, DON'T SWALLOW IT.** `Invite::parse` already says
+        // exactly what is wrong — a newer invite version ("update to use it"), a
+        // damaged checksum, or simply not a diaswarm code. Collapsing all of that
+        // to an empty string made every failure read as one generic "not an
+        // invite", which tells a user who needs to update their app, or who has a
+        // corrupted QR, the wrong thing. An `error\t<message>` sentinel is
+        // unambiguous against a success — a real subject is hex, never "error".
+        // `VaultError` has no `Display`; every parse failure is `Malformed(msg)`
+        // carrying the human message, so use it and fall back to Debug for the
+        // shapes `parse` never returns.
+        Err(e) => {
+            let msg = match e {
+                diaswarm_core::vault::VaultError::Malformed(m) => m,
+                other => format!("{other:?}"),
+            };
+            to_jstring(env, format!("error\t{msg}"))
+        }
     }
 }
 
@@ -1594,6 +1610,31 @@ struct KeysVault {
     /// `None` when the vault was opened without a pool, which is what the tests
     /// and a phone that has not joined look like.
     push: Option<diaswarm_net::replicate::KeysReplicator>,
+    /// The last `keysFollowRead` result, memoised by the inputs that determine
+    /// it. See [`ReadMemo`].
+    read_memo: std::sync::Mutex<Option<ReadMemo>>,
+}
+
+/// A memoised `keysFollowRead` result, so the redundant polls a live display
+/// makes between changes do not each re-decrypt the whole window.
+///
+/// **THE READ IS A PURE FUNCTION OF THESE FIVE THINGS**, so returning the
+/// cached string when they are unchanged is identical to recomputing it. The
+/// log is append-only, so the two tips (segment and control, via
+/// [`wire::log_tips`]) pin the state the read sees: a new reading bumps the
+/// segment tip, a rotation or grant bumps the control tip, and either misses
+/// the memo and recomputes. `tail_days` and `from_epoch` are the only other
+/// inputs. This is why the native heap climbed on an undisturbed phone — the
+/// follow screen re-read, re-verified and re-decrypted its whole backfill on
+/// every refresh (~150–250 MB of allocator churn a poll, measured on device),
+/// and the allocator held it. Only errors are not cached; a transient failure
+/// must be retried, not remembered.
+struct ReadMemo {
+    seg_tip: u32,
+    ctrl_tip: u32,
+    tail_days: u64,
+    from_epoch: i64,
+    out: String,
 }
 
 /// Hand a just-published operation to live mode, and say how many peers' topics
@@ -1684,8 +1725,15 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysOpen<'a>(
             Err(_) => return 0,
         }
     }
-    Box::into_raw(Box::new(KeysVault { tag: KEYS_TAG, handle, store, signing, vault, push }))
-        as jlong
+    Box::into_raw(Box::new(KeysVault {
+        tag: KEYS_TAG,
+        handle,
+        store,
+        signing,
+        vault,
+        push,
+        read_memo: std::sync::Mutex::new(None),
+    })) as jlong
 }
 
 /// Close it. Safe to call with 0.
@@ -3198,6 +3246,28 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysFollowRead<'a>(
     };
     let offset = v.vault.offset();
     let own_dir = v.vault.root().to_path_buf();
+    let td = tail_days.max(0) as u64;
+    let fe = from_epoch;
+
+    // **MEMOISED BY THE LOG TIPS**, so the redundant reads a live display makes
+    // between changes do not each re-decrypt the whole backfill. The read is a
+    // pure function of (segment tip, control tip, tail_days, from_epoch) — see
+    // `ReadMemo`. Measured on device: without this the follow screen churned
+    // ~150–250 MB through the allocator on every refresh and scudo held it.
+    let subject = diaswarm_keys::decode_identity(&keys).ok().map(|id| id.signer);
+    let tips: Option<(u32, u32)> = subject
+        .and_then(|s| v.handle.block_on(diaswarm_keys::wire::log_tips(&v.store, &s)).ok());
+
+    if let Some((seg, ctrl)) = tips {
+        if let Ok(guard) = v.read_memo.lock() {
+            if let Some(m) = guard.as_ref() {
+                if m.seg_tip == seg && m.ctrl_tip == ctrl && m.tail_days == td && m.from_epoch == fe
+                {
+                    return to_jstring(env, m.out.clone());
+                }
+            }
+        }
+    }
 
     let out = follow_read(
         &own_dir,
@@ -3207,10 +3277,27 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysFollowRead<'a>(
         &v.signing,
         &keys,
         &purpose,
-        tail_days.max(0) as u64,
-        from_epoch,
+        td,
+        fe,
         offset,
     );
+
+    // Cache successful reads only — a transient error must be retried, and the
+    // tips are the ones we just read at, so the next poll at the same state is
+    // free.
+    if out.starts_with("ok") {
+        if let Some((seg, ctrl)) = tips {
+            if let Ok(mut guard) = v.read_memo.lock() {
+                *guard = Some(ReadMemo {
+                    seg_tip: seg,
+                    ctrl_tip: ctrl,
+                    tail_days: td,
+                    from_epoch: fe,
+                    out: out.clone(),
+                });
+            }
+        }
+    }
     to_jstring(env, out)
 }
 

@@ -200,7 +200,16 @@ object Prefs {
      * can be granted and still see nothing. Anyone who turned it off
      * explicitly keeps it off — the stored value wins.
      */
-    fun keysVault(c: Context): Boolean = p(c).getBoolean(KEYS_VAULT, true)
+    // **ALWAYS ON NOW — the toggle was a footgun.** The keys (p2panda) vault is
+    // the only place a subject writes or grants since the keys-only cutover, so
+    // a follower with it OFF emits an old-format (v2) invite the subject cannot
+    // grant against and reads nothing — and it failed silently. There is no
+    // longer any subject this would help (they are all keys-only), so OFF has no
+    // upside and one sharp edge. Forced true, ignoring any stored `false` left by
+    // the old pre-cutover "turn New vault off" workaround, and the UI toggle is
+    // gone (see Dialogs/FollowerApp). `setKeysVault` is kept only so a future
+    // migration path could exist; nothing calls it.
+    fun keysVault(@Suppress("UNUSED_PARAMETER") c: Context): Boolean = true
     fun setKeysVault(c: Context, v: Boolean) = p(c).edit().putBoolean(KEYS_VAULT, v).apply()
 
     fun mmol(c: Context): Boolean = p(c).getBoolean(UNITS_MMOL, true)

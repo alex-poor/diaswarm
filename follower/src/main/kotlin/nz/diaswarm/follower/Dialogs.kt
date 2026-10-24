@@ -199,7 +199,6 @@ fun PeopleSheet(
     onShowInvite: () -> Unit,
     onChoose: (Follower.Subject) -> Unit,
     onUnits: () -> Unit,
-    onKeysVault: () -> Unit,
     keysVault: Boolean,
     onKeysOnly: () -> Unit,
     keysOnly: Boolean,
@@ -311,26 +310,10 @@ fun PeopleSheet(
                         fontSize = 12.sp
                     )
                 }
-                Column(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                        .clickable { onKeysVault() }.padding(vertical = 8.dp)
-                ) {
-                    Text(
-                        "New vault: ${if (keysVault) "on" else "off"}",
-                        color = Text1,
-                        fontSize = 15.sp
-                    )
-                    // SAYS WHAT IT COSTS, because the cost lands on somebody
-                    // else. Turning this on makes your invite readable only by
-                    // apps that understand it — so if the person you follow has
-                    // not updated, sharing stops working rather than degrading.
-                    Text(
-                        "Experimental. Your invite changes form, so the person you " +
-                            "follow needs a recent app for it to work.",
-                        color = Text2,
-                        fontSize = 12.sp
-                    )
-                }
+                // **THE "NEW VAULT" TOGGLE IS GONE** — it is always on now (the
+                // keys vault is the only thing a subject writes/grants since the
+                // keys-only cutover), so offering OFF only let a follower quietly
+                // break its own pairing. See [Prefs.keysVault].
                 // ONLY OFFERED WHILE THE NEW VAULT IS ON, because a phone
                 // reading neither source shows a blank screen, and a blank
                 // screen is not a test of anything.

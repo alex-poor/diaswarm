@@ -88,12 +88,18 @@ class SwarmScanActivity : DaggerAppCompatActivity() {
     private fun onScanned(text: String) {
         SwarmNative.check()
         val parsed = SwarmNative.inviteParse(text)
-        if (parsed.isEmpty()) {
-            // Says WHAT was wrong with it as far as it can: this was a QR code,
-            // it just was not one of ours. "Scan failed" would be untrue.
+        // **SAY WHY, NOT JUST "NO".** `inviteParse` now returns `error\t<reason>`
+        // with the core's own message — a newer invite version ("update to use
+        // it"), a damaged code, or genuinely not one of ours — instead of a bare
+        // empty string that made all three read as the same generic failure. A
+        // user who needs to update AAPS, or who scanned a corrupted QR, is told
+        // the actual thing to do. (Empty = a failure with no message to show.)
+        if (parsed.isEmpty() || parsed.startsWith("error\t")) {
+            val reason = parsed.removePrefix("error\t")
+                .ifBlank { getString(R.string.swarm_scan_not_an_invite) }
             MaterialAlertDialogBuilder(this, app.aaps.core.ui.R.style.DialogTheme)
                 .setTitle(R.string.swarm_scan)
-                .setMessage(R.string.swarm_scan_not_an_invite)
+                .setMessage(reason)
                 .setPositiveButton(android.R.string.ok) { _, _ -> finish() }
                 .setOnCancelListener { finish() }
                 .show()
@@ -140,6 +146,25 @@ class SwarmScanActivity : DaggerAppCompatActivity() {
      * vault here. One code path changes access, and it is not on this thread.
      */
     private fun share(theirInvite: String) {
+        // **CATCH THE MISMATCH HERE, LOUDLY, NOT AS A SILENT NO-OP LATER.**
+        // Granting happens on the keys (p2panda) vault, which needs the reader's
+        // keys bundle — only carried in a v3+ invite. An old-format (v2) code, or
+        // one from a follower with "New vault" turned off, has no bundle: the
+        // background grant would just log an error and do nothing, after this
+        // screen had already said "will share". So check it on this thread and
+        // tell the person what to do, instead of queueing a share that can't
+        // complete. (field 4 is the keys bundle; empty = nothing to grant.)
+        val keys = SwarmNative.inviteParse(theirInvite).split('\t').getOrElse(4) { "" }
+        if (keys.isEmpty()) {
+            MaterialAlertDialogBuilder(this, app.aaps.core.ui.R.style.DialogTheme)
+                .setTitle(R.string.swarm_scan)
+                .setMessage(R.string.swarm_share_no_keys)
+                .setPositiveButton(android.R.string.ok) { _, _ -> finish() }
+                .setOnCancelListener { finish() }
+                .show()
+            return
+        }
+
         // THE WHOLE INVITE, NOT JUST THE KEY. Granting needs the key; handing
         // our own invite back needs their endpoint and relay, and those are in
         // the same string they just showed us. Storing only the key is what
