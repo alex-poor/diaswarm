@@ -43,5 +43,6 @@ local.properties
 # The follower's standalone build
 follower/build/
 follower/.gradle/
+follower/.kotlin/
 follower/local.properties
 follower/src/main/jniLibs/
