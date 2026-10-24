@@ -166,6 +166,19 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                     }
                 }
             }
+
+            // **AFTER BOTH VAULTS, SO AN ALERT SEES EVERYTHING THIS PASS
+            // CARRIED IN.** netRefresh filled the core vault and keysCarryAll the
+            // keys one; the alert check reads the union, so it runs last. It is
+            // the same pass whether the app is open or the stay-awake service is
+            // the only thing running, which is the point — a low at 3am is not
+            // waiting for someone to open the app. It never acts, only tells.
+            try {
+                Alerts.check(applicationContext)
+            } catch (e: Throwable) {
+                Log.w(TAG, "alert check threw: $e")
+            }
+
             Result.success()
         } catch (e: Throwable) {
             // An unreachable peer is the ordinary condition of a swarm, not an

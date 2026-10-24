@@ -206,6 +206,36 @@ object Prefs {
     fun mmol(c: Context): Boolean = p(c).getBoolean(UNITS_MMOL, true)
     fun setMmol(c: Context, v: Boolean) = p(c).edit().putBoolean(UNITS_MMOL, v).apply()
 
+    /**
+     * The last alert level raised for a subject, and when — the dedup that keeps
+     * an alert from firing on every reading while someone sits at the same value.
+     *
+     * The level is [Alerts.Level.rank], or -1 for "in range, nothing pending".
+     * Stored per subject key, because two people followed go low independently.
+     * See [Alerts.check] for how worsening and re-arming read these.
+     */
+    fun alertLevel(c: Context, subject: String): Int = p(c).getInt("alert_level_$subject", -1)
+    fun alertAt(c: Context, subject: String): Long = p(c).getLong("alert_at_$subject", 0L)
+
+    fun setAlert(c: Context, subject: String, rank: Int) =
+        p(c).edit().putInt("alert_level_$subject", rank)
+            .putLong("alert_at_$subject", System.currentTimeMillis()).apply()
+
+    fun clearAlert(c: Context, subject: String) =
+        p(c).edit().putInt("alert_level_$subject", -1).apply()
+
+    /**
+     * Whether this app has already asked for the notification permission once.
+     *
+     * **ASKED ONCE, NOT ON EVERY LAUNCH.** Android stops showing the dialog
+     * after two refusals anyway, but re-launching the request on every open is
+     * the pattern that trains a person to dismiss it. One ask, at the first
+     * launch where alerts are on and the grant is missing; after that the Alerts
+     * settings group is where a refusal is reconsidered.
+     */
+    fun askedNotifications(c: Context): Boolean = p(c).getBoolean("asked_notifications", false)
+    fun setAskedNotifications(c: Context) = p(c).edit().putBoolean("asked_notifications", true).apply()
+
     /** mg/dL to whatever the screen is showing. */
     fun show(c: Context, mgdl: Double): String =
         if (mmol(c)) String.format("%.1f", mgdl / 18.0) else "${mgdl.toInt()}"

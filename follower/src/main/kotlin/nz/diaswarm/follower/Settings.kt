@@ -47,6 +47,11 @@ fun SettingsScreen(
     onBand: () -> Unit,
     bandLabel: String,
     mmol: Boolean,
+    alertOn: (Alerts.Level) -> Boolean,
+    alertSubtitle: (Alerts.Level) -> String,
+    onToggleAlert: (Alerts.Level) -> Unit,
+    notificationsBlocked: Boolean,
+    onFixNotifications: () -> Unit,
     onClose: () -> Unit
 ) {
     BackHandler { onClose() }
@@ -84,6 +89,37 @@ fun SettingsScreen(
                                 selected = false
                             ) { onChoose(s) }
                             if (i < followed.lastIndex) RowDivider()
+                        }
+                    }
+                }
+
+                // Built by hand rather than with SettingsGroup so the "blocked"
+                // banner can sit between the heading and the switches — a person
+                // toggling an alert on should see, right there, that nothing will
+                // reach them until notifications are allowed.
+                SectionHeading("Alerts")
+                if (notificationsBlocked) {
+                    Box(Modifier.padding(bottom = AyniSpace.s2)) {
+                        StatusBanner(
+                            BannerTone.Alert,
+                            "Notifications are off — alerts can't reach you. Tap to allow.",
+                            Modifier.clickable { onFixNotifications() }
+                        )
+                    }
+                }
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = AyniColor.Card),
+                    shape = RoundedCornerShape(AyniRadius.Card),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column {
+                        Alerts.Level.entries.forEachIndexed { i, level ->
+                            SwitchRow(
+                                level.label.replaceFirstChar { it.uppercase() },
+                                alertSubtitle(level),
+                                checked = alertOn(level)
+                            ) { onToggleAlert(level) }
+                            if (i < Alerts.Level.entries.lastIndex) RowDivider()
                         }
                     }
                 }

@@ -243,6 +243,22 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             onBand = { Prefs.cycleBand(context); tick++ },
             bandLabel = Prefs.bandLabel(context),
             mmol = Prefs.mmol(context),
+            alertOn = { Alerts.enabled(context, it) },
+            // Unit-correct, so the thresholds read in whatever the units toggle
+            // shows. The fixed two state the clinical line; the band two point at
+            // the viewer's own low/high line, which is what they actually fire on.
+            alertSubtitle = { level ->
+                val unit = Prefs.unitLabel(context)
+                when (level) {
+                    Alerts.Level.URGENT_LOW -> "At or below ${Prefs.show(context, Glucose.URGENT_LOW_MGDL)} $unit"
+                    Alerts.Level.LOW -> "Below your low line, ${Prefs.show(context, Prefs.lowLine(context))} $unit"
+                    Alerts.Level.HIGH -> "Above your high line, ${Prefs.show(context, Prefs.highLine(context))} $unit"
+                    Alerts.Level.VERY_HIGH -> "At or above ${Prefs.show(context, Glucose.VERY_HIGH_MGDL)} $unit"
+                }
+            },
+            onToggleAlert = { level -> Alerts.setEnabled(context, level, !Alerts.enabled(context, level)); tick++ },
+            notificationsBlocked = notificationsBlocked(context),
+            onFixNotifications = { openNotificationSettings(context) },
             onClose = { showPeople = false }
         )
     }
@@ -437,6 +453,29 @@ private fun WaitingCard(subject: Follower.Subject, lastSyncAt: Long) {
                 )
             }
         }
+    }
+}
+
+/**
+ * Whether glucose alerts cannot reach this phone because notifications are off.
+ *
+ * Only on 33+, where the grant is a runtime permission somebody can refuse or
+ * revoke; below it, notifications are allowed at install and this is never true.
+ */
+private fun notificationsBlocked(context: android.content.Context): Boolean =
+    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+        context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+
+/** Open this app's notification settings, where the grant is reconsidered. */
+private fun openNotificationSettings(context: android.content.Context) {
+    val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(intent)
+    } catch (e: Throwable) {
+        android.util.Log.w(SyncWorker.TAG, "no notification settings screen: $e")
     }
 }
 
