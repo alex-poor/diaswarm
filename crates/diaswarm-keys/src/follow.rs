@@ -204,3 +204,58 @@ pub async fn read(
     }
     Ok((out, opened, skipped))
 }
+
+/// The incremental read: only the segments appended after `after`, with the new
+/// mark to persist.
+///
+/// **WHY THIS EXISTS, AND WHAT IT FIXES.** [`read`] re-fetches, re-verifies and
+/// re-decrypts a whole window every call. For a one-shot catch-up that is right.
+/// For a *live display that polls*, it is O(history) per poll: on a phone,
+/// `tailcost` measured 64% of native cycles and 28% of the allocator in exactly
+/// this path, and every new live operation invalidates the ciphertext cache and
+/// pays the window again. The symptom is a native heap that climbs on a healthy,
+/// undisturbed link carrying only a handful of readings — the allocator holding
+/// the churn of re-decrypting the window on every refresh.
+///
+/// A caller that keeps its own accumulated view asks here instead: pass the
+/// `tip` returned last time as `after`, and this fetches, verifies and decrypts
+/// only what arrived since. Old operations are never touched, so their Ed25519
+/// verification and their decryption do not recur.
+///
+/// Returns `(records, opened, skipped, tip)`. `after = None` is the first read
+/// and returns everything, with the tip to mark from. The records are deduped
+/// within this batch; a caller merging across calls must still dedup, because a
+/// re-drain republishes under new sequence numbers (see [`wire::segments_after`]).
+pub async fn read_since(
+    vault: &Vault,
+    store: &SqliteStore,
+    subject: &VerifyingKey,
+    after: Option<u32>,
+) -> Result<(Vec<Record>, usize, crate::Skipped, u32), String> {
+    let _ = subject;
+    let (segments, tip) = wire::segments_after(store, subject, after)
+        .await
+        .map_err(|e| format!("segments {e}"))?;
+
+    let mut out: Vec<Record> = Vec::new();
+    let mut opened = 0usize;
+    let mut skipped = crate::Skipped::default();
+    let mut seen: HashSet<String> = HashSet::new();
+    for segment in &segments {
+        match vault.open_segment(segment) {
+            Ok((records, unparseable)) => {
+                opened += 1;
+                skipped.unparseable += unparseable;
+                for record in records {
+                    if seen.insert(record.to_canonical_json()) {
+                        out.push(record);
+                    }
+                }
+            }
+            Err(crate::Error::NotGranted) => skipped.not_ours += 1,
+            Err(crate::Error::Undecryptable) => skipped.undecryptable += 1,
+            Err(_) => skipped.unreadable += 1,
+        }
+    }
+    Ok((out, opened, skipped, tip))
+}
