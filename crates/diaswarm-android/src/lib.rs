@@ -3403,6 +3403,7 @@ mod shadow_tests {
             signing: signing.clone(),
             vault,
             push: None,
+            read_memo: std::sync::Mutex::new(None),
         };
 
         let held = super::rotate_and_publish(&mut v);
