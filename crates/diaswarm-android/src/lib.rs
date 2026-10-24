@@ -3974,6 +3974,15 @@ mod shadow_tests {
             ("keysRevoke", "superseded by keysRevokeReader, which derives the tag"),
             ("keysFollowRead", "superseded by keysGlucose/keysTreatments/keysProfile"),
             ("keysCarry", "superseded by keysCarryAll"),
+            // The core-vault surface, made dead by the keys-only cutover
+            // (a7c7eb4): publish/grant/seal now go through diaswarm-keys. Left
+            // declared for now; the core vault itself is still linked, and
+            // deleting the surface is its own cleanup (tracked separately).
+            ("vaultSeal", "superseded by keysSealChecked (keys-only cutover)"),
+            ("vaultGrant", "superseded by keysGrant (keys-only cutover)"),
+            ("vaultRevoke", "superseded by keysRevokeReader (keys-only cutover)"),
+            ("vaultStatus", "core-vault status, unused since the keys-only cutover"),
+            ("vaultRewrap", "core-vault re-wrap, unused since the keys-only cutover"),
         ];
 
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
