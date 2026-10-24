@@ -122,6 +122,17 @@ struct Args {
     #[arg(long)]
     json: bool,
 
+    /// Print the wire protocol version this build speaks, and exit.
+    ///
+    /// **THE CROSS-PRODUCT STAMP THE RELEASE READS BACK.** Topic derivation,
+    /// invite framing and log shape are the protocol; the carrier, Ayni and the
+    /// AAPS plugin must speak the same one or they derive different topics and
+    /// never meet. The release workflow runs this on the built binary and
+    /// asserts it against the two apps' compiled-in expectation. Prints the bare
+    /// number so a script can read it; touches no network and no data dir.
+    #[arg(long)]
+    protocol_version: bool,
+
     /// What to do instead of carrying. Omit to run the carrier loop.
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -982,6 +993,15 @@ fn short(s: &str) -> String {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+
+    // **BEFORE THE DATA DIR.** This is the stamp the release reads off the built
+    // binary to assert the three products agree; it must run with no dir, no
+    // network and no identity, so a CI job can call it on a bare artifact.
+    if args.protocol_version {
+        println!("{}", diaswarm_core::PROTOCOL_VERSION);
+        return Ok(());
+    }
+
     let dir = match args.dir {
         Some(d) => d,
         None => default_dir()?,

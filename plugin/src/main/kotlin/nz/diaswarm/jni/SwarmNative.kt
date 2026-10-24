@@ -33,6 +33,8 @@ object SwarmNative {
 
     external fun specVersion(): Int
 
+    external fun protocolVersion(): Int
+
     /**
      * Which epoch a timestamp falls in, at a given fixed offset.
      *
@@ -800,6 +802,15 @@ object SwarmNative {
     const val EXPECTED_SPEC_VERSION = 3
 
     /**
+     * The wire protocol version this Kotlin was built against — topic derivation,
+     * invite framing, log shape. Must match the carrier and the Ayni follower, or
+     * the three derive different topics and never meet. Keep in lockstep with
+     * `diaswarm_core::PROTOCOL_VERSION`; the release workflow asserts all three
+     * products agree before it ships them.
+     */
+    const val EXPECTED_PROTOCOL_VERSION = 1
+
+    /**
      * Load the native library and refuse to run against a mismatched one.
      *
      * A native library that disagrees with the Kotlin about the spec version is
@@ -808,9 +819,13 @@ object SwarmNative {
      */
     fun check() {
         System.loadLibrary("diaswarm_android")
-        val actual = specVersion()
-        require(actual == EXPECTED_SPEC_VERSION) {
-            "native library implements spec v$actual, plugin expects v$EXPECTED_SPEC_VERSION"
+        val actualSpec = specVersion()
+        require(actualSpec == EXPECTED_SPEC_VERSION) {
+            "native library implements spec v$actualSpec, plugin expects v$EXPECTED_SPEC_VERSION"
+        }
+        val actualProtocol = protocolVersion()
+        require(actualProtocol == EXPECTED_PROTOCOL_VERSION) {
+            "native library speaks protocol v$actualProtocol, plugin expects v$EXPECTED_PROTOCOL_VERSION"
         }
     }
 }

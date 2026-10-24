@@ -81,6 +81,21 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_specVersion(
     diaswarm_core::SPEC_VERSION as jint
 }
 
+/// Which wire protocol this build speaks — topic derivation, invite framing, log
+/// shape. Distinct from `specVersion` (the record schema inside the ciphertext).
+///
+/// **THE CROSS-PRODUCT GATE.** All three products — carrier, Ayni, this plugin —
+/// must speak the same protocol or they derive different topics and never meet.
+/// The app refuses to load a native library whose protocol disagrees with what
+/// the Kotlin was built against, the same way it does for the spec version.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_protocolVersion(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    diaswarm_core::PROTOCOL_VERSION as jint
+}
+
 /// Which epoch a timestamp falls in — the unit of key custody, a UTC day.
 #[no_mangle]
 pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_epochOf(

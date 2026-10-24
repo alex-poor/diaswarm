@@ -116,3 +116,11 @@ jobs:
       - name: wire contract (PROTOCOL_VERSION + golden topics/invites)
         working-directory: crates/diaswarm-net
         run: cargo test --test wire_contract -- --nocapture
+
+      # THE CROSS-LANGUAGE HALF OF THE WIRE CONTRACT. wire_contract above pins
+      # the Rust const's bytes; this pins that the two Android apps' Kotlin
+      # `EXPECTED_PROTOCOL_VERSION` has not drifted away from it. Text-only, so
+      # it runs here rather than in a per-crate job — a bump that touches the
+      # core but forgets an app fails this line before any APK is built.
+      - name: protocol version agrees across all three products
+        run: ./tools/protocol-version-check.sh

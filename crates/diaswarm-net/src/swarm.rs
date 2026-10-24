@@ -89,7 +89,22 @@ pub struct Swarm {
     /// and then listening for a moment each pass means two peers only ever hear
     /// each other if their windows happen to overlap — which, tested, they do
     /// not. The subscription has to outlive the pass.
-    joined: Arc<Mutex<HashMap<u64, p2panda_net::gossip::GossipHandle>>>,
+    ///
+    /// **KEYED BY `(depth, bucket)`, NOT `bucket` ALONE — D31 FROM THE OTHER
+    /// SIDE.** The gossip topic is `bucket_topic(depth, bucket)`: the depth is
+    /// hashed in, so the same bucket number at two depths is two unrelated
+    /// topics. Keying this cache by the bare bucket meant that a peer which
+    /// first joined at one depth (because the pool had not finished announcing
+    /// itself, so it counted too few members) kept that subscription when the
+    /// depth grew — `ensure_joined` found the bucket already present and handed
+    /// back the stale-depth handle, so it never subscribed to the topic the
+    /// settled pool actually announces on. On a machine where presence
+    /// converged before the first pass the bug never showed; on a slow or
+    /// contended one it was a permanent wedge, which is the flake that chased
+    /// `a_follower_survives_the_subject_leaving_without_a_second_address` across
+    /// CI. With the depth in the key, a depth change forces a fresh subscription
+    /// to the correct topic; the stale one lingers harmlessly until drop.
+    joined: Arc<Mutex<HashMap<(u8, u64), p2panda_net::gossip::GossipHandle>>>,
     /// Subjects heard about on bucket topics, and everyone who said they had
     /// them.
     ///
@@ -602,11 +617,11 @@ impl Swarm {
         depth: u8,
         bucket: u64,
     ) -> Result<p2panda_net::gossip::GossipHandle> {
-        if let Some(h) = self.joined.lock().unwrap().get(&bucket).cloned() {
+        if let Some(h) = self.joined.lock().unwrap().get(&(depth, bucket)).cloned() {
             return Ok(h);
         }
         let h = self.gossip.stream(topic(pool::bucket_topic(depth, bucket))).await?;
-        self.joined.lock().unwrap().insert(bucket, h.clone());
+        self.joined.lock().unwrap().insert((depth, bucket), h.clone());
 
         let heard = Arc::clone(&self.heard);
         let heard_keys = Arc::clone(&self.heard_keys);
