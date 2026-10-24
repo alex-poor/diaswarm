@@ -34,6 +34,10 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     var showPeople by remember { mutableStateOf(false) }
     var showPaste by remember { mutableStateOf(false) }
     var showCarrying by remember { mutableStateOf(false) }
+    // When the on-screen sync loop last asked for a pass, so the waiting state
+    // can say "last tried 20s ago" rather than leave someone staring at a card
+    // with no sign anything is happening.
+    var lastSyncAt by remember { mutableStateOf(System.currentTimeMillis()) }
 
     // Redraw on a clock, because the AGE changes even when the data does not —
     // and a stale reading that still says "1 min ago" is the failure §12.3 is
@@ -51,6 +55,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     // which is a silent stall that looks precisely like a quiet network.
     LaunchedEffect(Unit) {
         while (true) {
+            lastSyncAt = System.currentTimeMillis()
             Sync.now(context)
             delay(SyncWorker.EVERY_SECONDS * 1000)
         }
@@ -151,7 +156,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             when {
                 followed.isEmpty() -> EmptyCard(onScan = onScan, onShowInvite = { Endpoint.expectOffer(); showInvite = true })
                 subject == null    -> ChooseCard(followed) { Prefs.setGraphSubject(context, it.key); tick++ }
-                readings.isEmpty() -> WaitingCard(subject)
+                readings.isEmpty() -> WaitingCard(subject, lastSyncAt)
                 else               -> {
                     HeroCard(context, readings, treatments, target, tempTarget, low, high)
                     Card(
@@ -391,16 +396,60 @@ private fun ChooseCard(followed: List<Follower.Subject>, onChoose: (Follower.Sub
     }
 }
 
+/**
+ * The pending handshake, said honestly.
+ *
+ * Following is two-party: this phone asks, and the other phone has to share
+ * back. The old card said "nothing readable yet" and stopped — so a person
+ * could not tell whether they had done it wrong or were simply waiting on
+ * someone else. Now it names who it is waiting on, says whose move it is, shows
+ * that it is still trying, and offers to nudge them.
+ *
+ * [subject.reached] splits the two states that look alike and are not: nothing
+ * has arrived at all, versus their records are held here but no glucose is
+ * readable yet.
+ */
 @Composable
-private fun WaitingCard(subject: Follower.Subject) {
+private fun WaitingCard(subject: Follower.Subject, lastSyncAt: Long) {
+    val context = LocalContext.current
     Card(colors = CardDefaults.cardColors(containerColor = Card), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Following ${subject.label}", color = Text1, fontSize = 17.sp)
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("Waiting on ${subject.label}", color = Text1, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "Nothing readable yet. Following costs them nothing and grants you nothing — " +
-                    "they still have to share with you from their own phone.",
+                if (!subject.reached)
+                    "You've asked to follow them. Now they share with you from their own phone — " +
+                        "until they do, there is nothing here to read. Following costs them nothing."
+                else
+                    "This phone is holding their records, but no glucose is readable yet — they may not " +
+                        "be sharing readings, or it is still catching up.",
                 color = Text2, fontSize = 14.sp
             )
+            StatusBanner(
+                BannerTone.Wait,
+                "Checking every ${SyncWorker.EVERY_SECONDS / 60} min · last tried ${Follower.ageWords(lastSyncAt)}"
+            )
+            if (!subject.reached) {
+                Text(
+                    "Remind them to share  ›",
+                    color = Insulin, fontSize = 14.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                        .clickable { shareReminder(context) }.padding(vertical = 4.dp)
+                )
+            }
         }
     }
+}
+
+/** Open the system share sheet with a prewritten nudge for the person being followed. */
+private fun shareReminder(context: android.content.Context) {
+    val msg = "I'm following your glucose with Ayni, but nothing reaches me until you share " +
+        "with me from your looping app. When you get a moment?"
+    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_TEXT, msg)
+    }
+    context.startActivity(
+        android.content.Intent.createChooser(send, "Remind them")
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    )
 }
