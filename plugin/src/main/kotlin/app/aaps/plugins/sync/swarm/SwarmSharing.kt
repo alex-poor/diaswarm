@@ -56,9 +56,16 @@ object SwarmSharing {
      * leaving a QR and nothing else. It looked fine in a screenshot and was
      * unusable — you could not read what it was or copy it.
      *
-     * Error correction H: the code gets read off a screen at an angle, in a
-     * kitchen, by someone's parent. Losing a quarter of the modules and still
-     * decoding is worth the density.
+     * Error correction L, NOT H — and this was the bug that stopped it scanning.
+     * The invite is ~720 bytes (keys + endpoint + handle), which at H needs QR
+     * version ~29 (≈137 modules a side): rendered at ~half a phone's width that
+     * is ~4px a module, below what another phone's camera resolves screen-to-
+     * screen, so it never decoded in either direction. H's resilience buys
+     * nothing on a glowing screen held still for a one-time pairing; the density
+     * it costs is what made the code unreadable. L drops the same payload to
+     * version ~19 (≈93 modules), ~6px a module — "won't scan" vs "scans". Quiet
+     * zone 4 modules, the spec minimum: the old 1 left scanners unable to find
+     * the finder patterns, which compounded it.
      */
     private fun qr(context: Context, text: String): Bitmap {
         val side = (context.resources.displayMetrics.widthPixels * 0.55f).toInt()
@@ -71,8 +78,8 @@ object SwarmSharing {
         // so the dependency is not reproducible. One line of encoding is a
         // cheaper price than being unpublishable.
         val hints = mapOf(
-            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.H,
-            EncodeHintType.MARGIN to 1
+            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L,
+            EncodeHintType.MARGIN to 4
         )
         val matrix = MultiFormatWriter().encode(text, BarcodeFormat.QR_CODE, side, side, hints)
         val on = android.graphics.Color.BLACK
