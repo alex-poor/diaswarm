@@ -92,10 +92,12 @@ async fn a_stranger_carries_a_keys_subject_it_was_never_introduced_to() {
     let (se, sg) = subject_swarm.parts();
     let publishing = KeysReplicator::keys(subject_store.clone(), se, sg).await.unwrap();
 
-    // A subject serves its own logs: it carries itself, in its own bucket.
-    let depth = pool::depth_for(2);
-    let own_topic = pool::bucket_topic(depth, pool::bucket_of(&subject_hex, depth));
-    publishing.carry(own_topic, &subject_hex).await.unwrap();
+    // A subject serves its own logs on the per-subject rendezvous the carrier
+    // uses. This used to seed the depth-sharded `bucket_topic`, but `carry_share`
+    // cut over to `subject_topic` (D31) and dropped the bucket topic, so nothing
+    // listens there any more — the subject must seed the same topic the carrier
+    // carries, exactly as a real subject's own `carry_share` does.
+    publishing.carry(pool::subject_topic(&subject_hex), &subject_hex).await.unwrap();
     // THE ONE LINE THIS TEST IS ABOUT ON THE SENDING SIDE. Without it the pool
     // never hears that this subject exists.
     subject_swarm.set_keys_held(publishing.carried());
