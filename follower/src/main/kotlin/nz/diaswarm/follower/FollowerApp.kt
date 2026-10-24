@@ -18,7 +18,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 // Local names for the shared tokens (see Theme.kt), so the composables below
 // read unchanged while the palette lives in one place.
@@ -73,34 +75,36 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
         }
     }
 
-    val subject = remember(tick) { Follower.chosen(context) }
-    val readings = remember(tick, subject) {
-        subject?.let { Follower.readings(context, it, Prefs.rangeHours(context)) } ?: emptyList()
+    // **EVERY ONE OF THESE READS BOTH VAULTS OVER JNI, AND THEY USED TO RUN ON
+    // THE MAIN THREAD.** They were a stack of `remember(tick)` blocks, so each
+    // fired during composition — on the UI thread — and the clock bumps `tick`
+    // every fifteen seconds. As a subject's history grew, the merge of core and
+    // keys crossed the frame budget and then the ANR budget: the activity took
+    // eight seconds to first paint and hung outright when the background sync
+    // pass held the vault lock at the same moment. Found on phone B, reproduced
+    // with the alert work stashed, so it predated it.
+    //
+    // Now one bundle, loaded off the main thread. `produceState` relaunches the
+    // load when `tick` changes and keeps the PREVIOUS bundle on screen until the
+    // new one is ready, so a refresh never blanks the hero and never blocks a
+    // tap. The first load (null) shows a spinner — which the splash usually
+    // still covers anyway.
+    val data by produceState<AppData?>(initialValue = null, tick) {
+        value = withContext(Dispatchers.IO) { loadAppData(context) }
     }
-    val treatments = remember(tick, subject) {
-        subject?.let { Follower.treatments(context, it, Prefs.rangeHours(context)) } ?: emptyList()
-    }
-    val target = remember(tick, subject) { subject?.let { Follower.target(context, it) } }
-    // Read separately from [target] so the card can SAY it is temporary. A band
-    // that silently changes looks like they edited their profile.
-    val tempTarget = remember(tick, subject) { subject?.let { Follower.runningTempTarget(context, it) } }
-    val followed = remember(tick) { Follower.following(context) }
-    val carrying = remember(tick) { Prefs.carrying(context) }
-    val low = remember(tick) { Prefs.lowLine(context) }
-    val high = remember(tick) { Prefs.highLine(context) }
-    // NULLABLE ON PURPOSE — see [Follower.scheduledBasalOrNull]. Null is "this
-    // phone has no profile for them", which is not the same statement as a
-    // basal rate of zero, and the chart must not turn one into the other.
-    val scheduled = remember(tick, subject) {
-        subject?.let { Follower.scheduledBasalOrNull(context, it, System.currentTimeMillis()) }
-    }
-    val basal = remember(tick, subject, treatments) {
-        if (readings.isEmpty()) emptyList()
-        else Follower.basalSteps(treatments, scheduled, readings.first().at, readings.last().at)
-    }
-    val basalUnknown = remember(tick, subject, treatments) {
-        scheduled == null && treatments.any { it.kind == "tbr" && !it.absolute }
-    }
+    val loading = data == null
+    val subject = data?.subject
+    val readings = data?.readings ?: emptyList()
+    val treatments = data?.treatments ?: emptyList()
+    val target = data?.target
+    val tempTarget = data?.tempTarget
+    val followed = data?.followed ?: emptyList()
+    val carrying = data?.carrying ?: -1
+    val low = data?.low ?: Prefs.DEFAULT_LOW_MGDL
+    val high = data?.high ?: Prefs.DEFAULT_HIGH_MGDL
+    val scheduled = data?.scheduled
+    val basal = data?.basal ?: emptyList()
+    val basalUnknown = data?.basalUnknown ?: false
 
     MaterialTheme(colorScheme = darkColorScheme(background = Bg, surface = Card)) {
         // NOT A SCROLLER ANY MORE, AND THAT IS WHAT FILLS THE SCREEN. A
@@ -158,6 +162,12 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             }
 
             when {
+                // First load only — the bundle is still being read off-thread.
+                // After that, the previous bundle stays on screen through a
+                // refresh, so this never flashes between updates.
+                loading -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Good)
+                }
                 followed.isEmpty() -> EmptyCard(onScan = onScan, onShowInvite = { Endpoint.expectOffer(); showInvite = true })
                 subject == null    -> ChooseCard(followed) { Prefs.setGraphSubject(context, it.key); tick++ }
                 readings.isEmpty() -> WaitingCard(subject, lastSyncAt)
@@ -266,6 +276,59 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             onClose = { showPeople = false }
         )
     }
+}
+
+/**
+ * Everything the one screen draws, read in a single off-thread pass.
+ *
+ * Bundled so the whole screen comes from one consistent snapshot — the hero, the
+ * chart and the band all describe the same moment — and so there is exactly one
+ * place that touches the vault per refresh rather than a dozen scattered
+ * `remember` blocks each opening it again.
+ */
+private data class AppData(
+    val subject: Follower.Subject?,
+    val readings: List<Follower.Reading>,
+    val treatments: List<Follower.Treatment>,
+    val target: Pair<Double, Double>?,
+    val tempTarget: Follower.TempTarget?,
+    val followed: List<Follower.Subject>,
+    val carrying: Int,
+    val low: Double,
+    val high: Double,
+    val scheduled: Double?,
+    val basal: List<Follower.BasalStep>,
+    val basalUnknown: Boolean
+)
+
+/** Read the whole screen's data. Always called off the main thread — see [FollowerApp]. */
+private fun loadAppData(context: android.content.Context): AppData {
+    val subject = Follower.chosen(context)
+    val hours = Prefs.rangeHours(context)
+    val readings = subject?.let { Follower.readings(context, it, hours) } ?: emptyList()
+    val treatments = subject?.let { Follower.treatments(context, it, hours) } ?: emptyList()
+    val scheduled = subject?.let { Follower.scheduledBasalOrNull(context, it, System.currentTimeMillis()) }
+    val basal = if (readings.isEmpty()) emptyList()
+        else Follower.basalSteps(treatments, scheduled, readings.first().at, readings.last().at)
+    return AppData(
+        subject = subject,
+        readings = readings,
+        treatments = treatments,
+        target = subject?.let { Follower.target(context, it) },
+        // Separate from target so the card can SAY it is temporary; a band that
+        // silently changes looks like they edited their profile.
+        tempTarget = subject?.let { Follower.runningTempTarget(context, it) },
+        followed = Follower.following(context),
+        carrying = Prefs.carrying(context),
+        low = Prefs.lowLine(context),
+        high = Prefs.highLine(context),
+        // NULLABLE ON PURPOSE — see [Follower.scheduledBasalOrNull]. Null is "no
+        // profile for them", not a basal of zero, and the chart must not confuse
+        // the two.
+        scheduled = scheduled,
+        basal = basal,
+        basalUnknown = scheduled == null && treatments.any { it.kind == "tbr" && !it.absolute }
+    )
 }
 
 @Composable
