@@ -232,3 +232,120 @@ async fn a_follower_gets_its_grant_and_its_days_from_a_stranger() {
     }
     probe.close().await;
 }
+
+/// The grant log reaches a follower that never fetches the segments.
+///
+/// **THE BUG THIS GUARDS.** `TopicLogSync` drains all of a topic's logs in one
+/// ordered session, segments (log 0) before grants (log 1). A subject with a
+/// long history offers thousands of segment operations ahead of its handful of
+/// grants, so a follower on a link that drops before the segments are through
+/// dies inside them and never reaches the grant log: measured on a phone as 257
+/// of 5063 segments and 0 of 76 control operations, both logs associated, the
+/// welcome stranded in a log the follower could not get to, `control_from`
+/// empty, "no grant has arrived yet" — unable to read a group it had genuinely
+/// been granted.
+///
+/// `pool::control_topic` gives the grants a topic that resolves to the control
+/// log *alone*, so they sync in their own session no matter how far behind the
+/// segments are. This holds that line two ways: the topic resolves to the
+/// control log only, and a follower carrying that topic and *not* the segments
+/// still gets every grant and joins.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_grant_log_syncs_on_a_topic_of_its_own() {
+    let net = network_id("keys-control-topic");
+    let rng = Rng::default();
+
+    // ---- the subject: a short grant log behind a long segment log ----------
+    let subject_key = SigningKey::generate();
+    let mut subject = Vault::open(tmp("ct-subject"), OFFSET, &subject_key).unwrap();
+    let (subject_mgr, subject_bundle) = Vault::key_bundle(&rng).unwrap();
+    let (reader_mgr, reader_bundle) = Vault::key_bundle(&rng).unwrap();
+
+    let subject_store = SqliteStoreBuilder::memory().build().await.unwrap();
+    let create = subject.create(subject_mgr).unwrap();
+    wire::publish_control(&subject_store, &subject_key, &create).await.unwrap();
+    let (welcome, _tag) = subject.grant(reader_bundle, "follow").unwrap();
+    wire::publish_control(&subject_store, &subject_key, &welcome).await.unwrap();
+
+    // A long history: on the real link this is what drowns the two grants.
+    let days = 50i64;
+    for e in 0..days {
+        let segment = subject.seal(22_000 + e, &day(22_000 + e, 100.0 + e as f64)).unwrap();
+        wire::publish(&subject_store, &subject_key, &segment).await.unwrap();
+    }
+
+    let author = subject_key.verifying_key();
+    let subject_hex = author.to_hex();
+
+    let publisher = Swarm::join_network(tmp("ct-pub-pool"), SigningKey::generate(), net).await.unwrap();
+    let (pub_endpoint, pub_gossip) = publisher.parts();
+    let publishing = KeysReplicator::keys(subject_store.clone(), pub_endpoint, pub_gossip)
+        .await
+        .unwrap();
+
+    // ---- the follower: carries the CONTROL topic only ----------------------
+    let follower_store = SqliteStoreBuilder::memory().build().await.unwrap();
+    let follower = Swarm::join_network(tmp("ct-fol-pool"), SigningKey::generate(), net).await.unwrap();
+    let (fol_endpoint, fol_gossip) = follower.parts();
+    let following = KeysReplicator::keys(follower_store.clone(), fol_endpoint, fol_gossip)
+        .await
+        .unwrap();
+
+    // Both carry ONLY the control log, on the control topic. Neither side ever
+    // associates the segment log with this topic, so the session can only ever
+    // offer the grants — which is the whole point.
+    let control = pool::control_topic(&subject_hex);
+    publishing.carry_logs(control, &subject_hex, &[CONTROL_LOG_ID]).await.unwrap();
+    following.carry_logs(control, &subject_hex, &[CONTROL_LOG_ID]).await.unwrap();
+
+    // **THE CONTROL TOPIC RESOLVES TO THE CONTROL LOG ALONE.** This is the
+    // invariant that gives the grants their own session; if a refactor ever let
+    // the segment log onto this topic the grants would queue behind it again.
+    let resolved = <SqliteStore as p2panda_store::topics::TopicStore<
+        p2panda_core::Topic,
+        VerifyingKey,
+        u32,
+    >>::resolve(&follower_store, &Hash::from_bytes(control).into())
+    .await
+    .unwrap();
+    assert_eq!(
+        resolved.get(&author),
+        Some(&vec![CONTROL_LOG_ID]),
+        "the control topic must resolve to the control log alone, got {resolved:?}"
+    );
+
+    let mut controls = 0u32;
+    for _ in 0..60 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        controls = held(&follower_store, &author, CONTROL_LOG_ID).await;
+        if controls >= 2 {
+            break;
+        }
+    }
+    println!("  follower events: {:?}", following.events());
+    assert_eq!(controls, 2, "the follower got {controls} of 2 grants on the control topic");
+
+    // And it got them WITHOUT fetching a single segment: proof the grants no
+    // longer wait behind the history.
+    let segments = held(&follower_store, &author, LOG_ID).await;
+    assert_eq!(segments, 0, "the follower carried no segment topic yet holds {segments} segments");
+
+    // The welcome authenticates and the reader joins — the end the bug denied.
+    let arrived = wire::control_from(&follower_store, &author, None).await.unwrap();
+    assert_eq!(arrived.len(), 2, "both grants did not authenticate in the follower's store");
+
+    let reader_key = SigningKey::generate();
+    let mut reader = Vault::open(tmp("ct-reader"), OFFSET, &reader_key).unwrap();
+    let registry = Vault::registry(&[(subject.subject(), subject_bundle.clone())]).unwrap();
+    let mut joined = false;
+    for message in &arrived {
+        if reader
+            .join(reader_mgr.clone(), registry.clone(), &subject_bundle, "follow", message)
+            .is_ok()
+        {
+            joined = true;
+            break;
+        }
+    }
+    assert!(joined, "the reader found no welcome it could open among {}", arrived.len());
+}

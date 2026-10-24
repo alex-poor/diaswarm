@@ -38,8 +38,6 @@ fun SettingsScreen(
     onShowInvite: () -> Unit,
     onChoose: (Follower.Subject) -> Unit,
     onUnits: () -> Unit,
-    onKeysVault: () -> Unit,
-    keysVault: Boolean,
     onKeysOnly: () -> Unit,
     keysOnly: Boolean,
     onStayReachable: () -> Unit,
@@ -194,22 +192,17 @@ fun SettingsScreen(
                             leading = Icons.Outlined.Science
                         ) { advanced = !advanced }
                         if (advanced) {
+                            // The "New vault" toggle is gone — the keys vault is
+                            // always on now, because turning it off made an invite
+                            // the subject could not act on. See [Prefs.keysVault].
+                            // Only the read-side cutover switch remains.
                             RowDivider()
                             SwitchRow(
-                                "New vault",
-                                "Your invite changes form, so the person you follow needs a recent app for it to work.",
-                                checked = keysVault,
-                                leading = Icons.Outlined.Lock
-                            ) { onKeysVault() }
-                            if (keysVault) {
-                                RowDivider()
-                                SwitchRow(
-                                    "Ignore old vault",
-                                    "Reads only the new vault, so anything it is missing shows up straight away. Turn back on if the graph looks wrong.",
-                                    checked = keysOnly,
-                                    leading = Icons.Outlined.VisibilityOff
-                                ) { onKeysOnly() }
-                            }
+                                "Ignore old vault",
+                                "Reads only the new vault, so anything it is missing shows up straight away. Turn back on if the graph looks wrong.",
+                                checked = keysOnly,
+                                leading = Icons.Outlined.VisibilityOff
+                            ) { onKeysOnly() }
                         }
                     }
                 }

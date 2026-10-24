@@ -55,3 +55,6 @@ opt-level = "z"
 # and the instructions for removing this again.
 [patch.crates-io]
 iroh = { path = "../../vendor/iroh" }
+# Leak-fix fork of p2panda-sync 0.7.1 (session-channel reaping); shared by the
+# Ayni follower and the AAPS plugin. See vendor/p2panda-sync + memory note.
+p2panda-sync = { path = "../../vendor/p2panda-sync" }

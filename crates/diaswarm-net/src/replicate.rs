@@ -261,11 +261,36 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         })
     }
 
-    /// Carry this subject's data on this topic.
+    /// Carry all of this subject's logs on this topic.
     ///
     /// Idempotent, because a pool pass calls it for everything it hears about
     /// and most of that is already known.
     pub async fn carry(&self, topic_bytes: [u8; 32], subject: &str) -> Result<()> {
+        let logs = self.logs.clone();
+        self.carry_logs(topic_bytes, subject, &logs).await
+    }
+
+    /// Carry a chosen subset of this subject's logs on this topic.
+    ///
+    /// **SO ONE LOG CAN HAVE A TOPIC TO ITSELF.** [`carry`] associates every log
+    /// a subject has, which is right for the topics that carry the whole subject
+    /// — but `TopicLogSync` syncs all of a topic's logs in one ordered session,
+    /// segments before grants, so a long segment log can strand the grants on a
+    /// link that drops before the segments drain (see [`crate::pool::control_topic`]).
+    /// Associating a single log on a dedicated topic gives it its own session,
+    /// which is how the grants stop waiting behind the segments. The logs passed
+    /// here must be a subset of [`Self::logs`]; associating a log the peer never
+    /// routes would store arriving operations nowhere.
+    ///
+    /// Idempotent per `(topic, subject)`: a second call with a different log
+    /// subset on a topic already carried for this subject is a no-op, because a
+    /// topic's association set is decided the first time it is carried.
+    pub async fn carry_logs(
+        &self,
+        topic_bytes: [u8; 32],
+        subject: &str,
+        logs: &[u32],
+    ) -> Result<()> {
         let key = subject_key(subject)?;
         let pair = (topic_bytes, subject.to_string());
         if self.associated.lock().unwrap().contains(&pair) {
@@ -278,7 +303,7 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         // from `begin`, including the methods that do not end in `_tx` and look
         // self-contained. Without it this fails with "tried to interact with
         // inexistant transaction", which reads like a corrupt store.
-        let logs = self.logs.clone();
+        let logs = logs.to_vec();
         let out: Result<(), p2panda_store::SqliteError> = async {
             tx!(store, {
                 for log_id in &logs {

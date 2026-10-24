@@ -27,7 +27,6 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.validators.preferences.AdaptiveClickPreference
 import app.aaps.core.validators.preferences.AdaptiveListPreference
-import app.aaps.core.validators.preferences.AdaptiveSwitchPreference
 import app.aaps.core.validators.preferences.AdaptiveStringPreference
 import app.aaps.plugins.sync.swarm.keys.SwarmBooleanKey
 import app.aaps.plugins.sync.swarm.keys.SwarmLongKey
@@ -135,7 +134,8 @@ class SwarmPlugin @Inject constructor(
     override fun onStart() {
         super.onStart()
         if (isEnabled()) {
-            repairWraps()
+            // KEYS-ONLY: repairWraps() (a core-vault wrap repair) is gone with
+            // the core-vault write path; the keys vault has no equivalent need.
             startServing()
             schedulePeriodicSync()
             // SYNC ONCE, NOW. The two-minute poll re-arms itself at the end of
@@ -316,14 +316,10 @@ class SwarmPlugin @Inject constructor(
                     }
                 )
             )
-            addPreference(
-                AdaptiveSwitchPreference(
-                    ctx = context,
-                    booleanKey = SwarmBooleanKey.ShadowSpacesVault,
-                    title = R.string.swarm_shadow_spaces,
-                    summary = R.string.swarm_shadow_spaces_summary
-                )
-            )
+            // KEYS-ONLY CUTOVER: the "Shadow the new vault" toggle is gone — the
+            // keys (p2panda) vault is the only vault now, always on. The
+            // SwarmBooleanKey.ShadowSpacesVault preference is left defined but
+            // unread (vestigial) so the key registry at construction stays valid.
             addPreference(
                 AdaptiveClickPreference(
                     ctx = context,
@@ -398,9 +394,12 @@ class SwarmPlugin @Inject constructor(
     }
 
     private fun grantedReaders(): String {
+        // KEYS-ONLY: vaultReaders now reads readers.json directly (no meta.json
+        // precondition), so "Who can read" works after the cutover — the book
+        // is still populated at grant time by vaultNoteReaderKeys/Scope. The
+        // reader/purpose/scope columns are unchanged.
         SwarmNative.check()
         val vault = SwarmPaths.vault(context, this::class.java)
-        if (!java.io.File(vault, "meta.json").exists()) return ""
         return SwarmNative.vaultReaders(vault.absolutePath)
     }
 
@@ -411,30 +410,10 @@ class SwarmPlugin @Inject constructor(
         super.onStop()
     }
 
-    /**
-     * Catch up any wraps a granted reader is owed but does not have.
-     *
-     * Sealing keeps these current, so this normally writes nothing. It is here
-     * because an earlier build wrapped only at the moment a grant was made, so
-     * every segment sealed afterwards — one per day, plus one per rotation —
-     * reached the reader as bytes they could not open. Nothing reported it:
-     * the follower kept syncing and kept showing the same stale reading.
-     *
-     * A vault granted by that build has no record of whose key it was (the
-     * grant log names nobody, by design), so this cannot repair those on its
-     * own; re-applying the grant with the reader's key does, and no longer
-     * appends to the log when the grant already stands.
-     */
-    private fun repairWraps() {
-        SwarmNative.check()
-        val vault = SwarmPaths.vault(context, this::class.java)
-        if (!java.io.File(vault, "meta.json").exists()) return
-        when (val n = SwarmNative.vaultRewrap(vault.absolutePath)) {
-            0L -> Unit
-            in 1..Long.MAX_VALUE -> aapsLogger.info(LTag.CORE, "swarm: wrapped $n segments readers were owed")
-            else -> aapsLogger.warn(LTag.CORE, "swarm: could not bring wraps up to date ($n)")
-        }
-    }
+    // KEYS-ONLY CUTOVER: repairWraps()/SwarmNative.vaultRewrap removed with the
+    // hand-rolled core-vault write path. Keeping granted readers current on the
+    // keys vault is p2panda's job (group membership + rotation), not a per-wrap
+    // repair, so there is no equivalent to run here.
 
     /**
      * Serve the vault to peers.
@@ -486,14 +465,10 @@ class SwarmPlugin @Inject constructor(
             // timeout, so a second pool on this file would make sealing and
             // replication take turns failing.
             //
-            // Gated, because an ungated one cost a follower its latency. Once
-            // the replicator exists and something has carried a topic, the
-            // log-sync subscription is live until the process restarts —
-            // turning the preference off does not unsubscribe it. So the switch
-            // has to decide whether the replicator is built at all.
-            if (preferences.get(SwarmBooleanKey.ShadowSpacesVault))
-                SwarmKeys.dir(context).absolutePath
-            else ""
+            // KEYS-ONLY: always build the keys replicator — the keys vault is
+            // the authoritative store now, so the pool must always carry its
+            // logs. (Previously gated on the ShadowSpacesVault toggle.)
+            SwarmKeys.dir(context).absolutePath
         )
         if (serving == 0L) {
             aapsLogger.error(LTag.CORE, "swarm: could not start serving")
@@ -511,7 +486,7 @@ class SwarmPlugin @Inject constructor(
             // already rolled past the outage that made this necessary.
             { aapsLogger.info(LTag.CORE, "swarm: $it") }
         ) { SwarmEndpoint.handle }
-        servingWithKeys = preferences.get(SwarmBooleanKey.ShadowSpacesVault)
+        servingWithKeys = true // KEYS-ONLY: the pool is always built with keys.
         SwarmEndpoint.rejoinIfPreferencesChanged = { rejoinIfKeysPreferenceChanged() }
         aapsLogger.info(LTag.CORE, "swarm: in the pool as ${SwarmNative.swarmNodeId(serving)}")
         aapsLogger.info(
@@ -586,7 +561,10 @@ class SwarmPlugin @Inject constructor(
      */
     private fun rejoinIfKeysPreferenceChanged() {
         if (serving == 0L) return
-        val wanted = preferences.get(SwarmBooleanKey.ShadowSpacesVault)
+        // KEYS-ONLY: the pool is always built with keys, so there is nothing to
+        // reconcile. Left as a no-op (rather than deleting the hook) so the
+        // pass-time wiring in [DataSyncSelectorSwarmImpl.poolPass] stays valid.
+        val wanted = true
         if (wanted == servingWithKeys) return
         aapsLogger.info(
             LTag.CORE,
