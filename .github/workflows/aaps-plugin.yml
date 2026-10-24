@@ -1,0 +1,96 @@
+# The third product: the AAPS loop APK with the swarm plugin.
+#
+# peer.yml and ayni.yml build the carrier and the follower; this builds the one
+# product that lives in another repository. The plugin's source is here
+# (`plugin/`), but a shippable artifact only exists once it is compiled INTO the
+# AndroidAPS fork, against that fork's APIs, with the record-core `.so`
+# cross-compiled in. Nothing proved that happened until this ran — a change to
+# the core or the plugin could pass every crate test and still not build an APK.
+#
+# WHY IN THIS REPO AND NOT THE FORK. The drift this guards is a diaswarm change
+# (core or plugin) breaking the integration, so the trigger belongs where that
+# change lands. The fork is a public checkout, so no token is needed.
+name: aaps plugin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugin/**"
+      - "crates/**"
+      - ".github/workflows/aaps-plugin.yml"
+  pull_request:
+    paths:
+      - "plugin/**"
+      - "crates/**"
+      - ".github/workflows/aaps-plugin.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: aaps-plugin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out diaswarm (the plugin + the record core)
+        uses: actions/checkout@v4
+        with:
+          path: diaswarm
+
+      # The add-on compiles into this; diaswarm-addon is the branch that carries
+      # the `:plugins:sync:swarm` include. main does not and would not build.
+      - name: Check out the AndroidAPS fork
+        uses: actions/checkout@v4
+        with:
+          repository: alex-poor/AndroidAPS
+          ref: diaswarm-addon
+          path: aaps
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Same NDK the follower build uses (ayni.yml). buildRustCore reads
+      # ANDROID_NDK_HOME; the runner ships one under ANDROID_NDK_LATEST_HOME.
+      - name: NDK
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_NDK_LATEST_HOME:-}"
+          [ -n "$NDK" ] && [ -d "$NDK" ] || { echo "::error::no NDK on the runner"; exit 1; }
+          echo "using NDK at $NDK"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+
+      - name: Rust for Android
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android armv7-linux-androideabi
+          cargo install cargo-ndk --locked
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.cargo/registry
+            ~/.cargo/git
+            diaswarm/crates/*/target
+          key: aaps-plugin-${{ runner.os }}-${{ hashFiles('diaswarm/**/Cargo.lock', 'diaswarm/plugin/**/*.gradle*') }}
+          restore-keys: aaps-plugin-${{ runner.os }}-
+
+      # The real product: the full loop APK, swarm plugin and record-core .so
+      # inside it. The `loop` build type signs with the debug key, so this needs
+      # no keystore secret. settings.gradle finds the plugin via DIASWARM_PLUGIN_DIR.
+      - name: Build the loop APK with the swarm plugin
+        working-directory: aaps
+        env:
+          DIASWARM_PLUGIN_DIR: ${{ github.workspace }}/diaswarm/plugin
+        run: ./gradlew :app:assembleFullLoop --console=plain --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aaps-full-loop-apk
+          path: aaps/app/build/outputs/apk/full/loop/*.apk
+          if-no-files-found: error
