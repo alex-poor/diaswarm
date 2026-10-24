@@ -1,9 +1,13 @@
 package nz.diaswarm.follower
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.GroupAdd
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -385,14 +389,29 @@ private fun RangeRow(hours: Int, caption: String, onPick: (Int) -> Unit) {
 private fun EmptyCard(onScan: () -> Unit, onShowInvite: () -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = Card), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("Not following anyone yet.", color = Text1, fontSize = 17.sp)
+            // The swarm's own green, so the first screen reads as this app and not
+            // a default Material form.
+            Icon(Icons.Outlined.GroupAdd, contentDescription = null, tint = Good,
+                modifier = Modifier.size(32.dp))
+            Text("Not following anyone yet.", color = Text1, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             Text(
                 "Ask them to show you their invite, then scan it. They decide what " +
                     "you can read, and can stop at any time.",
                 color = Text2, fontSize = 14.sp
             )
-            Button(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Text("Scan their invite") }
-            OutlinedButton(onClick = onShowInvite, modifier = Modifier.fillMaxWidth()) { Text("Show my invite") }
+            // The primary way in is filled in the brand green; showing your own
+            // invite is the quieter second path.
+            Button(
+                onClick = onScan, modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(AyniRadius.Pill),
+                colors = ButtonDefaults.buttonColors(containerColor = Good, contentColor = Bg)
+            ) { Text("Scan their invite", fontWeight = FontWeight.SemiBold) }
+            OutlinedButton(
+                onClick = onShowInvite, modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(AyniRadius.Pill),
+                border = BorderStroke(1.dp, AyniColor.Line),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Text1)
+            ) { Text("Show my invite") }
         }
     }
 }
@@ -400,13 +419,19 @@ private fun EmptyCard(onScan: () -> Unit, onShowInvite: () -> Unit) {
 @Composable
 private fun ChooseCard(followed: List<Follower.Subject>, onChoose: (Follower.Subject) -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = Card), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Whose glucose should this show?", color = Text1, fontSize = 17.sp)
+        Column(Modifier.padding(vertical = 6.dp)) {
             // Picking one at random would be picking a PERSON at random.
-            followed.forEach { s ->
-                Text(s.label, color = Good, fontSize = 15.sp,
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                        .clickable { onChoose(s) }.padding(vertical = 10.dp))
+            Text("Whose glucose should this show?", color = Text1, fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 4.dp))
+            followed.forEachIndexed { i, s ->
+                SubjectRow(
+                    s.label,
+                    if (s.reached) "holding their history" else "nothing has arrived yet",
+                    selected = false,
+                    leading = Icons.Outlined.Person
+                ) { onChoose(s) }
+                if (i < followed.lastIndex) RowDivider()
             }
         }
     }

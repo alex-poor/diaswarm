@@ -7,6 +7,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -86,7 +88,8 @@ fun SettingsScreen(
                             SubjectRow(
                                 s.short,
                                 if (s.reached) "holding their history" else "nothing has arrived yet",
-                                selected = false
+                                selected = false,
+                                leading = Icons.Outlined.Person
                             ) { onChoose(s) }
                             if (i < followed.lastIndex) RowDivider()
                         }
@@ -117,7 +120,8 @@ fun SettingsScreen(
                             SwitchRow(
                                 level.label.replaceFirstChar { it.uppercase() },
                                 alertSubtitle(level),
-                                checked = alertOn(level)
+                                checked = alertOn(level),
+                                leading = alertIcon(level)
                             ) { onToggleAlert(level) }
                             if (i < Alerts.Level.entries.lastIndex) RowDivider()
                         }
@@ -125,22 +129,24 @@ fun SettingsScreen(
                 }
 
                 SettingsGroup("Add someone") {
-                    ActionRow("Scan their invite") { onScan() }
+                    ActionRow("Scan their invite", leading = Icons.Outlined.QrCodeScanner) { onScan() }
                     RowDivider()
                     // An invite arrives by message as often as by camera, so pasting
                     // is a first-class way in, not a fallback.
-                    ActionRow("Paste a code") { onPaste() }
+                    ActionRow("Paste a code", leading = Icons.Outlined.ContentPaste) { onPaste() }
                     RowDivider()
-                    ActionRow("Show my invite") { onShowInvite() }
+                    ActionRow("Show my invite", leading = Icons.Outlined.QrCode2) { onShowInvite() }
                 }
 
                 SettingsGroup("This phone") {
-                    ValueRow("Units", null, if (mmol) "mmol/L" else "mg/dL") { onUnits() }
+                    ValueRow("Units", null, if (mmol) "mmol/L" else "mg/dL",
+                        leading = Icons.Outlined.Straighten) { onUnits() }
                     RowDivider()
                     SwitchRow(
                         "Keep up to date while asleep",
                         stayAwakeSubtitle(stayReachable, dozeExempt),
-                        checked = stayReachable
+                        checked = stayReachable,
+                        leading = Icons.Outlined.DarkMode
                     ) { onStayReachable() }
                     // Offered only when the service is on but Android is still holding
                     // it back — the one case the exemption actually helps.
@@ -148,11 +154,13 @@ fun SettingsScreen(
                         RowDivider()
                         ActionRow(
                             "Fix background limits",
-                            "If it still falls behind overnight, set ayni to Unrestricted — only you can grant it."
+                            "If it still falls behind overnight, set ayni to Unrestricted — only you can grant it.",
+                            leading = Icons.Outlined.BatteryAlert
                         ) { onFixDoze() }
                     }
                     RowDivider()
-                    ValueRow("Colour readings against", "Your lines, not theirs", bandLabel) { onBand() }
+                    ValueRow("Colour readings against", "Your lines, not theirs", bandLabel,
+                        leading = Icons.Outlined.Palette) { onBand() }
                 }
 
                 // The experimental vault options, folded away. A phone reading
@@ -168,21 +176,24 @@ fun SettingsScreen(
                     Column {
                         ActionRow(
                             "Experimental vault options",
-                            if (advanced) null else "Tap to show"
+                            if (advanced) null else "Tap to show",
+                            leading = Icons.Outlined.Science
                         ) { advanced = !advanced }
                         if (advanced) {
                             RowDivider()
                             SwitchRow(
                                 "New vault",
                                 "Your invite changes form, so the person you follow needs a recent app for it to work.",
-                                checked = keysVault
+                                checked = keysVault,
+                                leading = Icons.Outlined.Lock
                             ) { onKeysVault() }
                             if (keysVault) {
                                 RowDivider()
                                 SwitchRow(
                                     "Ignore old vault",
                                     "Reads only the new vault, so anything it is missing shows up straight away. Turn back on if the graph looks wrong.",
-                                    checked = keysOnly
+                                    checked = keysOnly,
+                                    leading = Icons.Outlined.VisibilityOff
                                 ) { onKeysOnly() }
                             }
                         }
@@ -193,6 +204,14 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+/** The leading icon for an alert level — arrows that point the way the reading went. */
+private fun alertIcon(level: Alerts.Level): androidx.compose.ui.graphics.vector.ImageVector = when (level) {
+    Alerts.Level.URGENT_LOW -> Icons.Outlined.KeyboardDoubleArrowDown
+    Alerts.Level.LOW -> Icons.Outlined.KeyboardArrowDown
+    Alerts.Level.HIGH -> Icons.Outlined.KeyboardArrowUp
+    Alerts.Level.VERY_HIGH -> Icons.Outlined.KeyboardDoubleArrowUp
 }
 
 /** The three-state explanation under "Keep up to date while asleep". */

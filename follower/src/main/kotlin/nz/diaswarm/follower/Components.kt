@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -19,9 +20,10 @@ import androidx.compose.ui.unit.sp
  * the settings sheet ended up a wall of tappable Text with no two rows quite
  * alike. Everything here draws from the tokens in Theme.kt.
  *
- * Leading icons are deliberately left out for now: inconsistent Unicode glyphs
- * read worse than none, and a real vector set is a follow-up. The structure —
- * grouping, switches, values, chevrons — is what makes a list legible.
+ * Each row takes an optional leading [ImageVector], tinted dim so it labels the
+ * row without competing with the text. These are real Material vectors, not the
+ * Unicode glyphs an earlier version of this comment refused — a glyph that
+ * renders differently on every phone is worse than none, a drawn vector is not.
  */
 
 /** A rounded surface card with the standard inset. */
@@ -63,14 +65,20 @@ fun RowDivider() = HorizontalDivider(
 )
 
 @Composable
-private fun RowShell(onClick: (() -> Unit)?, content: @Composable RowScope.() -> Unit) {
+private fun RowShell(onClick: (() -> Unit)?, leading: ImageVector? = null, content: @Composable RowScope.() -> Unit) {
     val base = Modifier.fillMaxWidth()
     Row(
         (if (onClick != null) base.clickable { onClick() } else base)
             .padding(horizontal = AyniSpace.s4, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        content = content
-    )
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (leading != null) {
+            Icon(leading, contentDescription = null, tint = AyniColor.Text3,
+                modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(AyniSpace.s3))
+        }
+        content()
+    }
 }
 
 @Composable
@@ -84,8 +92,8 @@ private fun RowScope.TitleAndSubtitle(title: String, subtitle: String?, titleCol
 
 /** A row with a real Material switch on the right. The whole row toggles. */
 @Composable
-fun SwitchRow(title: String, subtitle: String?, checked: Boolean, onToggle: () -> Unit) {
-    RowShell(onClick = onToggle) {
+fun SwitchRow(title: String, subtitle: String?, checked: Boolean, leading: ImageVector? = null, onToggle: () -> Unit) {
+    RowShell(onClick = onToggle, leading = leading) {
         TitleAndSubtitle(title, subtitle)
         Spacer(Modifier.width(AyniSpace.s3))
         Switch(
@@ -104,8 +112,8 @@ fun SwitchRow(title: String, subtitle: String?, checked: Boolean, onToggle: () -
 
 /** A row showing a current value on the right (e.g. "mmol/L"), tappable to change. */
 @Composable
-fun ValueRow(title: String, subtitle: String?, value: String, onClick: () -> Unit) {
-    RowShell(onClick = onClick) {
+fun ValueRow(title: String, subtitle: String?, value: String, leading: ImageVector? = null, onClick: () -> Unit) {
+    RowShell(onClick = onClick, leading = leading) {
         TitleAndSubtitle(title, subtitle)
         Spacer(Modifier.width(AyniSpace.s3))
         Text(value, color = AyniColor.Text2, fontSize = AyniType.BodySmall)
@@ -114,8 +122,8 @@ fun ValueRow(title: String, subtitle: String?, value: String, onClick: () -> Uni
 
 /** A row that performs an action, with a chevron to say so. */
 @Composable
-fun ActionRow(title: String, subtitle: String? = null, onClick: () -> Unit) {
-    RowShell(onClick = onClick) {
+fun ActionRow(title: String, subtitle: String? = null, leading: ImageVector? = null, onClick: () -> Unit) {
+    RowShell(onClick = onClick, leading = leading) {
         TitleAndSubtitle(title, subtitle)
         Spacer(Modifier.width(AyniSpace.s3))
         Text("›", color = AyniColor.Text3, fontSize = 22.sp)
@@ -124,8 +132,8 @@ fun ActionRow(title: String, subtitle: String? = null, onClick: () -> Unit) {
 
 /** A person in the follow list: name + what this phone has of theirs. */
 @Composable
-fun SubjectRow(title: String, status: String, selected: Boolean, onClick: () -> Unit) {
-    RowShell(onClick = onClick) {
+fun SubjectRow(title: String, status: String, selected: Boolean, leading: ImageVector? = null, onClick: () -> Unit) {
+    RowShell(onClick = onClick, leading = leading) {
         Column(Modifier.weight(1f)) {
             Text(title, color = AyniColor.Text1, fontSize = AyniType.Body,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
