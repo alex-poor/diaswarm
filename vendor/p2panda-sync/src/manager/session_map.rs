@@ -46,13 +46,50 @@ where
         let Some(topic) = self.session_topic_map.remove(&session_id) else {
             return false;
         };
-        self.topic_session_map
-            .entry(topic.clone())
-            .and_modify(|sessions| {
-                sessions.remove(&session_id);
-            });
+        // Remove the session from its topic bucket, and the bucket itself once
+        // it empties — otherwise an empty `HashSet` lingers for every topic
+        // whose last session ended (bounded by distinct-topic count, but there
+        // is no reason to keep it).
+        if let Some(sessions) = self.topic_session_map.get_mut(&topic) {
+            sessions.remove(&session_id);
+            if sessions.is_empty() {
+                self.topic_session_map.remove(&topic);
+            }
+        }
         self.session_tx_map.remove(&session_id);
         true
+    }
+
+    /// Drop every session whose sender no longer passes `keep`; returns how many.
+    ///
+    /// **WHY — THE MANAGER'S OWN COPY IS INSERT-ONLY OTHERWISE.** `session()`
+    /// inserts a session here, but only the event stream's *clone* of this map
+    /// is reaped (by `drop_session`, reactively, when a live-forward hits a dead
+    /// channel). The manager's original is never touched, so across gossip churn
+    /// — a new session per NeighbourUp — it grows one `(session_id → topic,
+    /// sender)` triple per session that ever ran, for the life of the process.
+    /// The entries are small (the heavy broadcast rings live in
+    /// `from_session_tx`, which *is* reaped), so this is a slow drift rather than
+    /// the per-session ring leak, but it is still unbounded.
+    ///
+    /// A futures mpsc `Sender::is_closed()` is true once the session's receiver
+    /// is gone — i.e. the session ended — so the manager prunes the closed ones
+    /// on each `session()`, the same cadence at which this map grows and exactly
+    /// how `manager_tx` is already pruned. Dropping goes through [`drop`] so the
+    /// topic bucket stays coherent.
+    pub fn retain<F>(&mut self, mut keep: F) -> usize
+    where
+        F: FnMut(&TX) -> bool,
+    {
+        let dead: Vec<u64> = self
+            .session_tx_map
+            .iter()
+            .filter_map(|(id, tx)| (!keep(tx)).then_some(*id))
+            .collect();
+        for id in &dead {
+            self.drop(*id);
+        }
+        dead.len()
     }
 
     /// Get the topic for a session id.
@@ -144,6 +181,48 @@ mod tests {
 
         // Dropping a non-existent session returns false
         assert!(!map.drop(10));
+    }
+
+    #[test]
+    fn drop_removes_empty_topic_bucket() {
+        let (tx, _rx) = mpsc::channel::<()>(128);
+        let mut map = SessionTopicMap::default();
+        let topic_a = Topic::random();
+
+        map.insert_with_topic(SESSION1, topic_a, tx);
+        assert!(map.topic_session_map.contains_key(&topic_a));
+
+        // Dropping the last session for the topic removes the bucket entirely,
+        // not just its (now empty) member set.
+        assert!(map.drop(SESSION1));
+        assert!(!map.topic_session_map.contains_key(&topic_a));
+    }
+
+    #[test]
+    fn retain_drops_closed_senders_and_bounds_the_map() {
+        let mut map = SessionTopicMap::default();
+        let topic_a = Topic::random();
+
+        // Two live sessions and one whose receiver we drop (session ended).
+        let (tx1, _rx1) = mpsc::channel::<()>(128);
+        let (tx2, _rx2) = mpsc::channel::<()>(128);
+        let (tx3, rx3) = mpsc::channel::<()>(128);
+        map.insert_with_topic(SESSION1, topic_a, tx1);
+        map.insert_with_topic(SESSION2, topic_a, tx2);
+        map.insert_with_topic(SESSION3, topic_a, tx3);
+        drop(rx3);
+
+        let dropped = map.retain(|tx| !tx.is_closed());
+
+        assert_eq!(dropped, 1);
+        assert!(map.topic(SESSION1).is_some());
+        assert!(map.topic(SESSION2).is_some());
+        assert!(map.topic(SESSION3).is_none());
+        assert!(!map.session_tx_map.contains_key(&SESSION3));
+        assert_eq!(map.sessions(&topic_a), HashSet::from([SESSION1, SESSION2]));
+
+        // Idempotent: nothing left to prune.
+        assert_eq!(map.retain(|tx| !tx.is_closed()), 0);
     }
 
     #[test]

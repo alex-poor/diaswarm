@@ -159,6 +159,16 @@ where
         self.session_topic_map
             .insert_with_topic(session_id, config.topic.clone(), live_tx.clone());
 
+        // **BOUND THE MANAGER'S OWN SESSION MAP.** Only the event stream's clone
+        // of `session_topic_map` is reaped (`drop_session`, reactively); this
+        // original is insert-only and would grow one entry per session for the
+        // life of the process across gossip churn. A session's `live_tx` reports
+        // `is_closed()` once its receiver is gone — i.e. the session ended — so
+        // prune the closed ones here, at the same cadence this map grows (and
+        // exactly as `manager_tx` is pruned below). The session just inserted
+        // still holds its receiver, so it is never pruned by its own call.
+        self.session_topic_map.retain(|live_tx| !live_tx.is_closed());
+
         // **PRUNE DEAD SUBSCRIBERS WHILE DELIVERING.** `subscribe()` pushes a
         // sender here and nothing ever removed it, so on a peer that re-streams
         // (drops and re-subscribes its topics to recover from a stalled gossip

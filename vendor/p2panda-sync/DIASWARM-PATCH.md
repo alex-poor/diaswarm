@@ -46,6 +46,31 @@ Carrier RSS, same subject, before/after (sampled every 20 s): stock climbed
 working set then stayed flat (±0.2 MB over 5 min). All 26 p2panda-sync unit tests
 pass. No wire/format change.
 
+## Follow-up: the manager's own `session_topic_map` (second insert-only map)
+
+The fix above shares `from_session_tx` and reaps it, but `session_topic_map` is
+still **`.clone()`d** into the event stream (not shared): `drop_session` reaps
+only the stream's clone, while the manager's original — written in `session()`,
+read by `session_handle()` — is never touched. So it too grew one
+`(session_id → topic, live_tx)` triple per session, unbounded over churn. The
+entries are small (the heavy broadcast rings are in `from_session_tx`, already
+reaped), so this was a slow drift, not the GB leak, but still unbounded.
+
+`src/manager/session_map.rs`:
+- `SessionTopicMap::retain(keep)` — drop every session whose sender fails the
+  predicate, going through `drop()` so the topic bucket stays coherent;
+- `drop()` now removes a topic's bucket once its last session leaves (was an
+  empty `HashSet` left behind per topic).
+
+`src/manager/mod.rs`:
+- `session()` calls `session_topic_map.retain(|live_tx| !live_tx.is_closed())`
+  — an mpsc sender is closed once its receiver (the ended session) is gone, so
+  this bounds the map to live sessions, at the same cadence it grows and exactly
+  as `manager_tx` is pruned alongside it. Safe because live forwarding uses the
+  stream's independent copy, not this one.
+
+All 28 p2panda-sync unit tests pass. No wire/format change.
+
 ## Removing this fork
 
 Drop the `p2panda-sync = { path = "../../vendor/p2panda-sync" }` lines from the
