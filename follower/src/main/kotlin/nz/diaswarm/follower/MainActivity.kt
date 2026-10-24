@@ -3,6 +3,8 @@ package nz.diaswarm.follower
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -36,6 +38,11 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Before super.onCreate: swaps the launch theme for the real one. The
+        // system splash is just a plain #12161C (transparent icon), dismissed
+        // at once, so the Compose SwarmSplash below is the first thing drawn and
+        // there is no launcher-icon flash before it.
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         Endpoint.start(applicationContext)
         // Bring the service into line with the preference on every launch:
@@ -43,7 +50,15 @@ class MainActivity : ComponentActivity() {
         // in the system settings rather than in here.
         StayAwake.apply(applicationContext)
         schedule()
-        setContent { FollowerApp(onScan = { scanner.launch(scanOptions()) }, scanned = scanned, onScanHandled = { scanned = null }) }
+        setContent {
+            // The app composes underneath immediately (so onResume's sync is
+            // already in flight); the swarm plays over it once, then reveals it.
+            Box(Modifier.fillMaxSize()) {
+                FollowerApp(onScan = { scanner.launch(scanOptions()) }, scanned = scanned, onScanHandled = { scanned = null })
+                var splashDone by rememberSaveable { mutableStateOf(false) }
+                if (!splashDone) SwarmSplash(onDone = { splashDone = true })
+            }
+        }
     }
 
     override fun onResume() {

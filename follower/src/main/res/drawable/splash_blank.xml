@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    A fully transparent icon for the platform splash slot. The startup
+    animation is drawn in Compose (see Splash.kt); the system splash must show
+    nothing but its background, so the Compose swarm is the first mark on
+    screen. Omitting the icon entirely would let Android fall back to the
+    launcher icon, which would flash the finished ring before the dots gather.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:pathData="M0,0h48v48h-48z"
+        android:fillColor="#0012161C" />
+</vector>
