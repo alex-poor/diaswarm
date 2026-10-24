@@ -3204,8 +3204,6 @@ dependencies = [
 [[package]]
 name = "p2panda-sync"
 version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab2dfec4540ec2021949ae1e90788948528f51d76e50827895d821ffda76272e"
 dependencies = [
  "futures-channel",
  "futures-util",

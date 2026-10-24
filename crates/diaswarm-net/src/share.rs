@@ -80,10 +80,8 @@ pub async fn carry_share(
     max_adopt: usize,
     also: &[String],
 ) -> Result<Share> {
-    // `.max(2)` because a pool of one has no depth to speak of and the first
-    // pass usually runs before anybody has been heard from.
-    let members = swarm.pool_members().await.map(|m| m.len()).unwrap_or(2).max(2);
-    let depth = crate::pool::depth_for(members);
+    // `depth`/`members` are gone with the legacy bucket topic below — the new
+    // `subject_topic` rendezvous takes no depth (D31), which was the point.
 
     let mut wanted: Vec<String> = vec![own_subject.to_string()];
 
@@ -117,30 +115,22 @@ pub async fn carry_share(
         // [D31](../../docs/decisions.md) and `pool::subject_topic`.
         let _ = replicator.carry(crate::pool::subject_topic(subject), subject).await;
 
-        // **AND THE OLD BUCKET TOPIC, FOR AS LONG AS ANYTHING USES IT.**
-        // Changing where a subject is synced is not a wire-format change that
-        // fails loudly — two peers on different topics simply never meet, which
-        // looks exactly like the network being quiet. The live pool is a phone
-        // driving an insulin pump and a follower somebody reads, so the new
-        // build joins both and nothing goes dark on upgrade.
-        //
-        // DELETE THIS once no peer on the old topic remains. It costs one extra
-        // subscription per carried subject, and it carries the depth bug with
-        // it: if this peer guesses a different depth from its neighbour, the
-        // legacy topic misses and the subject topic above still meets.
-        //
-        // **AND IT DOUBLES `pushed`, WHICH IS NOT A FAULT.**
-        // `Replicator::broadcast` returns the number of *topics* it published
-        // on, so while both are carried a phone's `shadow agrees — … pushed 2`
-        // is one operation sent to two rendezvous, not two sends of one
-        // operation. It drops back to 1 when this block goes. Saying so here
-        // because a doubling in a diagnostic is exactly the kind of thing this
-        // project has spent days misreading.
-        let legacy = crate::pool::bucket_topic(depth, crate::pool::bucket_of(subject, depth));
-        let _ = replicator.carry(legacy, subject).await;
+        // **THE OLD BUCKET TOPIC IS GONE.** For the cutover to `subject_topic`
+        // (D31) a subject was carried on BOTH the new per-subject topic and the
+        // old depth-sharded `bucket_topic`, so nothing went dark while peers
+        // upgraded ("DELETE once no peer on the old topic remains"). That moment
+        // has arrived: the live pool is only our own devices and all are on the
+        // new scheme. Removed because every carried topic is a gossip overlay
+        // whose HyParView churn starts and tears down a sync session on each
+        // NeighbourUp/Down, and p2panda-net leaks per teardown — so a redundant
+        // third topic per subject was ~a third of the carrier's session-churn
+        // leak for zero benefit. See the leak investigation in
+        // `diaswarm-ayni-leak-is-reader-readcost` (memory). `depth`/`members`
+        // went with it; re-add the dual-carry only for a genuine mixed-version
+        // rollout, never as a permanent state.
 
-        // **AND THE GRANTS ON A TOPIC OF THEIR OWN.** The two topics above each
-        // carry both of a subject's logs, and `TopicLogSync` drains them in one
+        // **AND THE GRANTS ON A TOPIC OF THEIR OWN.** `subject_topic` above
+        // carries both of a subject's logs, and `TopicLogSync` drains them in one
         // session, segments before grants. A subject with a long history offers
         // thousands of segment operations ahead of its handful of grants, so a
         // follower on a link that drops before the segments are through dies
