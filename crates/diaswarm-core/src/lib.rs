@@ -25,6 +25,27 @@ use serde_json::{Map, Value};
 /// The version of `spec/records.md` this implements. Declared in the header.
 pub const SPEC_VERSION: u64 = 3;
 
+/// The swarm **wire-protocol** version — the contract two peers must share to
+/// meet and exchange at all: how topics are derived, how an invite is framed,
+/// and the shape of the segment and control logs.
+///
+/// **DISTINCT FROM [`SPEC_VERSION`].** `SPEC_VERSION` is the record *schema* —
+/// what is sealed *inside* an operation, which readers tolerate across
+/// versions. This is the *transport* — change it and an old peer and a new one
+/// no longer recognise each other's topics or invites, so they silently never
+/// meet rather than fail loudly. That is the whole hazard the three products
+/// (desktop carrier, Ayni follower, AAPS plugin) face: they are built from this
+/// one core but deployed separately, and a half-upgraded fleet diverges without
+/// an error anywhere.
+///
+/// **SO THIS IS A GATE, NOT A LABEL.** `crates/diaswarm-net/tests/wire_contract.rs`
+/// pins the concrete bytes this version promises — the derived topic ids for a
+/// fixed subject and the exact encoding of each invite shape. If a change moves
+/// any of those bytes, that test fails: bump this number, update the fixtures to
+/// the new golden values, and ship all three products together. If the bytes did
+/// not move, this number must not move either.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 /// A day's worth of milliseconds. The width of an epoch, not its phase.
 pub const EPOCH_MS: i64 = 24 * 60 * 60 * 1000;
 

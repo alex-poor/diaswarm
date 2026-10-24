@@ -106,3 +106,13 @@ jobs:
       - name: diaswarm-net
         working-directory: crates/diaswarm-net
         run: cargo test --no-fail-fast
+
+      # THE WIRE CONTRACT, CALLED OUT BY NAME. It already runs inside the
+      # diaswarm-net step above, but a wire-protocol break is the one failure
+      # that silently splits the three products across a deploy, so it gets its
+      # own line in the checks list: a red X here reads "you changed the bytes
+      # two peers exchange — bump PROTOCOL_VERSION and ship all three together",
+      # not "a net test failed".
+      - name: wire contract (PROTOCOL_VERSION + golden topics/invites)
+        working-directory: crates/diaswarm-net
+        run: cargo test --test wire_contract -- --nocapture
