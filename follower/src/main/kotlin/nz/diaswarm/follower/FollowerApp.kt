@@ -206,15 +206,9 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             onShowInvite = { showPeople = false; Endpoint.expectOffer(); showInvite = true },
             onChoose = { Prefs.setGraphSubject(context, it.key); tick++; showPeople = false },
             onUnits = { Prefs.setMmol(context, !Prefs.mmol(context)); tick++ },
-            // The endpoint has to come back for this: see [Endpoint.restart].
-            onKeysVault = {
-                Prefs.setKeysVault(context, !Prefs.keysVault(context))
-                // Turning the vault off must take the keys-only mode with it, or
-                // the app would be left reading nothing at all.
-                if (!Prefs.keysVault(context)) Prefs.setKeysOnly(context, false)
-                Endpoint.restart(context)
-                tick++
-            },
+            // "New vault" is always on now (the toggle was a footgun — see
+            // [Prefs.keysVault]); only its always-true value is still passed, to
+            // gate the "Old vault" row below.
             keysVault = Prefs.keysVault(context),
             onKeysOnly = { Prefs.setKeysOnly(context, !Prefs.keysOnly(context)); tick++ },
             keysOnly = Prefs.keysOnly(context),
