@@ -1,9 +1,13 @@
 package nz.diaswarm.follower
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.GroupAdd
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -14,15 +18,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
-private val Bg = Color(0xFF0E1116)
-private val Card = Color(0xFF171B22)
-private val Text1 = Color(0xFFE8EAED)
-private val Text2 = Color(0xFF9AA3B0)
-private val Good = Color(0xFF34C38F)
-private val Insulin = Color(0xFF63A8F0)
-private val Carbs = Color(0xFFE0A33F)
+// Local names for the shared tokens (see Theme.kt), so the composables below
+// read unchanged while the palette lives in one place.
+private val Bg = AyniColor.Bg
+private val Card = AyniColor.Card
+private val Text1 = AyniColor.Text1
+private val Text2 = AyniColor.Text2
+private val Good = AyniColor.InRange
+private val Insulin = AyniColor.Insulin
+private val Carbs = AyniColor.Carbs
 
 @Composable
 fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit) {
@@ -32,6 +40,10 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     var showPeople by remember { mutableStateOf(false) }
     var showPaste by remember { mutableStateOf(false) }
     var showCarrying by remember { mutableStateOf(false) }
+    // When the on-screen sync loop last asked for a pass, so the waiting state
+    // can say "last tried 20s ago" rather than leave someone staring at a card
+    // with no sign anything is happening.
+    var lastSyncAt by remember { mutableStateOf(System.currentTimeMillis()) }
 
     // Redraw on a clock, because the AGE changes even when the data does not —
     // and a stale reading that still says "1 min ago" is the failure §12.3 is
@@ -49,6 +61,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     // which is a silent stall that looks precisely like a quiet network.
     LaunchedEffect(Unit) {
         while (true) {
+            lastSyncAt = System.currentTimeMillis()
             Sync.now(context)
             delay(SyncWorker.EVERY_SECONDS * 1000)
         }
@@ -62,34 +75,36 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
         }
     }
 
-    val subject = remember(tick) { Follower.chosen(context) }
-    val readings = remember(tick, subject) {
-        subject?.let { Follower.readings(context, it, Prefs.rangeHours(context)) } ?: emptyList()
+    // **EVERY ONE OF THESE READS BOTH VAULTS OVER JNI, AND THEY USED TO RUN ON
+    // THE MAIN THREAD.** They were a stack of `remember(tick)` blocks, so each
+    // fired during composition — on the UI thread — and the clock bumps `tick`
+    // every fifteen seconds. As a subject's history grew, the merge of core and
+    // keys crossed the frame budget and then the ANR budget: the activity took
+    // eight seconds to first paint and hung outright when the background sync
+    // pass held the vault lock at the same moment. Found on phone B, reproduced
+    // with the alert work stashed, so it predated it.
+    //
+    // Now one bundle, loaded off the main thread. `produceState` relaunches the
+    // load when `tick` changes and keeps the PREVIOUS bundle on screen until the
+    // new one is ready, so a refresh never blanks the hero and never blocks a
+    // tap. The first load (null) shows a spinner — which the splash usually
+    // still covers anyway.
+    val data by produceState<AppData?>(initialValue = null, tick) {
+        value = withContext(Dispatchers.IO) { loadAppData(context) }
     }
-    val treatments = remember(tick, subject) {
-        subject?.let { Follower.treatments(context, it, Prefs.rangeHours(context)) } ?: emptyList()
-    }
-    val target = remember(tick, subject) { subject?.let { Follower.target(context, it) } }
-    // Read separately from [target] so the card can SAY it is temporary. A band
-    // that silently changes looks like they edited their profile.
-    val tempTarget = remember(tick, subject) { subject?.let { Follower.runningTempTarget(context, it) } }
-    val followed = remember(tick) { Follower.following(context) }
-    val carrying = remember(tick) { Prefs.carrying(context) }
-    val low = remember(tick) { Prefs.lowLine(context) }
-    val high = remember(tick) { Prefs.highLine(context) }
-    // NULLABLE ON PURPOSE — see [Follower.scheduledBasalOrNull]. Null is "this
-    // phone has no profile for them", which is not the same statement as a
-    // basal rate of zero, and the chart must not turn one into the other.
-    val scheduled = remember(tick, subject) {
-        subject?.let { Follower.scheduledBasalOrNull(context, it, System.currentTimeMillis()) }
-    }
-    val basal = remember(tick, subject, treatments) {
-        if (readings.isEmpty()) emptyList()
-        else Follower.basalSteps(treatments, scheduled, readings.first().at, readings.last().at)
-    }
-    val basalUnknown = remember(tick, subject, treatments) {
-        scheduled == null && treatments.any { it.kind == "tbr" && !it.absolute }
-    }
+    val loading = data == null
+    val subject = data?.subject
+    val readings = data?.readings ?: emptyList()
+    val treatments = data?.treatments ?: emptyList()
+    val target = data?.target
+    val tempTarget = data?.tempTarget
+    val followed = data?.followed ?: emptyList()
+    val carrying = data?.carrying ?: -1
+    val low = data?.low ?: Prefs.DEFAULT_LOW_MGDL
+    val high = data?.high ?: Prefs.DEFAULT_HIGH_MGDL
+    val scheduled = data?.scheduled
+    val basal = data?.basal ?: emptyList()
+    val basalUnknown = data?.basalUnknown ?: false
 
     MaterialTheme(colorScheme = darkColorScheme(background = Bg, surface = Card)) {
         // NOT A SCROLLER ANY MORE, AND THAT IS WHAT FILLS THE SCREEN. A
@@ -147,9 +162,15 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             }
 
             when {
+                // First load only — the bundle is still being read off-thread.
+                // After that, the previous bundle stays on screen through a
+                // refresh, so this never flashes between updates.
+                loading -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Good)
+                }
                 followed.isEmpty() -> EmptyCard(onScan = onScan, onShowInvite = { Endpoint.expectOffer(); showInvite = true })
                 subject == null    -> ChooseCard(followed) { Prefs.setGraphSubject(context, it.key); tick++ }
-                readings.isEmpty() -> WaitingCard(subject)
+                readings.isEmpty() -> WaitingCard(subject, lastSyncAt)
                 else               -> {
                     HeroCard(context, readings, treatments, target, tempTarget, low, high)
                     Card(
@@ -199,7 +220,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             onClose = { showPaste = false }
         )
         if (showCarrying) CarryingDialog(carrying, Prefs.carryingAt(context)) { showCarrying = false }
-        if (showPeople) PeopleSheet(
+        if (showPeople) SettingsScreen(
             followed = followed,
             onScan = { showPeople = false; onScan() },
             onPaste = { showPeople = false; showPaste = true },
@@ -207,9 +228,8 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             onChoose = { Prefs.setGraphSubject(context, it.key); tick++; showPeople = false },
             onUnits = { Prefs.setMmol(context, !Prefs.mmol(context)); tick++ },
             // "New vault" is always on now (the toggle was a footgun — see
-            // [Prefs.keysVault]); only its always-true value is still passed, to
-            // gate the "Old vault" row below.
-            keysVault = Prefs.keysVault(context),
+            // [Prefs.keysVault]); only the read-side "Ignore old vault" switch
+            // remains, under Advanced.
             onKeysOnly = { Prefs.setKeysOnly(context, !Prefs.keysOnly(context)); tick++ },
             keysOnly = Prefs.keysOnly(context),
             // Applied immediately rather than at next launch: a switch that takes
@@ -230,9 +250,80 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             onBand = { Prefs.cycleBand(context); tick++ },
             bandLabel = Prefs.bandLabel(context),
             mmol = Prefs.mmol(context),
+            alertOn = { Alerts.enabled(context, it) },
+            // Unit-correct, so the thresholds read in whatever the units toggle
+            // shows. The fixed two state the clinical line; the band two point at
+            // the viewer's own low/high line, which is what they actually fire on.
+            alertSubtitle = { level ->
+                val unit = Prefs.unitLabel(context)
+                when (level) {
+                    Alerts.Level.URGENT_LOW -> "At or below ${Prefs.show(context, Glucose.URGENT_LOW_MGDL)} $unit"
+                    Alerts.Level.LOW -> "Below your low line, ${Prefs.show(context, Prefs.lowLine(context))} $unit"
+                    Alerts.Level.HIGH -> "Above your high line, ${Prefs.show(context, Prefs.highLine(context))} $unit"
+                    Alerts.Level.VERY_HIGH -> "At or above ${Prefs.show(context, Glucose.VERY_HIGH_MGDL)} $unit"
+                }
+            },
+            onToggleAlert = { level -> Alerts.setEnabled(context, level, !Alerts.enabled(context, level)); tick++ },
+            notificationsBlocked = notificationsBlocked(context),
+            onFixNotifications = { openNotificationSettings(context) },
+            dndBypassGranted = Alerts.dndBypassGranted(context),
+            onDndBypass = { Alerts.askDndBypass(context) },
             onClose = { showPeople = false }
         )
     }
+}
+
+/**
+ * Everything the one screen draws, read in a single off-thread pass.
+ *
+ * Bundled so the whole screen comes from one consistent snapshot — the hero, the
+ * chart and the band all describe the same moment — and so there is exactly one
+ * place that touches the vault per refresh rather than a dozen scattered
+ * `remember` blocks each opening it again.
+ */
+private data class AppData(
+    val subject: Follower.Subject?,
+    val readings: List<Follower.Reading>,
+    val treatments: List<Follower.Treatment>,
+    val target: Pair<Double, Double>?,
+    val tempTarget: Follower.TempTarget?,
+    val followed: List<Follower.Subject>,
+    val carrying: Int,
+    val low: Double,
+    val high: Double,
+    val scheduled: Double?,
+    val basal: List<Follower.BasalStep>,
+    val basalUnknown: Boolean
+)
+
+/** Read the whole screen's data. Always called off the main thread — see [FollowerApp]. */
+private fun loadAppData(context: android.content.Context): AppData {
+    val subject = Follower.chosen(context)
+    val hours = Prefs.rangeHours(context)
+    val readings = subject?.let { Follower.readings(context, it, hours) } ?: emptyList()
+    val treatments = subject?.let { Follower.treatments(context, it, hours) } ?: emptyList()
+    val scheduled = subject?.let { Follower.scheduledBasalOrNull(context, it, System.currentTimeMillis()) }
+    val basal = if (readings.isEmpty()) emptyList()
+        else Follower.basalSteps(treatments, scheduled, readings.first().at, readings.last().at)
+    return AppData(
+        subject = subject,
+        readings = readings,
+        treatments = treatments,
+        target = subject?.let { Follower.target(context, it) },
+        // Separate from target so the card can SAY it is temporary; a band that
+        // silently changes looks like they edited their profile.
+        tempTarget = subject?.let { Follower.runningTempTarget(context, it) },
+        followed = Follower.following(context),
+        carrying = Prefs.carrying(context),
+        low = Prefs.lowLine(context),
+        high = Prefs.highLine(context),
+        // NULLABLE ON PURPOSE — see [Follower.scheduledBasalOrNull]. Null is "no
+        // profile for them", not a basal of zero, and the chart must not confuse
+        // the two.
+        scheduled = scheduled,
+        basal = basal,
+        basalUnknown = scheduled == null && treatments.any { it.kind == "tbr" && !it.absolute }
+    )
 }
 
 @Composable
@@ -248,18 +339,24 @@ private fun HeroCard(
     val last = readings.last()
     val prev = readings.getOrNull(readings.size - 2)
     val delta = prev?.let { last.mgdl - it.mgdl }
+    // Old data wears no confident colour: the number greys and the age turns
+    // into a warning. This is the whole point of the app said in the hero.
+    val stale = Glucose.isStale(last.at)
 
     Card(colors = CardDefaults.cardColors(containerColor = Card), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             // AGE FIRST AND ALWAYS. Never a bare number.
-            Text(Follower.ageWords(last.at), color = Text2, fontSize = 13.sp,
-                modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            Text(
+                (if (stale) "⚠ " else "") + Follower.ageWords(last.at),
+                color = if (stale) AyniColor.Warn else Text2, fontSize = 13.sp,
+                modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.End
+            )
             // THE SAME RULE AS THE CHART, from the same function. These
             // disagreed once — the number here was unconditionally green while
             // the identical reading was drawn red below it, because the chart
             // classified against a single-point target and this did not
             // classify at all.
-            val tone = readingColor(last.mgdl, lowLine, highLine)
+            val tone = Glucose.color(last.mgdl, lowLine, highLine, stale)
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(Prefs.show(context, last.mgdl), color = tone, fontSize = 56.sp,
                     fontWeight = FontWeight.Bold, lineHeight = 58.sp)
@@ -332,7 +429,7 @@ private fun RangeRow(hours: Int, caption: String, onPick: (Int) -> Unit) {
                 color = if (on) Text1 else Text2,
                 fontSize = 13.sp,
                 modifier = Modifier.clip(RoundedCornerShape(20.dp))
-                    .background(if (on) Color(0xFF2A3140) else Color.Transparent)
+                    .background(if (on) AyniColor.CardRaised else Color.Transparent)
                     .clickable { onPick(h) }
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             )
@@ -350,14 +447,29 @@ private fun RangeRow(hours: Int, caption: String, onPick: (Int) -> Unit) {
 private fun EmptyCard(onScan: () -> Unit, onShowInvite: () -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = Card), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("Not following anyone yet.", color = Text1, fontSize = 17.sp)
+            // The swarm's own green, so the first screen reads as this app and not
+            // a default Material form.
+            Icon(Icons.Outlined.GroupAdd, contentDescription = null, tint = Good,
+                modifier = Modifier.size(32.dp))
+            Text("Not following anyone yet.", color = Text1, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             Text(
                 "Ask them to show you their invite, then scan it. They decide what " +
                     "you can read, and can stop at any time.",
                 color = Text2, fontSize = 14.sp
             )
-            Button(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Text("Scan their invite") }
-            OutlinedButton(onClick = onShowInvite, modifier = Modifier.fillMaxWidth()) { Text("Show my invite") }
+            // The primary way in is filled in the brand green; showing your own
+            // invite is the quieter second path.
+            Button(
+                onClick = onScan, modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(AyniRadius.Pill),
+                colors = ButtonDefaults.buttonColors(containerColor = Good, contentColor = Bg)
+            ) { Text("Scan their invite", fontWeight = FontWeight.SemiBold) }
+            OutlinedButton(
+                onClick = onShowInvite, modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(AyniRadius.Pill),
+                border = BorderStroke(1.dp, AyniColor.Line),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Text1)
+            ) { Text("Show my invite") }
         }
     }
 }
@@ -365,28 +477,101 @@ private fun EmptyCard(onScan: () -> Unit, onShowInvite: () -> Unit) {
 @Composable
 private fun ChooseCard(followed: List<Follower.Subject>, onChoose: (Follower.Subject) -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = Card), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Whose glucose should this show?", color = Text1, fontSize = 17.sp)
+        Column(Modifier.padding(vertical = 6.dp)) {
             // Picking one at random would be picking a PERSON at random.
-            followed.forEach { s ->
-                Text(s.label, color = Good, fontSize = 15.sp,
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                        .clickable { onChoose(s) }.padding(vertical = 10.dp))
+            Text("Whose glucose should this show?", color = Text1, fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 4.dp))
+            followed.forEachIndexed { i, s ->
+                SubjectRow(
+                    s.label,
+                    if (s.reached) "holding their history" else "nothing has arrived yet",
+                    selected = false,
+                    leading = Icons.Outlined.Person
+                ) { onChoose(s) }
+                if (i < followed.lastIndex) RowDivider()
             }
         }
     }
 }
 
+/**
+ * The pending handshake, said honestly.
+ *
+ * Following is two-party: this phone asks, and the other phone has to share
+ * back. The old card said "nothing readable yet" and stopped — so a person
+ * could not tell whether they had done it wrong or were simply waiting on
+ * someone else. Now it names who it is waiting on, says whose move it is, shows
+ * that it is still trying, and offers to nudge them.
+ *
+ * [subject.reached] splits the two states that look alike and are not: nothing
+ * has arrived at all, versus their records are held here but no glucose is
+ * readable yet.
+ */
 @Composable
-private fun WaitingCard(subject: Follower.Subject) {
+private fun WaitingCard(subject: Follower.Subject, lastSyncAt: Long) {
+    val context = LocalContext.current
     Card(colors = CardDefaults.cardColors(containerColor = Card), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Following ${subject.label}", color = Text1, fontSize = 17.sp)
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("Waiting on ${subject.label}", color = Text1, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "Nothing readable yet. Following costs them nothing and grants you nothing — " +
-                    "they still have to share with you from their own phone.",
+                if (!subject.reached)
+                    "You've asked to follow them. Now they share with you from their own phone — " +
+                        "until they do, there is nothing here to read. Following costs them nothing."
+                else
+                    "This phone is holding their records, but no glucose is readable yet — they may not " +
+                        "be sharing readings, or it is still catching up.",
                 color = Text2, fontSize = 14.sp
             )
+            StatusBanner(
+                BannerTone.Wait,
+                "Checking every ${SyncWorker.EVERY_SECONDS / 60} min · last tried ${Follower.ageWords(lastSyncAt)}"
+            )
+            if (!subject.reached) {
+                Text(
+                    "Remind them to share  ›",
+                    color = Insulin, fontSize = 14.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                        .clickable { shareReminder(context) }.padding(vertical = 4.dp)
+                )
+            }
         }
     }
+}
+
+/**
+ * Whether glucose alerts cannot reach this phone because notifications are off.
+ *
+ * Only on 33+, where the grant is a runtime permission somebody can refuse or
+ * revoke; below it, notifications are allowed at install and this is never true.
+ */
+private fun notificationsBlocked(context: android.content.Context): Boolean =
+    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+        context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+
+/** Open this app's notification settings, where the grant is reconsidered. */
+private fun openNotificationSettings(context: android.content.Context) {
+    val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(intent)
+    } catch (e: Throwable) {
+        android.util.Log.w(SyncWorker.TAG, "no notification settings screen: $e")
+    }
+}
+
+/** Open the system share sheet with a prewritten nudge for the person being followed. */
+private fun shareReminder(context: android.content.Context) {
+    val msg = "I'm following your glucose with Ayni, but nothing reaches me until you share " +
+        "with me from your looping app. When you get a moment?"
+    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_TEXT, msg)
+    }
+    context.startActivity(
+        android.content.Intent.createChooser(send, "Remind them")
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    )
 }

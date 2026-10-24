@@ -120,6 +120,10 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
+    // Leading icons for the settings rows and the connect-journey cards. A real
+    // vector set, not the Unicode glyphs an earlier note refused — R8 strips
+    // every icon the app does not reference, so the dozen used cost ~nothing.
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     // Scanning and encoding an invite. Maven Central, not jitpack.
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")

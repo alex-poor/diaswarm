@@ -37,6 +37,11 @@ class MainActivity : ComponentActivity() {
         result.contents?.trim()?.takeIf { it.isNotEmpty() }?.let { scanned = it }
     }
 
+    // The notification grant for glucose alerts. Asked once, from onCreate; a
+    // refusal is reconsidered in the Alerts settings group, not re-prompted here.
+    private val askNotifications =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Before super.onCreate: swaps the launch theme for the real one. The
         // system splash is just a plain #12161C (transparent icon), dismissed
@@ -50,6 +55,7 @@ class MainActivity : ComponentActivity() {
         // in the system settings rather than in here.
         StayAwake.apply(applicationContext)
         schedule()
+        maybeAskNotifications()
         setContent {
             // The app composes underneath immediately (so onResume's sync is
             // already in flight); the swarm plays over it once, then reveals it.
@@ -66,6 +72,24 @@ class MainActivity : ComponentActivity() {
         // Ask now rather than waiting for the poll: somebody opening the app is
         // the one moment they are definitely waiting for an answer.
         Sync.now(this)
+    }
+
+    /**
+     * Ask for the notification grant once, the first launch where alerts are on
+     * and it is missing.
+     *
+     * Only on 33+, where it is a runtime permission; below that it is granted at
+     * install. Gated on [Prefs.askedNotifications] so it is a single prompt, not
+     * one on every open — and gated on [Alerts.anyEnabled] so a person who has
+     * turned every alert off is not asked for a permission nothing will use.
+     */
+    private fun maybeAskNotifications() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
+        if (Prefs.askedNotifications(this) || !Alerts.anyEnabled(this)) return
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        Prefs.setAskedNotifications(this)
+        askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
     }
 
     private fun scanOptions() = ScanOptions().apply {
