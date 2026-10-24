@@ -1,0 +1,242 @@
+# The coordinated release: all three products, from one commit, proven to speak
+# the same protocol before any of them ships.
+#
+# WHY THIS EXISTS ON TOP OF peer.yml AND ayni.yml. Those release one product each
+# on their own tag, each with its own version — the carrier and the follower
+# move independently, and should. But the protocol is the one thing they must NOT
+# move independently: topic derivation, invite framing and log shape are shared,
+# and a fleet where the carrier speaks v2 while a follower still expects v1
+# derives different topics and silently never meets (the deploy-as-one-unit
+# rule). This workflow is the umbrella that makes "ship the fleet together" a
+# real, gated act: one tag, all three built from one checkout, and a hard
+# assertion that they agree on PROTOCOL_VERSION — refusing to publish if they do
+# not. The per-product tags still carry the signed, F-Droid-tracked artifacts;
+# this proves the trio is coherent.
+#
+# Tag `release-v<anything>` to run it — the umbrella version is its own thing,
+# not any one crate's. The asserted PROTOCOL_VERSION goes in the release notes,
+# because that is the number that actually has to match across a deploy.
+name: release
+
+on:
+  push:
+    tags: ["release-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # only to attach artifacts to the release
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false   # a release in flight is not something to cancel
+
+jobs:
+  # THE GATE, AND THE REASON THE FILE EXISTS. Pure text, seconds to run, before a
+  # single build minute is spent: do the carrier's core, Ayni's Kotlin and the
+  # AAPS plugin's Kotlin all name the same PROTOCOL_VERSION? If not, the release
+  # stops here — there is no point building three products that will not meet.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      protocol: ${{ steps.check.outputs.protocol }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: All three products agree on PROTOCOL_VERSION
+        id: check
+        run: |
+          set -euo pipefail
+          ./tools/protocol-version-check.sh
+          N=$(grep -oE 'PROTOCOL_VERSION: u32 = [0-9]+' crates/diaswarm-core/src/lib.rs | grep -oE '[0-9]+$')
+          echo "protocol=$N" >> "$GITHUB_OUTPUT"
+
+  # The carrier, built and then ASKED what protocol it speaks. The gate checked
+  # the source agrees; this checks the compiled binary reports that same number —
+  # the one dynamic link in the chain, so a build that somehow embedded a
+  # different core than the source never slips through. Linux x86_64 only: the
+  # per-platform carrier release is peer.yml's job, not this one's.
+  carrier:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/diaswarm-peer/target
+          key: release-carrier-${{ runner.os }}-${{ hashFiles('crates/*/Cargo.toml') }}
+          restore-keys: release-carrier-${{ runner.os }}-
+      - name: Build
+        working-directory: crates/diaswarm-peer
+        run: cargo build --release
+      - name: It reports the protocol the gate expects
+        run: |
+          set -euo pipefail
+          BIN=crates/diaswarm-peer/target/release/diaswarm-peer
+          STAMP=$("$BIN" --protocol-version)
+          echo "carrier binary speaks protocol v$STAMP; release expects v${{ needs.gate.outputs.protocol }}"
+          [ "$STAMP" = "${{ needs.gate.outputs.protocol }}" ] || {
+            echo "::error::carrier binary speaks protocol v$STAMP but the source says v${{ needs.gate.outputs.protocol }} — the build embedded a different core than the tree"
+            exit 1
+          }
+          "$BIN" "${RUNNER_TEMP}/smoke" --once --adopt 0 --network ci-release-smoke --json
+      - name: Package
+        run: |
+          set -euo pipefail
+          NAME=diaswarm-peer-x86_64-unknown-linux-gnu
+          mkdir -p "dist/$NAME"
+          cp crates/diaswarm-peer/target/release/diaswarm-peer "dist/$NAME/"
+          cp packaging/README.md LICENSE "dist/$NAME/"
+          cp packaging/systemd/diaswarm-peer.service "dist/$NAME/"
+          tar czf "dist/$NAME.tar.gz" -C dist "$NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: carrier
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # Ayni, built from this same checkout. Unsigned here on purpose: the signed,
+  # F-Droid-tracked build is ayni.yml on a `follower-v` tag. What this proves is
+  # that the follower compiles against this core at this protocol — the artifact
+  # is a convenience, the build itself is the point.
+  ayni:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - name: NDK
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_NDK_LATEST_HOME:-}"
+          [ -n "$NDK" ] && [ -d "$NDK" ] || { echo "::error::no NDK on the runner"; exit 1; }
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+      - name: Rust for Android
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android armv7-linux-androideabi
+          cargo install cargo-ndk --locked
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/*/target
+          key: release-ayni-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'follower/**/*.gradle*') }}
+          restore-keys: release-ayni-${{ runner.os }}-
+      - name: Build
+        working-directory: follower
+        run: ./gradlew assembleRelease --console=plain
+      - name: Name the unsigned builds for what they are
+        run: |
+          set -euo pipefail
+          for IN in follower/build/outputs/apk/release/*-release-unsigned.apk; do
+            NAME=$(basename "$IN"); ABI=${NAME#ayni-}; ABI=${ABI%-release-unsigned.apk}
+            cp "$IN" "ayni-$ABI-UNSIGNED.apk"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ayni
+          path: ayni-*-UNSIGNED.apk
+          if-no-files-found: error
+
+  # The AAPS loop APK with the swarm plugin, from this same checkout — the same
+  # build aaps-plugin.yml runs, here tied to the coordinated tag. The loop build
+  # type signs with the debug key, so no secret is needed.
+  aaps:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out diaswarm (the plugin + the record core)
+        uses: actions/checkout@v4
+        with: { path: diaswarm }
+      - name: Check out the AndroidAPS fork
+        uses: actions/checkout@v4
+        with:
+          repository: alex-poor/AndroidAPS
+          ref: diaswarm-addon
+          path: aaps
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - name: NDK
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_NDK_LATEST_HOME:-}"
+          [ -n "$NDK" ] && [ -d "$NDK" ] || { echo "::error::no NDK on the runner"; exit 1; }
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+      - name: Rust for Android
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android armv7-linux-androideabi
+          cargo install cargo-ndk --locked
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.cargo/registry
+            ~/.cargo/git
+            diaswarm/crates/*/target
+          key: release-aaps-${{ runner.os }}-${{ hashFiles('diaswarm/**/Cargo.lock', 'diaswarm/plugin/**/*.gradle*') }}
+          restore-keys: release-aaps-${{ runner.os }}-
+      - name: Build the loop APK with the swarm plugin
+        working-directory: aaps
+        env:
+          DIASWARM_PLUGIN_DIR: ${{ github.workspace }}/diaswarm/plugin
+        run: ./gradlew :app:assembleFullLoop --console=plain --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aaps-full-loop-apk
+          path: aaps/app/build/outputs/apk/full/loop/*.apk
+          if-no-files-found: error
+
+  # All three built and the protocol asserted; publish them together. The notes
+  # lead with the PROTOCOL_VERSION, because that is the number a deployer has to
+  # match across the fleet — the per-product version is secondary here.
+  release:
+    needs: [gate, carrier, ayni, aaps]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dl }
+      - name: Attach all three to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROTOCOL: ${{ needs.gate.outputs.protocol }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          find dl -type f \( -name '*.tar.gz' -o -name '*.apk' \) -exec cp {} out/ \;
+          cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS
+          cat > notes.md <<EOF
+          A coordinated release of all three diaswarm products, built from one
+          commit (\`${GITHUB_SHA}\`) and verified to speak the same protocol.
+
+          ## Wire protocol: **v${PROTOCOL}**
+
+          The carrier, the Ayni follower and the AAPS swarm plugin in this release
+          all derive topics, frame invites and shape logs the same way. CI refused
+          to publish unless all three agreed on this number — a fleet split across
+          protocol versions silently never meets.
+
+          ## What's here
+          - \`diaswarm-peer-*.tar.gz\` — the desktop carrier (Linux x86_64). For
+            other platforms, see the \`peer-v*\` releases.
+          - \`ayni-*-UNSIGNED.apk\` — the follower, built from this commit but
+            **unsigned**. Install the signed build from F-Droid or a \`follower-v*\`
+            release; this one proves the build, it is not for day-to-day install.
+          - \`*.apk\` (full loop) — AndroidAPS with the swarm plugin compiled in.
+
+          \`SHA256SUMS\` covers every file above.
+          EOF
+          gh release create "${GITHUB_REF_NAME}" ./* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "diaswarm ${GITHUB_REF_NAME} (protocol v${PROTOCOL})" \
+            --notes-file notes.md
