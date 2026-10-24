@@ -335,19 +335,19 @@ private fun DrawScope.drawChart(
     drawText(laid, topLeft = Offset(chipX + 4.dp.toPx(), chipY + 1.5.dp.toPx()))
 }
 
-private val Strong = Color(0xFFE8EAED)
-private val High = Color(0xFFF0A93B)
-private val Low = Color(0xFFE5645A)
-private val InRangeBand = Color(0xFF3ED598)
-
-/** `AapsTone.InRange` — the hero's green, which the trace deliberately does not use. */
-private val HeroInRange = Color(0xFF3ED598)
-private val TargetLine = Color(0xFF5E6B7A)
-private val Axis = Color(0xFF7A8290)
-private val Divider = Color(0xFF2A3140)
-private val Insulin = Color(0xFF5B7BF0)
-private val Carb = Color(0xFFE0A33F)
-private val Surface = Color(0xFF171B22)
+// The chart's palette now lives in AyniColor; these are local names for it so
+// the drawing code below reads unchanged. It is deliberately NOT the hero's —
+// see stateColor and readingColor.
+private val Strong = AyniColor.ChartInk
+private val High = AyniColor.ChartHigh
+private val Low = AyniColor.ChartLow
+private val InRangeBand = AyniColor.ChartInRange
+private val TargetLine = AyniColor.ChartTargetLine
+private val Axis = AyniColor.ChartAxis
+private val Divider = AyniColor.Line
+private val Insulin = AyniColor.ChartInsulin
+private val Carb = AyniColor.Carbs
+private val Surface = AyniColor.Card
 
 /**
  * The TRACE's colour — in range is the plain strong text ink, not green.
@@ -368,18 +368,6 @@ private fun stateColor(v: Double, low: Double, high: Double): Color = when {
     else -> Strong
 }
 
-/**
- * The HERO number's colour, from the same thresholds — green in range.
- *
- * Takes mg/dL, because everything outside this file holds mg/dL. See
- * [stateColor] for why this is not the same palette.
- */
-fun readingColor(mgdl: Double, lowLineMgdl: Double, highLineMgdl: Double): Color = when {
-    highLineMgdl - lowLineMgdl < 0.5 -> Strong
-    mgdl < lowLineMgdl -> Low
-    mgdl > highLineMgdl -> High
-    else -> HeroInRange
-}
 
 /**
  * The 5-minute bucketed series — what the loop's own statistics are computed

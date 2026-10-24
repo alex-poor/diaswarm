@@ -43,8 +43,8 @@ private const val FINAL_RADIUS = 4.5f      // == half the 9-unit logo stroke
 private const val SCATTER = 14f            // how far dots start from home, in box units
 private const val BOX_DP = 200             // the 108-unit box, this many dp on screen
 
-private val RING = Color(0xFF35D08A)
-private val BACKDROP = Color(0xFF12161C)   // matches windowSplashScreenBackground
+private val RING = AyniColor.Ring
+private val BACKDROP = Color(0xFF12161C)   // splash-only; matches windowSplashScreenBackground
 
 private class Dot(
     val hx: Float, val hy: Float,          // home: where it settles on the ring

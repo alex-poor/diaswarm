@@ -16,13 +16,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
-private val Bg = Color(0xFF0E1116)
-private val Card = Color(0xFF171B22)
-private val Text1 = Color(0xFFE8EAED)
-private val Text2 = Color(0xFF9AA3B0)
-private val Good = Color(0xFF34C38F)
-private val Insulin = Color(0xFF63A8F0)
-private val Carbs = Color(0xFFE0A33F)
+// Local names for the shared tokens (see Theme.kt), so the composables below
+// read unchanged while the palette lives in one place.
+private val Bg = AyniColor.Bg
+private val Card = AyniColor.Card
+private val Text1 = AyniColor.Text1
+private val Text2 = AyniColor.Text2
+private val Good = AyniColor.InRange
+private val Insulin = AyniColor.Insulin
+private val Carbs = AyniColor.Carbs
 
 @Composable
 fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit) {
@@ -199,7 +201,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             onClose = { showPaste = false }
         )
         if (showCarrying) CarryingDialog(carrying, Prefs.carryingAt(context)) { showCarrying = false }
-        if (showPeople) PeopleSheet(
+        if (showPeople) SettingsScreen(
             followed = followed,
             onScan = { showPeople = false; onScan() },
             onPaste = { showPeople = false; showPaste = true },
@@ -254,18 +256,24 @@ private fun HeroCard(
     val last = readings.last()
     val prev = readings.getOrNull(readings.size - 2)
     val delta = prev?.let { last.mgdl - it.mgdl }
+    // Old data wears no confident colour: the number greys and the age turns
+    // into a warning. This is the whole point of the app said in the hero.
+    val stale = Glucose.isStale(last.at)
 
     Card(colors = CardDefaults.cardColors(containerColor = Card), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             // AGE FIRST AND ALWAYS. Never a bare number.
-            Text(Follower.ageWords(last.at), color = Text2, fontSize = 13.sp,
-                modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            Text(
+                (if (stale) "⚠ " else "") + Follower.ageWords(last.at),
+                color = if (stale) AyniColor.Warn else Text2, fontSize = 13.sp,
+                modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.End
+            )
             // THE SAME RULE AS THE CHART, from the same function. These
             // disagreed once — the number here was unconditionally green while
             // the identical reading was drawn red below it, because the chart
             // classified against a single-point target and this did not
             // classify at all.
-            val tone = readingColor(last.mgdl, lowLine, highLine)
+            val tone = Glucose.color(last.mgdl, lowLine, highLine, stale)
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(Prefs.show(context, last.mgdl), color = tone, fontSize = 56.sp,
                     fontWeight = FontWeight.Bold, lineHeight = 58.sp)
@@ -338,7 +346,7 @@ private fun RangeRow(hours: Int, caption: String, onPick: (Int) -> Unit) {
                 color = if (on) Text1 else Text2,
                 fontSize = 13.sp,
                 modifier = Modifier.clip(RoundedCornerShape(20.dp))
-                    .background(if (on) Color(0xFF2A3140) else Color.Transparent)
+                    .background(if (on) AyniColor.CardRaised else Color.Transparent)
                     .clickable { onPick(h) }
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             )
