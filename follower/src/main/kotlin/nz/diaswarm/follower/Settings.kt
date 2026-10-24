@@ -54,6 +54,8 @@ fun SettingsScreen(
     onToggleAlert: (Alerts.Level) -> Unit,
     notificationsBlocked: Boolean,
     onFixNotifications: () -> Unit,
+    dndBypassGranted: Boolean,
+    onDndBypass: () -> Unit,
     onClose: () -> Unit
 ) {
     BackHandler { onClose() }
@@ -124,6 +126,18 @@ fun SettingsScreen(
                                 leading = alertIcon(level)
                             ) { onToggleAlert(level) }
                             if (i < Alerts.Level.entries.lastIndex) RowDivider()
+                        }
+                        // Only urgent lows are ever allowed past Do Not Disturb, and
+                        // only when that alert is on — so the choice appears where it
+                        // applies and nowhere else.
+                        if (alertOn(Alerts.Level.URGENT_LOW)) {
+                            RowDivider()
+                            ActionRow(
+                                "Sound urgent lows in Do Not Disturb",
+                                if (dndBypassGranted) "Allowed — an urgent low will sound even when the phone is silenced."
+                                else "Off — tap to let only urgent lows through Do Not Disturb.",
+                                leading = Icons.Outlined.NotificationsActive
+                            ) { onDndBypass() }
                         }
                     }
                 }

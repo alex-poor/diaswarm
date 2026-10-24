@@ -36,6 +36,21 @@ object Alerts {
     private const val CHANNEL = "diaswarm-alerts"
 
     /**
+     * Urgent lows get their own channel so they, and only they, can be allowed
+     * through Do Not Disturb.
+     *
+     * **A LOW AT 3AM IS THE ONE ALERT THAT HAS TO WAKE SOMEBODY, AND DND IS
+     * EXACTLY WHEN IT WOULD NOT.** A high-importance notification still obeys Do
+     * Not Disturb; only a channel marked to bypass it will sound through — and
+     * that mark is honoured solely if the app holds notification-policy access,
+     * which is a separate grant a person gives in system settings. So urgent low
+     * is split off here, left on the ordinary channel until that grant exists,
+     * and moved to a bypassing one once it does. A drift to 11 is never worth
+     * overriding someone's silence; a reading that can kill is.
+     */
+    private const val URGENT_CHANNEL = "diaswarm-alerts-urgent"
+
+    /**
      * Once in a level, stay quiet until it either gets worse or this long has
      * passed. A CGM at 3.0 produces a reading a minute; buzzing every one of
      * them is how an alert becomes noise to be silenced, which is the same as no
@@ -180,7 +195,13 @@ object Alerts {
 
     private fun post(context: Context, subject: Follower.Subject, band: Level, reading: Follower.Reading) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        ensureChannel(manager)
+        // Urgent low rides the channel that may bypass Do Not Disturb; everything
+        // else stays on the ordinary high-importance one.
+        val channelId = if (band == Level.URGENT_LOW) {
+            ensureUrgentChannel(manager); URGENT_CHANNEL
+        } else {
+            ensureChannel(manager); CHANNEL
+        }
 
         val value = "${Prefs.show(context, reading.mgdl)} ${Prefs.unitLabel(context)}"
         val tone = Glucose.color(reading.mgdl, Prefs.lowLine(context), Prefs.highLine(context), stale = false)
@@ -191,7 +212,7 @@ object Alerts {
             PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = android.app.Notification.Builder(context, CHANNEL)
+        val notification = android.app.Notification.Builder(context, channelId)
             .setContentTitle("${subject.label} — ${band.label}")
             .setContentText("$value · ${Follower.ageWords(reading.at)}")
             .setSmallIcon(android.R.drawable.stat_notify_error)
@@ -216,5 +237,46 @@ object Alerts {
             NotificationChannel(CHANNEL, "Glucose alerts", NotificationManager.IMPORTANCE_HIGH)
                 .also { it.description = "When the person you follow goes low or high." }
         )
+    }
+
+    /**
+     * The urgent-low channel, created to bypass Do Not Disturb when it is allowed
+     * to — and recreated the moment it becomes allowed.
+     *
+     * **BYPASS IS FIXED AT CREATION, SO A LATE GRANT NEEDS A FRESH CHANNEL.** A
+     * channel's Do-Not-Disturb bypass cannot be raised after it exists — the
+     * person owns it from then on. So when policy access has since been granted
+     * but the existing channel does not bypass, the only way to honour the grant
+     * is to delete and recreate it. Harmless: it is Ayni's own channel, not one
+     * someone has tuned. The reverse (access revoked) needs nothing — the system
+     * simply stops honouring a bypass it no longer trusts.
+     */
+    private fun ensureUrgentChannel(manager: NotificationManager) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val granted = manager.isNotificationPolicyAccessGranted
+        val existing = manager.getNotificationChannel(URGENT_CHANNEL)
+        if (existing != null && !(granted && !existing.canBypassDnd())) return
+        if (existing != null) manager.deleteNotificationChannel(URGENT_CHANNEL)
+        manager.createNotificationChannel(
+            NotificationChannel(URGENT_CHANNEL, "Urgent low", NotificationManager.IMPORTANCE_HIGH).also {
+                it.description = "A low low enough to need telling, even in Do Not Disturb."
+                if (granted) it.setBypassDnd(true)
+            }
+        )
+    }
+
+    /** Whether urgent lows are allowed to sound through Do Not Disturb. */
+    fun dndBypassGranted(context: Context): Boolean =
+        context.getSystemService(NotificationManager::class.java)?.isNotificationPolicyAccessGranted ?: false
+
+    /** Open the system screen where Do-Not-Disturb access is granted. */
+    fun askDndBypass(context: Context) {
+        val intent = Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(intent)
+        } catch (e: Throwable) {
+            Log.w(SyncWorker.TAG, "no DND access screen: $e")
+        }
     }
 }

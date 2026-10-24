@@ -273,6 +273,8 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             onToggleAlert = { level -> Alerts.setEnabled(context, level, !Alerts.enabled(context, level)); tick++ },
             notificationsBlocked = notificationsBlocked(context),
             onFixNotifications = { openNotificationSettings(context) },
+            dndBypassGranted = Alerts.dndBypassGranted(context),
+            onDndBypass = { Alerts.askDndBypass(context) },
             onClose = { showPeople = false }
         )
     }
