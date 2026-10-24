@@ -110,6 +110,11 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
+    // The platform splash screen (Android 12+), backported. Plays an animated
+    // vector during the real cold-start window — no extra activity, no second
+    // splash, no blank flash. Upstream for what would otherwise be a hand-rolled
+    // Compose splash with its own timing.
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.activity:activity-compose:1.12.2")
     implementation(platform("androidx.compose:compose-bom:2025.12.01"))
     implementation("androidx.compose.ui:ui")

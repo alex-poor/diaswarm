@@ -86,7 +86,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Follower">
+        android:theme="@style/Theme.Follower.Splash">
         <!-- Declared `specialUse`, not `dataSync`, because `dataSync` is
              time-limited to six hours and this must survive a night. Exported
              false — nothing outside this app has any business starting it. -->

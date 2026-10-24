@@ -4,4 +4,22 @@
         <item name="android:navigationBarColor">#0E1116</item>
         <item name="android:windowBackground">#0E1116</item>
     </style>
+
+    <!--
+        The launch theme: what the window wears before the activity draws. The
+        swarm animation is Compose, not a platform animated-icon (the system
+        slot is one short vector masked to a circle — it cannot do scattered
+        dots converging). So the system splash is just a plain #12161C with a
+        transparent icon, dismissed at once by installSplashScreen(), and the
+        Compose SwarmSplash is the first thing painted — no launcher-icon flash
+        before it. The background matches so the handover is seamless.
+
+        windowSplashScreen* are core-splashscreen's backported attrs (no
+        android: prefix), so one theme works from API 31 up.
+    -->
+    <style name="Theme.Follower.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#12161C</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_blank</item>
+        <item name="postSplashScreenTheme">@style/Theme.Follower</item>
+    </style>
 </resources>
