@@ -54,7 +54,7 @@ jobs:
       RUST_BACKTRACE: 1
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # rust-toolchain.toml pins the channel, so there is deliberately no
       # version named here — one pin, in the file every local build reads too.
@@ -63,7 +63,7 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustc --version
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
