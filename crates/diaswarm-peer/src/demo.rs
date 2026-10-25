@@ -213,12 +213,12 @@ pub const HANDLE: &str = "demo (not a real person)";
 ///
 /// `handle` is the name that travels in the invite, and passing `None` is not
 /// cosmetic — see [`invites_for`].
-pub fn invite_for(
+fn invite_object(
     core: &diaswarm_core::vault::Vault,
     keys: &diaswarm_keys::Vault,
     endpoint: &str,
     handle: Option<&str>,
-) -> Result<String> {
+) -> Result<diaswarm_core::invite::Invite> {
     let subject = diaswarm_core::vault::hex(&core.subject_pub());
     let identity = keys.identity().map_err(|e| anyhow::anyhow!("identity: {e}"))?;
     let keys_hex =
@@ -226,8 +226,16 @@ pub fn invite_for(
     diaswarm_core::invite::Invite::new(&subject, endpoint, "follow")
         .and_then(|i| i.with_keys(&keys_hex))
         .and_then(|i| i.with_handle(handle.unwrap_or("")))
-        .map(|i| i.encode())
         .map_err(|e| anyhow::anyhow!("composing the invite: {e:?}"))
+}
+
+pub fn invite_for(
+    core: &diaswarm_core::vault::Vault,
+    keys: &diaswarm_keys::Vault,
+    endpoint: &str,
+    handle: Option<&str>,
+) -> Result<String> {
+    Ok(invite_object(core, keys, endpoint, handle)?.encode())
 }
 
 /// Both shapes of the demo's invite: the named one, and one an older build can
@@ -243,12 +251,18 @@ pub fn invite_for(
 /// named invite, they would see a refusal and reasonably conclude the app does
 /// not work.
 ///
-/// So the demo prints both. The named one carries [`HANDLE`], which is the
-/// label that stops anyone mistaking invented readings for a person's; the
-/// fallback drops the name and nothing else, and a follower on the older build
-/// sees hex where the name would be. `encode` picks the version from the fields
-/// that are actually set, so the second is a genuine v3 rather than a v4 with a
-/// blank in it.
+/// So the demo prints both. The named one is the modern, compact invite
+/// ([`Invite::encode`](diaswarm_core::invite::Invite::encode), now base64url v5)
+/// carrying [`HANDLE`] — the label that stops anyone mistaking invented readings
+/// for a person's. The fallback drops the name and is emitted in the pre-v5 hex
+/// form ([`encode_compat`](diaswarm_core::invite::Invite::encode_compat)), a
+/// genuine v3 an older build still reads, where a follower sees hex instead of
+/// the name.
+///
+/// **THE TWO AXES ARE INDEPENDENT, AND THAT IS THE WHOLE RISK THIS GUARDS.** v5
+/// shrank the invite but a build that predates it refuses it; the fallback has
+/// to step back to a *hex* version an installed app parses, not merely drop the
+/// handle — a v5 without a handle is still v5 and still a dead end.
 pub fn invites_for(
     core: &diaswarm_core::vault::Vault,
     keys: &diaswarm_keys::Vault,
@@ -256,7 +270,7 @@ pub fn invites_for(
 ) -> Result<(String, String)> {
     Ok((
         invite_for(core, keys, endpoint, Some(HANDLE))?,
-        invite_for(core, keys, endpoint, None)?,
+        invite_object(core, keys, endpoint, None)?.encode_compat(),
     ))
 }
 

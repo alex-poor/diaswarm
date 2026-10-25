@@ -8,6 +8,10 @@ description = "spec/records.md v1: the canonical record stream, in one implement
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+# base64url for the v5 invite: the binary fields (subject, endpoint, keys
+# bundle) were hex at two characters a byte; URL-safe base64 is four per three
+# and its alphabet (A-Za-z0-9-_) never collides with the ':' field separator.
+base64 = "0.22"
 
 # Sealing. Standard primitives, pure Rust so the NDK build needs no C toolchain.
 # Composed by hand, which stage 10.6's external review gate exists to catch.

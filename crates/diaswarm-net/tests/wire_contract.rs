@@ -76,9 +76,14 @@ fn topic_derivation_is_pinned() {
 fn invite_framing_is_pinned() {
     let base = Invite::new_via(SUBJECT, ENDPOINT, PURPOSE, RELAY).unwrap();
 
+    // What `encode` emits today: v2 with no bundle, and the compact base64url
+    // v5 as soon as there is one — handle or not.
     let v2 = base.clone().encode();
-    let v3 = base.clone().with_keys(KEYS).unwrap().encode();
-    let v4 = base.with_keys(KEYS).unwrap().with_handle(HANDLE).unwrap().encode();
+    let v5 = base.clone().with_keys(KEYS).unwrap().encode();
+    let v5_named = base.clone().with_keys(KEYS).unwrap().with_handle(HANDLE).unwrap().encode();
+    // The pre-v5 hex forms `encode_compat` still emits for an older follower.
+    let v3 = base.clone().with_keys(KEYS).unwrap().encode_compat();
+    let v4 = base.with_keys(KEYS).unwrap().with_handle(HANDLE).unwrap().encode_compat();
 
     assert_eq!(
         v2,
@@ -86,19 +91,32 @@ fn invite_framing_is_pinned() {
         "v2 invite framing changed"
     );
     assert_eq!(
+        v5,
+        "diaswarm:5:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:_-7dzLuqmYh3ZlVEMyIRAP_u3cy7qpmId2ZVRDMiEQA:follow:https%3a//relay.test/path:obLD1OX2::9d15631e",
+        "v5 invite framing changed"
+    );
+    assert_eq!(
+        v5_named,
+        "diaswarm:5:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:_-7dzLuqmYh3ZlVEMyIRAP_u3cy7qpmId2ZVRDMiEQA:follow:https%3a//relay.test/path:obLD1OX2:Mum:bd54771c",
+        "v5 named invite framing changed"
+    );
+    assert_eq!(
         v3,
         "diaswarm:3:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff:ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100:follow:https%3a//relay.test/path:a1b2c3d4e5f6:e485add0",
-        "v3 invite framing changed"
+        "v3 fallback framing changed"
     );
     assert_eq!(
         v4,
         "diaswarm:4:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff:ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100:follow:https%3a//relay.test/path:a1b2c3d4e5f6:Mum:c2c6c934",
-        "v4 invite framing changed"
+        "v4 fallback framing changed"
     );
 
-    // A peer reads back what a peer emits — the other half of the contract.
-    let round = Invite::parse(&v4).unwrap();
-    assert_eq!(round.subject, SUBJECT);
-    assert_eq!(round.keys, KEYS);
-    assert_eq!(round.handle, HANDLE);
+    // A peer reads back what a peer emits — the other half of the contract,
+    // for both the modern invite and the hex fallback.
+    for text in [&v5_named, &v4] {
+        let round = Invite::parse(text).unwrap();
+        assert_eq!(round.subject, SUBJECT);
+        assert_eq!(round.keys, KEYS);
+        assert_eq!(round.handle, HANDLE);
+    }
 }

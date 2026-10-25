@@ -26,7 +26,7 @@ fn base() -> Invite {
 fn a_handle_survives_the_round_trip() {
     let invite = base().with_keys(&"cc".repeat(32)).unwrap().with_handle("Alex").unwrap();
     let text = invite.encode();
-    assert!(text.starts_with("diaswarm:4:"), "a handle should emit v4, got {text}");
+    assert!(text.starts_with("diaswarm:5:"), "a keys invite should emit v5, got {text}");
 
     let back = Invite::parse(&text).expect("parse");
     assert_eq!(back.handle, "Alex");
@@ -57,20 +57,34 @@ fn a_handle_containing_the_separator_still_round_trips() {
     assert_eq!(back.handle, awkward, "a colon in a name broke the invite");
 }
 
-/// NO HANDLE MEANS THE OLD SHAPE, BYTE FOR BYTE.
+/// A KEYS INVITE IS v5; THE OLD HEX SHAPE IS STILL THERE ON DEMAND.
 ///
-/// This is what stops the change reaching anyone who has no use for it.
+/// `encode` cut over to the compact v5 whenever there is a bundle, handle or
+/// not — that is the change. The pre-v5 hex form a caller needs for an older
+/// follower did not vanish; it moved to `encode_compat`, which a subject with no
+/// handle still gets as a byte-for-byte v3. An invite with no bundle at all is
+/// the short v2 both ways, so a build that has no use for any of this is
+/// untouched.
 #[test]
-fn without_a_handle_the_invite_is_unchanged() {
+fn a_keys_invite_is_v5_and_the_hex_fallback_is_still_available() {
     let with_keys = base().with_keys(&"cc".repeat(32)).unwrap();
     assert!(
-        with_keys.encode().starts_with("diaswarm:3:"),
-        "a keys invite with no handle must still be v3"
+        with_keys.encode().starts_with("diaswarm:5:"),
+        "a keys invite should emit the compact v5"
+    );
+    assert!(
+        with_keys.encode_compat().starts_with("diaswarm:3:"),
+        "the hex fallback for a keys invite with no handle must still be v3"
     );
     let plain = base();
     assert!(
         plain.encode().starts_with("diaswarm:2:"),
         "an invite with neither keys nor handle must still be v2"
+    );
+    assert_eq!(
+        plain.encode(),
+        plain.encode_compat(),
+        "with no bundle there is nothing to compact, so both forms are the same v2"
     );
 }
 

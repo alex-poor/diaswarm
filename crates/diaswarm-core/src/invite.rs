@@ -11,9 +11,17 @@
 //! to be one thing you can hold up to a phone, not a procedure.
 //!
 //! ```text
-//! diaswarm:3:<subject-hex>:<endpoint-hex>:<purpose>:<relay>:<keys-hex>:<check>
+//! diaswarm:5:<subject-b64>:<endpoint-b64>:<purpose>:<relay>:<keys-b64>:<handle>:<check>
 //! diaswarm:2:<subject-hex>:<endpoint-hex>:<purpose>:<relay>:<check>
 //! ```
+//!
+//! An invite with a keys bundle is emitted as **v5**, whose binary fields are
+//! base64url rather than hex — two thirds the characters, a smaller QR. One
+//! without a bundle is still the short, hex, case-insensitive **v2** every
+//! installed build reads. The hex-mode **v3** and **v4** are no longer emitted
+//! but are still parsed, so invites already handed out keep working. v5 is
+//! case-sensitive (base64url is), so unlike v1-v4 it is not normalised and an
+//! upper-cased copy fails its checksum rather than decoding to the wrong key.
 //!
 //! * **version** first, so a future format is refused clearly rather than
 //!   parsed into something wrong;
@@ -52,6 +60,8 @@
 //! An invite leaked to a stranger costs the subject the same as publishing
 //! their public key, which is to say nothing.
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use sha2::{Digest, Sha256};
 
 use crate::vault::{hex, unhex, VaultError};
@@ -59,7 +69,41 @@ use crate::vault::{hex, unhex, VaultError};
 const PREFIX: &str = "diaswarm";
 /// The newest version this build *emits*, which is only reached when there is a
 /// bundle to carry. See [`Invite::encode`].
-const VERSION: &str = "4";
+const VERSION: &str = "5";
+
+/// base64url, no padding: the v5 encoding for the three fields that are really
+/// bytes. URL-safe so the alphabet is `A-Za-z0-9-_`, which shares nothing with
+/// the `:` that separates fields, and no-pad so there is no `=` to escape.
+///
+/// **THIS IS WHY v5 IS NOT CASE-INSENSITIVE.** Hex (v1-v4) meant the same thing
+/// shouted, so the whole invite was normalised to lower case and the checksum
+/// taken over that. base64url does not: `a` and `A` are different bytes. v5
+/// therefore preserves case and checksums the exact text received, so an invite
+/// a client upper-cased fails the checksum loudly rather than decoding to the
+/// wrong key silently. Weighed and accepted: invites travel by QR (case kept)
+/// and copy-paste (case kept), not by anything that upper-cases.
+fn b64(b: &[u8]) -> String {
+    URL_SAFE_NO_PAD.encode(b)
+}
+
+fn unb64(s: &str) -> Result<Vec<u8>, VaultError> {
+    URL_SAFE_NO_PAD
+        .decode(s.as_bytes())
+        .map_err(|_| VaultError::Malformed("an invite field is not valid base64url".into()))
+}
+
+/// The hex a v1-v4 field (and the [`Invite`] struct) holds, as the base64url a
+/// v5 field carries. The struct keeps everything in hex so the rest of the code
+/// is unchanged; only the wire form differs. Falls back to the hex itself if it
+/// is somehow not hex, which cannot happen for a struct the constructors built
+/// but keeps `encode` panic-free, and surfaces as a checksum failure rather than
+/// a crash if it ever did.
+fn hex_as_b64(h: &str) -> String {
+    match unhex(h) {
+        Ok(bytes) => b64(&bytes),
+        Err(_) => h.to_string(),
+    }
+}
 pub const DEFAULT_PURPOSE: &str = "follow";
 
 /// Where a peer is reachable when it is not on your wifi.
@@ -262,11 +306,17 @@ impl Invite {
 
     /// The string that goes in a QR code, or a message.
     ///
-    /// **v2 UNLESS THERE IS A BUNDLE, AND THAT IS THE WHOLE MIGRATION STORY.**
-    /// Emitting v3 unconditionally would make every invite unreadable to every
-    /// build already installed, for a field most of them have no use for. A
-    /// subject that has a keys vault emits v3 and says so; one that does not
-    /// emits exactly what it emitted before.
+    /// **v2 UNLESS THERE IS A BUNDLE.** A bundle is what makes an invite big —
+    /// it is the one field measured in hundreds of bytes — so a subject that has
+    /// a keys vault emits the compact v5, and one that does not emits the same
+    /// short v2 it always did, which every installed build still reads. The
+    /// hex-mode v3 and v4 are no longer *emitted*; [`parse`](Self::parse) still
+    /// reads them, so invites already handed out keep working.
+    ///
+    /// v5 carries the subject, endpoint and bundle as base64url instead of hex —
+    /// four characters per three bytes rather than two per one — which is most of
+    /// why the code it makes is smaller. The handle field is always present and
+    /// may be empty, so v5 has one shape rather than v3's and v4's two.
     pub fn encode(&self) -> String {
         let body = if self.keys.is_empty() {
             format!(
@@ -276,9 +326,40 @@ impl Invite {
                 self.purpose,
                 esc(&self.relay)
             )
+        } else {
+            format!(
+                "{PREFIX}:{VERSION}:{}:{}:{}:{}:{}:{}",
+                hex_as_b64(&self.subject),
+                hex_as_b64(&self.endpoint),
+                self.purpose,
+                esc(&self.relay),
+                hex_as_b64(&self.keys),
+                esc(&self.handle)
+            )
+        };
+        let check = check_of(&body);
+        format!("{body}:{check}")
+    }
+
+    /// The pre-v5 hex form (v2/v3/v4), for a caller that must reach a follower
+    /// too old to read v5.
+    ///
+    /// [`encode`](Self::encode) cut over to the compact base64url v5, which a
+    /// build that predates it refuses. The apps show one code and so simply
+    /// moved; a context that can offer two — the demo prints the modern invite
+    /// and this one beneath it — keeps the older follower served. It is the
+    /// exact body `encode` used to produce, so an invite already in a phone and
+    /// one emitted here are the same string.
+    pub fn encode_compat(&self) -> String {
+        let body = if self.keys.is_empty() {
+            format!(
+                "{PREFIX}:2:{}:{}:{}:{}",
+                self.subject,
+                self.endpoint,
+                self.purpose,
+                esc(&self.relay)
+            )
         } else if self.handle.is_empty() {
-            // v3: a keys bundle but no handle. Still what most installed builds
-            // expect, so it stays the default shape when there is nothing to add.
             format!(
                 "{PREFIX}:3:{}:{}:{}:{}:{}",
                 self.subject,
@@ -289,7 +370,7 @@ impl Invite {
             )
         } else {
             format!(
-                "{PREFIX}:{VERSION}:{}:{}:{}:{}:{}:{}",
+                "{PREFIX}:4:{}:{}:{}:{}:{}:{}",
                 self.subject,
                 self.endpoint,
                 self.purpose,
@@ -318,6 +399,10 @@ impl Invite {
         // written: reachable however this build reaches people by default.
         let (relay, want, shown) = match parts.get(1).copied() {
             Some("1") => (DEFAULT_RELAY.to_string(), 6usize, "1"),
+            // v5 is the compact form: the binary fields are base64url, not hex,
+            // and the whole thing is case-sensitive. Decoded on its own path
+            // below; the relay here is a placeholder it does not use.
+            Some("5") => (String::new(), 9usize, "5"),
             Some("2") => (
                 unesc(&parts.get(5).copied().unwrap_or_default().to_ascii_lowercase()),
                 7usize,
@@ -351,11 +436,18 @@ impl Invite {
             // advice that would have made it wrong in a second way.
             let shape = match shown {
                 "1" => "diaswarm:1:<subject>:<endpoint>:<purpose>:<check>",
+                "5" => "diaswarm:5:<subject>:<endpoint>:<purpose>:<relay>:<bundle>:<handle>:<check>",
                 "4" => "diaswarm:4:<subject>:<endpoint>:<purpose>:<relay>:<bundle>:<handle>:<check>",
                 "3" => "diaswarm:3:<subject>:<endpoint>:<purpose>:<relay>:<bundle>:<check>",
                 _ => "diaswarm:2:<subject>:<endpoint>:<purpose>:<relay>:<check>",
             };
             return Err(VaultError::Malformed(format!("not an invite — expected {shape}")));
+        }
+        // v5 decodes on its own path: base64url fields, case preserved, and a
+        // checksum taken over the exact text received rather than a normalised
+        // copy of it.
+        if shown == "5" {
+            return Self::parse_v5(&parts);
         }
         let mut invite =
             Invite::new_via(parts[2], parts[3], &parts[4].to_ascii_lowercase(), &relay)?;
@@ -416,6 +508,52 @@ impl Invite {
             ));
         }
         Ok(invite)
+    }
+
+    /// A v5 invite, whose binary fields are base64url and whose text is taken at
+    /// the case it arrived in.
+    ///
+    /// `parts` is already known to be the nine a v5 has. The bytes are checked
+    /// for the right length before anything trusts them, the checksum is taken
+    /// over the exact body received — v5 does not normalise, so the thing it
+    /// vouches for is the thing on the wire — and only then is the struct built
+    /// in the hex the rest of the crate speaks.
+    fn parse_v5(parts: &[&str]) -> Result<Self, VaultError> {
+        let subject = unb64(parts[2])?;
+        if subject.len() != 32 {
+            return Err(VaultError::Malformed("a subject key is 32 bytes".into()));
+        }
+        let endpoint = unb64(parts[3])?;
+        if endpoint.len() != 32 {
+            return Err(VaultError::Malformed("an endpoint id is 32 bytes".into()));
+        }
+        let keys = unb64(parts[6])?;
+        if keys.is_empty() || keys.len() > 2048 {
+            return Err(VaultError::Malformed("a keys bundle is 1 to 2048 bytes".into()));
+        }
+
+        // Over the text exactly as received, before any decoding or lowercasing:
+        // an invite a client upper-cased has a different body here and so fails,
+        // which is the whole reason v5 trades the shout-tolerance hex had.
+        let body = format!(
+            "{PREFIX}:5:{}:{}:{}:{}:{}:{}",
+            parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]
+        );
+        if !parts[8].eq_ignore_ascii_case(&check_of(&body)) {
+            return Err(VaultError::Malformed(
+                "this invite is damaged — a character is wrong somewhere. Ask for it again."
+                    .into(),
+            ));
+        }
+
+        Invite::new_via(
+            &hex(&subject),
+            &hex(&endpoint),
+            &parts[4].to_ascii_lowercase(),
+            &unesc(parts[5]),
+        )?
+        .with_keys(&hex(&keys))?
+        .with_handle(&unesc(parts[7]))
     }
 
     /// The subject key as bytes, for granting against.
@@ -479,31 +617,94 @@ mod tests {
         assert!(msg.contains(&format!("version {future}")), "unhelpful message: {msg}");
     }
 
-    /// A v3 INVITE CARRIES THE BUNDLE AND SURVIVES BEING SHOUTED.
+    /// A BUNDLE MAKES A v5 INVITE, AND THE CHECKSUM COVERS IT.
     ///
-    /// The checksum covers the bundle, so a transposed character in 300 hex
-    /// digits is an error message rather than a key agreement that fails much
-    /// later for no visible reason.
+    /// The checksum covers the base64url bundle, so a transposed character in it
+    /// is an error message rather than a key agreement that fails much later for
+    /// no visible reason.
     #[test]
     fn a_bundle_survives_the_round_trip_and_the_checksum_covers_it() {
         let bundle = "a36c6964656e746974795f6b6579582000112233445566778899aabbccddeeff";
         let invite = Invite::new(S, E, "follow").unwrap().with_keys(bundle).unwrap();
         let text = invite.encode();
-        assert!(text.starts_with("diaswarm:3:"), "a bundle should make it v3: {text}");
+        assert!(text.starts_with("diaswarm:5:"), "a bundle should make it v5: {text}");
 
         let back = Invite::parse(&text).unwrap();
-        assert_eq!(back.keys, bundle);
+        assert_eq!(back.keys, bundle, "the bundle did not survive as hex");
         assert_eq!(back, invite);
 
-        // Shouted by a chat client, and still the same invite.
-        assert_eq!(Invite::parse(&text.to_ascii_uppercase()).unwrap(), invite);
-
-        // One wrong character anywhere in the bundle is caught.
+        // One wrong character anywhere in the body is caught. The bundle is no
+        // longer hex in the text, so corrupt a module of the base64 field by
+        // index rather than by finding the hex.
         let mut broken: Vec<char> = text.chars().collect();
-        let at = text.find(bundle).unwrap() + 10;
-        broken[at] = if broken[at] == 'a' { 'b' } else { 'a' };
+        let at = text.rfind(':').unwrap() - 4; // inside the bundle field, before the checksum
+        broken[at] = if broken[at] == 'A' { 'B' } else { 'A' };
         let broken: String = broken.into_iter().collect();
+        assert_ne!(broken, text);
         assert!(Invite::parse(&broken).is_err(), "a damaged bundle was accepted");
+    }
+
+    /// v5 IS CASE-SENSITIVE, UNLIKE THE HEX VERSIONS.
+    ///
+    /// base64url means a different thing upper-cased, so v5 does not pretend a
+    /// shouted copy is the same invite — it fails the checksum loudly. (v2 below
+    /// still survives shouting; that is the point of keeping it hex.)
+    #[test]
+    fn a_v5_invite_is_rejected_if_a_client_upper_cases_it() {
+        let bundle = "a36c6964656e746974795f6b6579582000112233445566778899aabbccddeeff";
+        let text = Invite::new(S, E, "follow").unwrap().with_keys(bundle).unwrap().encode();
+        assert!(text.starts_with("diaswarm:5:"));
+        assert!(
+            Invite::parse(&text.to_ascii_uppercase()).is_err(),
+            "an upper-cased v5 invite must not decode to a different key silently"
+        );
+    }
+
+    /// v5 CARRIES A HANDLE IN ONE SHAPE, EMPTY OR NOT.
+    #[test]
+    fn a_v5_invite_round_trips_with_and_without_a_handle() {
+        let bundle = "a36c6964656e746974795f6b6579582000112233445566778899aabbccddeeff";
+        let base = Invite::new(S, E, "follow").unwrap().with_keys(bundle).unwrap();
+
+        let named = base.clone().with_handle("Mum").unwrap();
+        let named_text = named.encode();
+        assert!(named_text.starts_with("diaswarm:5:"));
+        assert_eq!(Invite::parse(&named_text).unwrap(), named);
+        assert_eq!(Invite::parse(&named_text).unwrap().handle, "Mum");
+
+        let anon_text = base.encode();
+        assert_eq!(Invite::parse(&anon_text).unwrap(), base);
+        assert_eq!(Invite::parse(&anon_text).unwrap().handle, "");
+    }
+
+    /// THE WHOLE POINT: v5 IS SHORTER THAN THE v3 IT REPLACES.
+    #[test]
+    fn a_v5_invite_is_shorter_than_the_old_hex_form() {
+        // A realistically sized bundle (~190 bytes of hex).
+        let bundle = "ab".repeat(190);
+        let invite = Invite::new(S, E, "follow").unwrap().with_keys(&bundle).unwrap();
+        let v5 = invite.encode();
+        // What the same invite would have been in hex v3: subject and endpoint
+        // and bundle all at two characters a byte.
+        let hex_body = format!("diaswarm:3:{S}:{E}:follow:{}:{bundle}", esc(DEFAULT_RELAY));
+        let v3_len = hex_body.len() + 1 + 8; // ':' + checksum
+        assert!(v5.len() < v3_len, "v5 ({}) should beat v3 ({v3_len})", v5.len());
+    }
+
+    /// A v5 FIELD THAT IS NOT BASE64URL, OR THE WRONG LENGTH, IS REFUSED.
+    #[test]
+    fn a_v5_invite_validates_its_decoded_fields() {
+        let bundle = "a36c6964656e746974795f6b6579582000112233445566778899aabbccddeeff";
+        let good = Invite::new(S, E, "follow").unwrap().with_keys(bundle).unwrap().encode();
+        // A subject that decodes to the wrong number of bytes: truncate its field.
+        let parts: Vec<&str> = good.split(':').collect();
+        let short_subject = &parts[2][..parts[2].len() - 4];
+        let body = format!(
+            "diaswarm:5:{short_subject}:{}:{}:{}:{}:{}",
+            parts[3], parts[4], parts[5], parts[6], parts[7]
+        );
+        let tampered = format!("{body}:{}", check_of(&body));
+        assert!(Invite::parse(&tampered).is_err(), "a short subject key was accepted");
     }
 
     /// **A SUBJECT WITH NO KEYS VAULT STILL EMITS WHAT EVERY BUILD UNDERSTANDS.**
