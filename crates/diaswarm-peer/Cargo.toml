@@ -44,6 +44,10 @@ clap = { version = "4", features = ["derive"] }
 # and AES-GCM is emphatically not a thing to hand-roll.
 aes-gcm = "0.10"
 base64 = "0.22"
+# A scannable invite in the terminal: this is the no-UI member of the three, so
+# its "show my invite" is a QR printed to stderr. Pure Rust, like everything
+# else here — a QR encoder is exactly the kind of thing not to hand-roll.
+qrcode = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 # TO PARSE WHAT WE EMIT. A bundle that is not valid JSON is not a bundle, and
