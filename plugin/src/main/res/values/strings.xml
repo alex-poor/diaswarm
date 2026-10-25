@@ -5,9 +5,9 @@
 
     <string name="swarm_show_invite">Your invite</string>
     <string name="swarm_show_invite_summary">Show the code someone scans to start following you</string>
-    <string name="swarm_invite_explain">Show this to someone who should be able to follow you. It is not a secret: it holds a public key and an address, and anyone who has it can download your data and read none of it. They still cannot open anything until you add their key below.</string>
+    <string name="swarm_invite_explain">Show this to someone you want to be able to follow you. It is not a secret — just a public key and an address, so on its own it only lets them download data they cannot open. They can read your readings once you add their key below: that grant is the step that actually shares.</string>
     <string name="swarm_invite_not_ready">Nothing to share yet. Turn Swarm sharing on and wait for the first records to be sealed — an invite needs both your key and somewhere to reach you.</string>
-    <string name="swarm_copy">Copy</string>
+    <string name="swarm_copy">Copy code</string>
 
     <string name="swarm_handle">Your name</string>
     <string name="swarm_handle_summary">Shown to people who follow you, instead of a row of letters and numbers. It travels in your invite and goes no further \u2014 it is never published.</string>

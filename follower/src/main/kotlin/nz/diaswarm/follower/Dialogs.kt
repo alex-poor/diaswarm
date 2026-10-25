@@ -87,7 +87,7 @@ fun InviteDialog(invite: String, onClose: () -> Unit) {
                 val cb = context.getSystemService(android.content.ClipboardManager::class.java)
                 cb?.setPrimaryClip(android.content.ClipData.newPlainText("diaswarm invite", invite))
                 onClose()
-            }) { Text("Copy") }
+            }) { Text("Copy code") }
         },
         dismissButton = { TextButton(onClick = onClose) { Text("Close") } },
         title = { Text("Your invite") },
@@ -100,8 +100,9 @@ fun InviteDialog(invite: String, onClose: () -> Unit) {
                         Image(it.asImageBitmap(), contentDescription = "invite code", modifier = Modifier.fillMaxWidth())
                     }
                     Text(
-                        "It is not a secret: it holds a public key and an address. Anyone who has " +
-                            "it can download your ciphertext and read none of it.",
+                        "It is not a secret: just a public key and an address. Show it to the " +
+                            "person whose readings you want to follow, and they can add you as a " +
+                            "reader. On its own it unlocks nothing — only they can choose to share.",
                         color = Text2, fontSize = 13.sp
                     )
                     // 🔴 **SAY WHEN THIS INVITE CANNOT BE FULLY GRANTED.** A v2
@@ -121,7 +122,12 @@ fun InviteDialog(invite: String, onClose: () -> Unit) {
                             color = Warn, fontSize = 13.sp
                         )
                     }
-                    Text(invite, color = Text2, fontSize = 10.sp)
+                    // The raw invite is NOT printed here any more. A wall of hex
+                    // read as a secret to guard and made the dialog look like a
+                    // diagnostic, not a thing to hand over — the point is the
+                    // code above and the one tap that copies it ("Copy code").
+                    // It still goes on the clipboard in full for the channels a
+                    // camera cannot reach.
                 }
             }
         }

@@ -4,6 +4,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.MultiFormatWriter
@@ -82,7 +85,51 @@ object SwarmSharing {
             val row = y * matrix.width
             for (x in 0 until matrix.width) pixels[row + x] = if (matrix.get(x, y)) on else off
         }
-        return Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.ARGB_8888)
+        return withBadge(Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.ARGB_8888))
+    }
+
+    /**
+     * Stamp the ayni mark into the middle of the code.
+     *
+     * A white rounded pad first, so the scanner reads a clean block and not a
+     * fringe of half-covered modules; level-H error correction then
+     * reconstructs the modules the pad hides. The pad is ~24% of the side —
+     * roughly 6% of the area — which sits well inside H's ~30% budget even on a
+     * long v4 invite, where the code is densest and the mark covers the fewest
+     * modules.
+     *
+     * The mark is the two-arc ring the follower shows as its launcher icon,
+     * drawn here rather than inflated so the plugin carries no drawable: one
+     * ring in two 138.8-degree arcs (315 degrees and its half-turn), green on
+     * the pad.
+     */
+    private fun withBadge(src: Bitmap): Bitmap {
+        val out = src.copy(Bitmap.Config.ARGB_8888, true) ?: return src
+        val w = out.width.toFloat()
+        val cx = w / 2f
+        val cy = w / 2f
+        val canvas = Canvas(out)
+
+        val pad = w * 0.24f
+        val half = pad / 2f
+        val padRadius = pad * 0.22f
+        val white = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            style = Paint.Style.FILL
+        }
+        canvas.drawRoundRect(cx - half, cy - half, cx + half, cy + half, padRadius, padRadius, white)
+
+        val rr = pad * 0.28f
+        val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#35D08A")
+            style = Paint.Style.STROKE
+            strokeWidth = pad * 0.10f
+            strokeCap = Paint.Cap.ROUND
+        }
+        val box = RectF(cx - rr, cy - rr, cx + rr, cy + rr)
+        canvas.drawArc(box, 315f, 138.8f, false, ring)
+        canvas.drawArc(box, 135f, 138.8f, false, ring)
+        return out
     }
 
     /**
@@ -141,11 +188,10 @@ object SwarmSharing {
             setText(R.string.swarm_invite_explain)
             setPadding(0, dp(ctx, 12f), 0, dp(ctx, 8f))
         })
-        view.addView(TextView(ctx).apply {
-            text = invite
-            textSize = 10f
-            setTextIsSelectable(true)
-        })
+        // The raw invite is NOT shown as a wall of hex any more — it read as a
+        // secret to guard and made the dialog look like a diagnostic. The code
+        // above is the thing to hand over; "Copy code" puts the full text on the
+        // clipboard for the channels a camera cannot reach.
 
         builder.setTitle(R.string.swarm_show_invite)
             .setView(scrolling(ctx, view))

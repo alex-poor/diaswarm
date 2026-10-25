@@ -3337,3 +3337,32 @@ leaving, not toggling. Every off-LAN test so far was run from the house.
 with the phone on mobile data **while still at home**. Off-LAN via relay is real
 and the relay did come back — but it depended on a notification that was never
 being sent, so it was never as robust as the record claimed. See D32.
+
+## 🔀 Invite v5 — a smaller code, and a deliberate break with older builds (2026-10-25)
+
+The invite was hex, two characters a byte, dominated by the keys bundle — which
+made the phone QR dense and a terminal QR too wide for a normal window. **v5**
+carries the three binary fields (subject, endpoint, bundle) as base64url: on a
+real follower invite, 717 → 502 characters, a visibly less dense code.
+`encode()` now emits v5 whenever there is a bundle (still v2 when there is none).
+
+**The decision this forces into the open** (the `invites_for` fallback guard
+exists precisely so it is not made by accident): an app shows one code, so an
+app's invite moves wholesale to v5, and a follower on a build that predates v5
+reads it as *"invite version 5 — update to use it."* That is accepted — the
+three products are released together and the install base is pre-GA. Back-compat
+is still kept where it is cheap: v1–v4 **parse**, so invites already handed out
+work; and `Invite::encode_compat()` still emits the pre-v5 hex form for a caller
+that can afford a second line. The peer demo does exactly that — a v5 QR headline
+plus a v3 hex fallback line an older follower can still read.
+
+v5 is also **case-sensitive**, unlike hex v1–v4: base64url means a different
+thing upper-cased, so v5 is not normalised and its checksum is over the exact
+text received. An upper-cased copy fails loudly rather than decoding to the wrong
+key. Weighed and accepted: invites travel by QR and copy-paste, neither of which
+upper-cases. The "survives being shouted" guarantee stays true of v2.
+
+Shipped alongside: the Ayni ring mark centred in both phone QRs (error
+correction was already H, which budgets it), the raw-hex wall removed from both
+invite dialogs in favour of a "Copy code" button, and the peer — the no-UI
+product — finally showing a scannable QR in the terminal.

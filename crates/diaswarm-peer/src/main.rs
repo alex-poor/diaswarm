@@ -904,7 +904,14 @@ async fn cmd_demo(
     println!("{named}");
     println!("{older}");
     eprintln!();
-    eprintln!("The first line is the demo subject's invite. Scan or paste it into Ayni.");
+    // The scannable code goes to stderr so stdout stays the two plain invites a
+    // script can pipe. It is the modern invite; a phone too old for v5 uses the
+    // second line, which has no QR because it is the fallback, not the headline.
+    if let Some(qr) = invite_qr(&named) {
+        eprintln!("{qr}");
+        eprintln!();
+    }
+    eprintln!("The first line is the demo subject's invite. Scan the code above, or paste the line, into Ayni.");
     eprintln!("The second is the same subject without the name, for a follower too old");
     eprintln!("to read the first — it shows hex where \"{}\" would be.", demo::HANDLE);
     eprintln!();
@@ -988,6 +995,39 @@ async fn cmd_demo(
 fn short(s: &str) -> String {
     let s = s.trim();
     if s.len() <= 32 { s.to_string() } else { format!("{}…", &s[..32]) }
+}
+
+/// An invite as a QR a phone can scan straight off the terminal.
+///
+/// **FORCED DARK-ON-LIGHT, BECAUSE A TERMINAL'S COLOURS ARE NOT KNOWN.** The
+/// half-block glyphs render in the terminal's own foreground, which on a dark
+/// theme is light — a light QR on a dark ground, the inverse of what a scanner
+/// expects. Each line is wrapped in the ANSI for black ink on a white ground, so
+/// the code is the right way round and high-contrast whatever the theme. The
+/// quiet-zone spaces pick up the white ground and become the margin a scanner
+/// needs.
+///
+/// **ERROR CORRECTION M, not the H the phones use.** H exists on the phone to
+/// survive the brand mark stamped over the middle; nothing is stamped here, and
+/// a terminal cannot scale a code down to fit, so the smaller version M produces
+/// is what keeps a 500-character invite inside a normal window. Returns `None`
+/// if the invite will not encode, in which case the caller still prints the text.
+fn invite_qr(invite: &str) -> Option<String> {
+    use qrcode::render::unicode;
+    use qrcode::{EcLevel, QrCode};
+
+    let code = QrCode::with_error_correction_level(invite.as_bytes(), EcLevel::M).ok()?;
+    let body = code
+        .render::<unicode::Dense1x2>()
+        .quiet_zone(true)
+        .build();
+    // 30 = black foreground, 47 = white background; 0 resets at the line's end.
+    let framed = body
+        .lines()
+        .map(|line| format!("\x1b[30;47m{line}\x1b[0m"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(framed)
 }
 
 #[tokio::main]
