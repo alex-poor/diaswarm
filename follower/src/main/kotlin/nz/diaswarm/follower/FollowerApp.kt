@@ -406,6 +406,29 @@ private fun HeroCard(
                     }
                 }
             }
+
+            // **STALE IS NOT A WHISPER.** A greyed number and "⚠ 2 hours ago" in
+            // 13sp at the top is what a person glanced past for two hours on
+            // 2026-10-25 while the data sat dead and the follower's subscription
+            // was wedged. When a reading is older than the app trusts
+            // ([Glucose.STALE_AFTER_MS]), say so in a band that cannot be mistaken
+            // for part of the number, and say that the app is still working at it
+            // — a stall that recovers on its own should not look the same as a
+            // feed that is simply current.
+            //
+            // **IT DOES NOT CLAIM TO KNOW WHY.** "Reconnecting" would blame the
+            // transport, and the follower cannot yet tell a wedged link from the
+            // subject's own sensor dropping or phone sleeping — that is issue #8
+            // (a publisher-emitted liveness record), deliberately not built. So
+            // this states only what is certain: no new reading, how long, and
+            // that it is still checking.
+            if (stale) {
+                StatusBanner(
+                    BannerTone.Alert,
+                    "No new reading — last was ${Follower.ageWords(last.at)}. Still checking.",
+                    Modifier.padding(top = 10.dp)
+                )
+            }
         }
     }
 }

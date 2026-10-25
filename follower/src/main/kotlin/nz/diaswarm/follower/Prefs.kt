@@ -180,6 +180,27 @@ object Prefs {
         p(c).edit().putInt("unreadable_$subject", n).apply()
 
     /**
+     * How far stall recovery has climbed for the CURRENT stall: 0 before
+     * anything is tried, 1 after a re-subscribe, 2 after an endpoint rebuild.
+     * Reset to 0 the moment a pass sees fresh data again.
+     *
+     * **BECAUSE RE-SUBSCRIBING REPORTS A SUCCESS IT CANNOT PROMISE.**
+     * `keysRestream` returns the number of topics it re-subscribed — which says
+     * the call ran, not that bytes resumed. A topic re-subscribed on an endpoint
+     * whose relay session or peer address went stale with the subject's network
+     * change is still a dead topic. On 2026-10-25 a follower sat two hours behind
+     * while the old ladder logged "re-subscribed 2 topic(s)" and stopped there;
+     * only a manual force-stop — a fresh endpoint — recovered it. This counter is
+     * what lets the ladder notice the re-subscribe did not take and climb to the
+     * endpoint rebuild that does. Persisted for the same reason as
+     * [lastEndpointRestart]: a ladder that forgets itself on every restart is no
+     * ladder.
+     */
+    fun reconnectStage(c: Context): Int = p(c).getInt("reconnect_stage", 0)
+    fun setReconnectStage(c: Context, stage: Int) =
+        p(c).edit().putInt("reconnect_stage", stage).apply()
+
+    /**
      * Whether this follower keeps a keys vault — and it now defaults to ON.
      *
      * 🔴 **BECAUSE OFF MAKES AN INVITE THAT CANNOT BE FULLY GRANTED.** The
