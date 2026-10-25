@@ -67,11 +67,47 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
         }
     }
 
+    // The confirmation shown on THIS phone when someone else scans the invite
+    // it is displaying (see the detection effect below). Null for nothing.
+    var scanTick by remember { mutableStateOf<ScanOutcome?>(null) }
+
     scanned?.let { text ->
         LaunchedEffect(text) {
             Invites.queue(context, text)
             onScanHandled()
             tick++
+        }
+    }
+
+    // WHEN SOMEONE SCANS THE CODE THIS PHONE IS SHOWING, SAY SO.
+    //
+    // The gap this closes: the scanner's phone changes the moment it reads the
+    // code, but the person holding the code OUT has nothing to tell them it
+    // worked — they stand there with an invite on screen, guessing. This is
+    // their tick.
+    //
+    // There is no push event to listen for. Showing the invite opened the offer
+    // window ([Endpoint.expectOffer], called wherever `showInvite` is set); the
+    // scanner then hands their own invite back and this phone starts following
+    // them. So "it completed" is observed as the followed set gaining a subject
+    // it did not hold when the dialog opened. Read off-thread like every other
+    // vault read; the loop ends the instant the dialog closes.
+    LaunchedEffect(showInvite) {
+        if (!showInvite) return@LaunchedEffect
+        val before = withContext(Dispatchers.IO) { Follower.following(context).map { it.key }.toSet() }
+        while (showInvite) {
+            delay(1500)
+            // Nudge a pass so their first readings are already on the way by the
+            // time the graph opens. KEEP-deduped, so repeating it costs nothing.
+            Sync.now(context)
+            val fresh = withContext(Dispatchers.IO) { Follower.following(context) }
+                .firstOrNull { it.key !in before }
+            if (fresh != null) {
+                Prefs.setGraphSubject(context, fresh.key)   // land on their line
+                scanTick = ScanOutcome(name = fresh.handle.ifBlank { null })
+                showInvite = false
+                tick++
+            }
         }
     }
 
@@ -270,6 +306,11 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             onDndBypass = { Alerts.askDndBypass(context) },
             onClose = { showPeople = false }
         )
+
+        // Over everything, because it confirms the whole screen's state changed.
+        // A sibling of the Column in MainActivity's Box, so it draws on top; it
+        // clears itself when the animation ends and the new graph is behind it.
+        scanTick?.let { ScanTick(name = it.name, onDone = { scanTick = null }) }
     }
 }
 
