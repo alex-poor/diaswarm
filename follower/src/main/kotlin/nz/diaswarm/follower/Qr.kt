@@ -25,7 +25,12 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
  */
 object Qr {
     fun bitmap(context: Context, text: String): Bitmap? = runCatching {
-        val side = (context.resources.displayMetrics.widthPixels * 0.62f).toInt()
+        // 0.85 of the screen width: the dialog stretches this to its own width
+        // anyway ([InviteDialog] draws it fillMaxWidth), so a source smaller than
+        // that was being upscaled and softened. Rendering it near display size
+        // keeps the modules crisp — which matters more now the code is the only
+        // thing in the dialog and a camera reads it off the glass.
+        val side = (context.resources.displayMetrics.widthPixels * 0.85f).toInt()
         val hints = mapOf(
             EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.H,
             EncodeHintType.MARGIN to 1

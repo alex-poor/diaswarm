@@ -188,11 +188,10 @@ object SwarmSharing {
             setText(R.string.swarm_invite_explain)
             setPadding(0, dp(ctx, 12f), 0, dp(ctx, 8f))
         })
-        view.addView(TextView(ctx).apply {
-            text = invite
-            textSize = 10f
-            setTextIsSelectable(true)
-        })
+        // The raw invite is NOT shown as a wall of hex any more — it read as a
+        // secret to guard and made the dialog look like a diagnostic. The code
+        // above is the thing to hand over; "Copy code" puts the full text on the
+        // clipboard for the channels a camera cannot reach.
 
         builder.setTitle(R.string.swarm_show_invite)
             .setView(scrolling(ctx, view))
