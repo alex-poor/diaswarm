@@ -40,7 +40,7 @@ jobs:
     outputs:
       protocol: ${{ steps.check.outputs.protocol }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: All three products agree on PROTOCOL_VERSION
         id: check
         run: |
@@ -58,10 +58,10 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Rust
         run: rustup show active-toolchain || rustup toolchain install
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -92,7 +92,7 @@ jobs:
           cp packaging/README.md LICENSE "dist/$NAME/"
           cp packaging/systemd/diaswarm-peer.service "dist/$NAME/"
           tar czf "dist/$NAME.tar.gz" -C dist "$NAME"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: carrier
           path: dist/*.tar.gz
@@ -106,8 +106,8 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "21" }
       - name: NDK
         run: |
@@ -120,7 +120,7 @@ jobs:
           set -euo pipefail
           rustup target add aarch64-linux-android armv7-linux-androideabi
           cargo install cargo-ndk --locked
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
@@ -140,7 +140,7 @@ jobs:
             NAME=$(basename "$IN"); ABI=${NAME#ayni-}; ABI=${ABI%-release-unsigned.apk}
             cp "$IN" "ayni-$ABI-UNSIGNED.apk"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ayni
           path: ayni-*-UNSIGNED.apk
@@ -154,15 +154,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out diaswarm (the plugin + the record core)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with: { path: diaswarm }
       - name: Check out the AndroidAPS fork
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: alex-poor/AndroidAPS
           ref: diaswarm-addon
           path: aaps
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "21" }
       - name: NDK
         run: |
@@ -175,7 +175,7 @@ jobs:
           set -euo pipefail
           rustup target add aarch64-linux-android armv7-linux-androideabi
           cargo install cargo-ndk --locked
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
@@ -190,7 +190,7 @@ jobs:
         env:
           DIASWARM_PLUGIN_DIR: ${{ github.workspace }}/diaswarm/plugin
         run: ./gradlew :app:assembleFullLoop --console=plain --no-daemon
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: aaps-full-loop-apk
           path: aaps/app/build/outputs/apk/full/loop/*.apk
@@ -204,7 +204,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { path: dl }
       - name: Attach all three to the release
         env:
