@@ -932,7 +932,7 @@ dependencies = [
 
 [[package]]
 name = "diaswarm-peer"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "aes-gcm",
  "anyhow",
