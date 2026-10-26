@@ -260,7 +260,10 @@ class SwarmPlugin @Inject constructor(
                     title = R.string.swarm_readers,
                     summary = R.string.swarm_readers_summary,
                     onPreferenceClickListener = {
-                        SwarmSharing.showReaders(context, grantedReaders())
+                        // `it.context` is the activity the preference is shown in,
+                        // which the sheet needs for a FragmentManager — the
+                        // injected `context` is the app context and scans to null.
+                        SwarmSharing.showReaders(it.context, grantedReaders()) { who -> revokeReader(who) }
                         true
                     }
                 )
@@ -641,6 +644,20 @@ class SwarmPlugin @Inject constructor(
             ExistingWorkPolicy.KEEP,
             OneTimeWorkRequest.Builder(SwarmDataSyncWorker::class.java).build()
         ).enqueue()
+    }
+
+    /**
+     * Withdraw a reader straight from the "Who can read" screen.
+     *
+     * The same mechanism the "Stop sharing with" field used — record the request
+     * and run a pass — but reached from the reader's own row, so nobody has to
+     * copy a key between two screens. The pass clears the request, revokes on the
+     * keys group and removes the book row, and toasts the outcome. `KEEP` lets a
+     * pass already running pick it up.
+     */
+    private fun revokeReader(who: String) {
+        preferences.put(SwarmStringKey.RevokeReader, who)
+        enqueue()
     }
 
     /**

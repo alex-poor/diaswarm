@@ -5,12 +5,20 @@ plugins {
     id("android-module-dependencies")
     id("test-module-dependencies")
     id("jacoco-module-dependencies")
+    // Compose, so the sharing screens are built in the app's own design system
+    // (SheetSurface/ListRow/etc. from :core:compose) rather than the legacy
+    // AlertDialog look. Same recipe :plugins:sync uses.
+    alias(libs.plugins.compose.compiler)
 }
 
 android {
     namespace = "app.aaps.plugins.sync.swarm"
 
     sourceSets["main"].jniLibs.srcDirs("src/main/jniLibs")
+
+    buildFeatures {
+        compose = true
+    }
 
     packaging {
         // The .so is built by cargo-ndk below and copied in; nothing here
@@ -31,6 +39,18 @@ dependencies {
     // theme. Without it a dialog built from the activity's dark context renders
     // its own text white on a white Material background: invisible, not absent.
     implementation(project(":core:ui"))
+    // The Compose design system: SheetSurface, ListRow, Chip, Stepper,
+    // PrimaryButton/DangerButton and AapsTheme — what the app's own action
+    // sheets (Profile switch, etc.) are built from.
+    implementation(project(":core:compose"))
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.ui.graphics)
+    implementation(libs.androidx.ui.tooling.preview)
+    debugImplementation(libs.androidx.ui.tooling)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.core)
+    implementation(libs.androidx.compose.foundation)
     // Scanning. Declared with a literal coordinate ON PURPOSE: adding it to
     // AAPS's gradle/libs.versions.toml would be a change to the loop app's own
     // build for the sake of an add-on, and the standing constraint on this work

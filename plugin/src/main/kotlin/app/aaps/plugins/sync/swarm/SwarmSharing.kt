@@ -7,17 +7,18 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.Typeface
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.MultiFormatWriter
-import android.util.TypedValue
-import android.view.Gravity
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import app.aaps.core.ui.dialogs.OKDialog
+import app.aaps.core.ui.extensions.scanForActivity
+import app.aaps.plugins.sync.swarm.compose.FollowingSheet
+import app.aaps.plugins.sync.swarm.compose.InviteSheet
+import app.aaps.plugins.sync.swarm.compose.ReadersSheet
+import app.aaps.plugins.sync.swarm.compose.ReadersSheetStrings
+import app.aaps.plugins.sync.swarm.compose.SwarmFollowingRow
+import app.aaps.plugins.sync.swarm.compose.SwarmReaderRow
+import app.aaps.plugins.sync.swarm.compose.SwarmSheetDialog
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 
 /**
@@ -37,17 +38,6 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
  * people treat it like one.
  */
 object SwarmSharing {
-
-    private fun dp(context: Context, v: Float) =
-        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, context.resources.displayMetrics).toInt()
-
-    private fun column(context: Context): LinearLayout =
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            val p = dp(context, 20f)
-            setPadding(p, p, p, p)
-            gravity = Gravity.CENTER_HORIZONTAL
-        }
 
     /**
      * Render an invite as a QR big enough to scan and small enough to leave
@@ -134,31 +124,6 @@ object SwarmSharing {
     }
 
     /**
-     * Everything in these dialogs scrolls.
-     *
-     * A dialog taller than the screen does not scroll by default — it clips,
-     * silently, from the bottom. Small phone, large font, long key: assume it
-     * will not fit.
-     */
-    private fun scrolling(context: Context, content: LinearLayout): ScrollView =
-        ScrollView(context).apply { addView(content) }
-
-    /**
-     * A dialog builder, and THE CONTEXT TO BUILD ITS CONTENTS FROM.
-     *
-     * These are not the same context, and using the wrong one produces a
-     * failure with no error and no missing widget: the app is dark-themed, a
-     * Material dialog is light, and a TextView created from the activity's
-     * context inherits white text — which it then draws on a white dialog.
-     * Everything is present, laid out, and invisible. Two rounds of "the
-     * dialog is clipping" were actually this.
-     *
-     * `builder.context` is the themed one. Build every view from it.
-     */
-    private fun dialog(context: Context): MaterialAlertDialogBuilder =
-        MaterialAlertDialogBuilder(context, app.aaps.core.ui.R.style.DialogTheme)
-
-    /**
      * Show the invite, or say precisely why there isn't one.
      *
      * The two reasons are different and a person can act on both: nothing has
@@ -166,42 +131,27 @@ object SwarmSharing {
      * "Not available" would be true and useless.
      */
     fun showInvite(context: Context, invite: String, whyNot: String?) {
-        val builder = dialog(context)
-        val ctx = builder.context
-        val view = column(ctx)
-
-        if (invite.isEmpty()) {
-            view.addView(TextView(ctx).apply {
-                text = whyNot ?: ctx.getString(R.string.swarm_invite_not_ready)
-            })
-            builder.setTitle(R.string.swarm_show_invite)
-                .setView(scrolling(ctx, view))
-                .setPositiveButton(android.R.string.ok, null)
-                .show()
-            return
+        val activity = context.scanForActivity() ?: return
+        // The QR is the thing to hand over; "Copy code" puts the full text on the
+        // clipboard for the channels a camera cannot reach. No QR when there is
+        // no invite — just the plain reason why.
+        val qr = if (invite.isEmpty()) null else qr(context, invite)
+        val why = whyNot ?: context.getString(R.string.swarm_invite_not_ready)
+        SwarmSheetDialog.show(activity, "swarmInvite") { dismiss ->
+            InviteSheet(
+                title = context.getString(R.string.swarm_show_invite),
+                qr = qr,
+                whyNot = why,
+                explain = context.getString(R.string.swarm_invite_explain),
+                copyLabel = context.getString(R.string.swarm_copy),
+                onCopy = {
+                    val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cb.setPrimaryClip(ClipData.newPlainText("diaswarm invite", invite))
+                    dismiss()
+                },
+                onClose = dismiss
+            )
         }
-
-        view.addView(ImageView(ctx).apply {
-            setImageBitmap(qr(ctx, invite))
-            adjustViewBounds = true
-        })
-        view.addView(TextView(ctx).apply {
-            setText(R.string.swarm_invite_explain)
-            setPadding(0, dp(ctx, 12f), 0, dp(ctx, 8f))
-        })
-        // The raw invite is NOT shown as a wall of hex any more — it read as a
-        // secret to guard and made the dialog look like a diagnostic. The code
-        // above is the thing to hand over; "Copy code" puts the full text on the
-        // clipboard for the channels a camera cannot reach.
-
-        builder.setTitle(R.string.swarm_show_invite)
-            .setView(scrolling(ctx, view))
-            .setPositiveButton(R.string.swarm_copy) { _, _ ->
-                val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cb.setPrimaryClip(ClipData.newPlainText("diaswarm invite", invite))
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
     }
 
     /**
@@ -215,43 +165,33 @@ object SwarmSharing {
      * opened because they have not shared with you.
      */
     fun showFollowing(context: Context, listing: String) {
-        val builder = dialog(context)
-        val ctx = builder.context
-        val view = column(ctx)
-        val rows = listing.lines().filter { it.isNotBlank() }
-        if (rows.isEmpty()) {
-            view.addView(TextView(ctx).apply { setText(R.string.swarm_following_none) })
-        } else {
-            val now = System.currentTimeMillis()
-            rows.forEach { row ->
-                val f = row.split('\t')
-                val subject = f.getOrElse(0) { "" }
-                val purpose = f.getOrElse(1) { "" }
-                val reached = f.getOrElse(2) { "0" } == "1"
-                val mgdl = f.getOrElse(3) { "" }.toDoubleOrNull()
-                val at = f.getOrElse(4) { "" }.toLongOrNull()
-
-                view.addView(TextView(ctx).apply {
-                    text = ctx.getString(R.string.swarm_following_row, purpose, subject)
-                    textSize = 11f
-                    setTextIsSelectable(true)
-                    setPadding(0, dp(ctx, 8f), 0, 0)
-                })
-                view.addView(TextView(ctx).apply {
-                    text = when {
-                        mgdl != null && at != null ->
-                            ctx.getString(R.string.swarm_following_reading, mgdl, (now - at) / 60_000)
-                        reached -> ctx.getString(R.string.swarm_following_unreadable)
-                        else -> ctx.getString(R.string.swarm_following_nothing)
-                    }
-                    setPadding(0, 0, 0, dp(ctx, 8f))
-                })
+        val activity = context.scanForActivity() ?: return
+        val now = System.currentTimeMillis()
+        val rows = listing.lines().filter { it.isNotBlank() }.map { row ->
+            val f = row.split('\t')
+            val subject = f.getOrElse(0) { "" }
+            val purpose = f.getOrElse(1) { "" }
+            val reached = f.getOrElse(2) { "0" } == "1"
+            val mgdl = f.getOrElse(3) { "" }.toDoubleOrNull()
+            val at = f.getOrElse(4) { "" }.toLongOrNull()
+            // THE AGE IS THE POINT: a row with nothing readable says which of the
+            // two reasons applies — nothing arrived, or it arrived and will not
+            // open because they have not shared back.
+            val status = when {
+                mgdl != null && at != null -> context.getString(R.string.swarm_following_reading, mgdl, (now - at) / 60_000)
+                reached -> context.getString(R.string.swarm_following_unreadable)
+                else -> context.getString(R.string.swarm_following_nothing)
             }
+            SwarmFollowingRow(context.getString(R.string.swarm_following_row, purpose, subject), status)
         }
-        builder.setTitle(R.string.swarm_following)
-            .setView(scrolling(ctx, view))
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
+        SwarmSheetDialog.show(activity, "swarmFollowing") { dismiss ->
+            FollowingSheet(
+                title = context.getString(R.string.swarm_following),
+                rows = rows,
+                empty = context.getString(R.string.swarm_following_none),
+                onClose = dismiss
+            )
+        }
     }
 
     /**
@@ -262,71 +202,39 @@ object SwarmSharing {
      * exists, it never leaves the device, and this is the only thing that
      * reads it.
      */
-    fun showReaders(context: Context, listing: String) {
-        val builder = dialog(context)
-        val ctx = builder.context
-        val view = column(ctx)
-        val rows = listing.lines().filter { it.isNotBlank() }
-        if (rows.isEmpty()) {
-            view.addView(TextView(ctx).apply { setText(R.string.swarm_no_readers) })
-        } else {
-            rows.forEach { row ->
-                val parts = row.split('\t')
-                val key = parts.getOrElse(0) { "" }
-                val purpose = parts.getOrElse(1) { "" }
-                // **A LIST THAT OMITS SCOPE CANNOT ANSWER "WHAT DID I SHARE?"**
-                // Empty means nobody wrote it down, which is not the same as
-                // "everything" and must not be shown as if it were — a reader
-                // granted before the window existed has an unknown scope, and
-                // guessing it wide would be a guess presented as a promise.
-                val scope = when (val days = parts.getOrElse(2) { "" }.toLongOrNull()) {
-                    null -> ctx.getString(R.string.swarm_reader_scope_unknown)
-                    0L   -> ctx.getString(R.string.swarm_reader_scope_all)
-                    else -> ctx.resources.getQuantityString(
-                        R.plurals.swarm_reader_scope_days, days.toInt(), days
-                    )
-                }
-                // **A NAME IF THEY GAVE ONE, A KEY IF THEY DID NOT.** The handle
-                // from their invite is what a person recognises; a reader granted
-                // before this was kept has none, and falls back to the key. It is
-                // shown on its own line, selectable, because it is still what you
-                // paste into the withdraw box when there is nothing better.
-                val name = parts.getOrElse(3) { "" }
-                if (name.isNotEmpty()) {
-                    view.addView(TextView(ctx).apply {
-                        text = name
-                        textSize = 15f
-                        setTypeface(typeface, Typeface.BOLD)
-                        setPadding(0, dp(ctx, 8f), 0, 0)
-                    })
-                }
-                view.addView(TextView(ctx).apply {
-                    // The whole key, not a prefix: this is the string you paste
-                    // into the withdraw box, and a truncated one cannot be.
-                    text = ctx.getString(R.string.swarm_reader_row, purpose, scope, key)
-                    textSize = 11f
-                    setTextIsSelectable(true)
-                    setPadding(0, dp(ctx, if (name.isEmpty()) 6f else 2f), 0, dp(ctx, 6f))
-                })
+    fun showReaders(context: Context, listing: String, onRevoke: (String) -> Unit) {
+        // **A BOTTOM SHEET IN THE APP'S OWN DESIGN SYSTEM, NOT A LEGACY DIALOG.**
+        // Built from SheetSurface/ListRow (see ReadersSheet), hosted by a
+        // DialogFragment, so it needs a FragmentManager — which the preference's
+        // own context scans to. If there is no activity in the chain there is
+        // nothing to attach a sheet to, so there is nothing to show.
+        val activity = context.scanForActivity() ?: return
+        val rows = listing.lines().filter { it.isNotBlank() }.map { row ->
+            val parts = row.split('\t')
+            val key = parts.getOrElse(0) { "" }
+            val purpose = parts.getOrElse(1) { "" }
+            // Empty scope means nobody wrote it down — unknown, not unlimited.
+            val scope = when (val days = parts.getOrElse(2) { "" }.toLongOrNull()) {
+                null -> context.getString(R.string.swarm_reader_scope_unknown)
+                0L   -> context.getString(R.string.swarm_reader_scope_all)
+                else -> context.resources.getQuantityString(R.plurals.swarm_reader_scope_days, days.toInt(), days)
             }
-            view.addView(TextView(ctx).apply {
-                setText(R.string.swarm_readers_explain)
-                setPadding(0, dp(ctx, 12f), 0, 0)
-            })
-            // **AND WHAT STOPPING ACTUALLY DOES**, written down here rather
-            // than invented during a withdrawal. This is the moment somebody
-            // is deciding to do it, and the truth — today goes, finished days
-            // stay — is better than they expect and still not what they hope.
-            view.addView(TextView(ctx).apply {
-                setText(R.string.swarm_revoke_explain)
-                textSize = 11f
-                setPadding(0, dp(ctx, 8f), 0, 0)
-            })
+            // A name if they gave one; a short key as a label if they did not.
+            val name = parts.getOrElse(3) { "" }
+            val label = if (name.isNotEmpty()) name else context.getString(R.string.swarm_reader_unnamed, key.take(12))
+            SwarmReaderRow(key, label, "$purpose · $scope")
         }
-        builder.setTitle(R.string.swarm_readers)
-            .setView(scrolling(ctx, view))
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
+        val strings = ReadersSheetStrings(
+            title = context.getString(R.string.swarm_readers),
+            empty = context.getString(R.string.swarm_no_readers),
+            footer = context.getString(R.string.swarm_readers_explain),
+            stop = context.getString(R.string.swarm_reader_stop),
+            confirmTitle = context.getString(R.string.swarm_reader_stop_confirm),
+            explain = context.getString(R.string.swarm_revoke_explain)
+        )
+        SwarmSheetDialog.show(activity, "swarmReaders") { dismiss ->
+            ReadersSheet(rows, strings, onStop = { r -> onRevoke(r.key) }, onClose = dismiss)
+        }
     }
 
     /**
@@ -337,11 +245,16 @@ object SwarmSharing {
      * silently occupies a phone for several minutes is one people press twice.
      */
     fun confirmResync(context: Context, onConfirm: () -> Unit) {
-        MaterialAlertDialogBuilder(context, app.aaps.core.ui.R.style.DialogTheme)
-            .setTitle(R.string.swarm_resync)
-            .setMessage(R.string.swarm_resync_confirm)
-            .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton(android.R.string.ok) { _, _ -> onConfirm() }
-            .show()
+        // OKDialog already renders the new Compose confirm (AlertContent); no
+        // custom view, so it needs no sheet of its own.
+        val activity = context.scanForActivity()
+        if (activity != null)
+            OKDialog.showConfirmation(
+                activity,
+                context.getString(R.string.swarm_resync),
+                context.getString(R.string.swarm_resync_confirm),
+                Runnable { onConfirm() }
+            )
+        else onConfirm()
     }
 }

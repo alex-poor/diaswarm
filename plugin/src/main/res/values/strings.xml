@@ -39,7 +39,15 @@
          field existed, and at full length it buried the key and the purpose it
          sits between. Seen on a phone, not guessed at. -->
     <string name="swarm_reader_scope_unknown">Scope not recorded — shared before this was kept</string>
-    <string name="swarm_readers_explain">To stop sharing with someone, copy their name or key above and paste it into “Stop sharing with”.</string>
+    <!-- A reader with no shared name: a short key as a readable label, not a
+         64-character wall of hex. -->
+    <string name="swarm_reader_unnamed">Reader %1$s…</string>
+    <!-- The two detail lines under a reader's name: what they can read, and the
+         scope. -->
+    <string name="swarm_reader_detail">%1$s\n%2$s</string>
+    <string name="swarm_reader_stop">Stop</string>
+    <string name="swarm_reader_stop_confirm">Stop sharing with %1$s?</string>
+    <string name="swarm_readers_explain">To stop sharing with someone, tap Stop next to their name.</string>
     <!-- THE HONEST SENTENCE, and it is better than people expect while still
          not being what they hope. Sealing re-seals the whole accumulated day
          under the newest secret, so stopping at noon takes this morning back
