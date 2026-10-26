@@ -328,10 +328,43 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
             before >= 0 && now > before
         }
         if (delivering) {
+            // 🔑 **A MISSING KEY IS RECOVERABLE WHEN THE WRAP IS UPSTREAM.**
+            // Ciphertext arriving but not opening used to mean "give up": the
+            // 2026-09-16 guard assumed the key could never come (segments sealed
+            // before this reader was ever granted). But a publisher that rotates
+            // its epoch while this follower is briefly unreachable produces the
+            // SAME symptom with the opposite cause — the new epoch key IS wrapped
+            // for us, sitting in the keys control-log, and all we have to do is
+            // sync past our stale head to fetch it. Bailing here left a live
+            // follower permanently dark through an epoch rotation (2026-10-26):
+            // even a force-stop could not recover it, because the fresh process
+            // hit this same early return before it could re-subscribe.
+            //
+            // So we DO re-subscribe — but ONLY the keys topic, never the whole
+            // endpoint. `delivering` has already established the transport is
+            // fine, so a QUIC rebuild is both wrong and heavy. And it shares the
+            // [MIN_BETWEEN_RESTARTS] gate with the transport ladder below, so the
+            // genuinely hopeless rotation (a wrap that will never exist) costs
+            // one cheap keys re-subscribe a quarter-hour — not the every-pass
+            // leak the original guard was right to kill.
+            val since = System.currentTimeMillis() - Prefs.lastEndpointRestart(context)
+            if (since < MIN_BETWEEN_RESTARTS) {
+                Log.w(TAG, "keys stalled (${worst / 1000}s) — key missing, re-synced ${since / 1000}s ago, waiting")
+                return
+            }
+            Prefs.setLastEndpointRestart(context, System.currentTimeMillis())
+            val handle = SwarmKeys.open(context)
+            val restreamed = if (handle == 0L) -1L else try {
+                SwarmNative.keysRestream(Endpoint.handle)
+            } catch (e: Throwable) {
+                Log.w(TAG, "restream threw: $e"); -1L
+            } finally {
+                SwarmNative.keysClose(handle)
+            }
             Log.w(
                 TAG,
-                "keys stalled (${worst / 1000}s) but segments ARE arriving and not opening — " +
-                    "the transport is fine and the key is missing; not re-subscribing"
+                "keys stalled (${worst / 1000}s) — segments arriving but not opening; the wrap may be " +
+                    "upstream, re-subscribed $restreamed keys topic(s) to fetch it (transport left intact)"
             )
             return
         }

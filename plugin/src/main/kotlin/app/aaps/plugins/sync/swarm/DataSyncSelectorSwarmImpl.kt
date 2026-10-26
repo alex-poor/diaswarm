@@ -101,6 +101,16 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         const val SHADOW_GENERATION = 3L
 
         const val FOLLOW_POLL_SECONDS = 120L
+
+        /**
+         * Isolated pool passes before the endpoint self-heal fires, and the
+         * cadence it retries on while still isolated (every N passes). Three
+         * passes is ~3 minutes at the pool cadence — long enough that a normal
+         * moment of being the only one awake does not trigger it, short enough
+         * that a genuinely wedged endpoint re-binds before anyone notices. See
+         * the self-heal in [poolPass].
+         */
+        const val SELF_HEAL_AFTER_PASSES = 3
     }
 
     /** One queue to walk, expressed once instead of fourteen times. */
@@ -1030,7 +1040,46 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                 "holding ${f.getOrElse(2) { "?" }}, want ${f.getOrElse(3) { "?" }}, " +
                 "took ${f.getOrElse(4) { "?" }}, ${f.getOrElse(5) { "relay=?" }}"
         )
+
+        // **SELF-HEAL A WEDGED ENDPOINT — THE FIX THAT NEEDS NO HUMAN.** iroh
+        // cannot see an Android network change on its own (see NetworkWatch and
+        // the android-network-change-notify note), and NetworkWatch only fires
+        // when the OS actually reports a connectivity change. On 2026-10-26 the
+        // loop sat isolated at `pool 1` for hours after an overnight network blip
+        // the OS never surfaced: its sockets stayed bound to the interface it
+        // had left, discovery was dead, every follower went dark — while it kept
+        // sealing CGM into the void. Nothing re-bound it but a manual wifi
+        // toggle, and a fix that needs a human toggling wifi is not a fix.
+        //
+        // So when the pool stays collapsed to just us for a few passes, call
+        // `network_change()` ourselves. It re-binds the endpoint and restarts
+        // discovery; upstream documents it as cheap and idempotent ("no harm in
+        // calling [it] even when the network did not change"); it is the swarm's
+        // own socket, nothing to do with the pump or the loop. Re-armed whenever
+        // the pool recovers, and retried on a slow cadence while it stays wedged
+        // so a single bad re-bind is not forever.
+        val peers = f.getOrElse(0) { "0" }.toIntOrNull() ?: 0
+        if (peers <= 1) {
+            isolatedPasses++
+            if (isolatedPasses % SELF_HEAL_AFTER_PASSES == 0 && handle != 0L) {
+                aapsLogger.info(
+                    LTag.CORE,
+                    "swarm: isolated for $isolatedPasses passes — re-binding the endpoint (network_change)"
+                )
+                SwarmNative.swarmNetworkChanged(handle)
+            }
+        } else {
+            isolatedPasses = 0
+        }
     }
+
+    /**
+     * Consecutive pool passes this node has seen no peer but itself.
+     *
+     * The trigger for the endpoint self-heal above. Reset the moment a peer
+     * appears, so it measures a *current* wedge, not a lifetime count.
+     */
+    private var isolatedPasses = 0
 
     /**
      * Pull anything new from the people this phone follows.

@@ -1224,6 +1224,17 @@ async fn main() -> Result<()> {
                         ),
                         Err(e) => println!("    stalled — re-subscribe failed: {e:#}"),
                     }
+                    // **AND RE-BIND THE ENDPOINT, NOT JUST THE SUBSCRIPTION.** A
+                    // re-subscribe re-joins the overlay on the sockets we already
+                    // hold; if those are bound to a network we have since left —
+                    // which iroh cannot notice on its own — the fresh
+                    // subscription is as deaf as the old one, and the peer stalls
+                    // forever "re-subscribing" to nothing. `network_change`
+                    // re-binds the endpoint and re-runs discovery; upstream calls
+                    // it cheap and idempotent. Observed 2026-10-26: a peer stuck
+                    // at `heard 0 · no session events` through dozens of
+                    // re-subscribes, which only an endpoint rebuild cleared.
+                    swarm.network_changed().await;
                     // Double the wait each time, to a ceiling. Keeps trying
                     // forever; costs almost nothing after the first few.
                     let gap = (STALL_AFTER_SECS << (restreams.min(6) - 1)).min(MAX_RESTREAM_GAP_SECS);

@@ -70,12 +70,35 @@ pub async fn join(
     let registry = Vault::registry(&[(crate::group::GrantTag::own(&subject), subject_bundle.clone())])
         .map_err(|e| format!("registry {e}"))?;
 
-    for message in &control {
+    for (idx, message) in control.iter().enumerate() {
         let Ok(mut candidate) = Vault::open(joined_dir, offset_ms, signing) else { continue };
         if candidate
             .join(manager.clone(), registry.clone(), &subject_bundle, purpose, message)
             .is_ok()
         {
+            // **A WELCOME IS NOT THE WHOLE STORY — APPLY WHAT CAME AFTER IT.**
+            // `join` bootstraps us at the epoch of our welcome and stops there.
+            // Every group rotation since is a *later* control message carrying
+            // the new secret, and without applying them this vault stays frozen
+            // on the epoch it was welcomed into: it opens everything sealed up
+            // to the first rotation and nothing after, reporting the rest as
+            // `NotGranted` — a silent blackout that looks exactly like "outside
+            // your window". Observed live 2026-10-26: a follower granted at
+            // 19:57 went dark when the subject rotated at 23:16, because this
+            // loop returned the instant it found the welcome and never saw the
+            // rotation that followed. (The sibling test
+            // `rotation_reaches_readers` only passed because it applied the
+            // update by hand; the production join never did.)
+            //
+            // So replay the rest of the subject's control log, in order. It is
+            // one author's log, so `control` is already causal, and anything
+            // before our welcome is folded into the welcome itself. Tolerant
+            // per message: a later add of some other reader, or a message we
+            // have already seen, is not our failure — only the rotation updates
+            // must land, and `receive` is idempotent through the orderer.
+            for later in &control[idx + 1..] {
+                let _ = candidate.receive(later);
+            }
             return Ok((candidate, subject));
         }
     }

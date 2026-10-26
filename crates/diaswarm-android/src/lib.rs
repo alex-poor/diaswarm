@@ -2960,6 +2960,22 @@ fn grant_and_publish<'a>(
     // away from somebody who already had it.
     since: Option<u64>,
 ) -> JString<'a> {
+    // **A PERSON RE-SHARING WANTS A RESULT, NOT A NO-OP.** A plain attended
+    // grant — not an unattended handover, no scoped window — is the "Share with
+    // them" a human taps. When that reader is already in the member set but
+    // their welcome never reached them (the inconsistent state the 2026-10-26
+    // outage left: `members` names the reader, yet the reader's own
+    // `follow::join` reports "none of the control messages welcome us"), a
+    // second `grant` returns `AlreadyGranted` and publishes nothing — so the
+    // tap does nothing and they stay dark forever. Re-admit instead: `revoke`
+    // (remove + rotate) then `grant` afresh, minting a welcome at the current
+    // secret the reader CAN bootstrap from. Kept to the attended whole-history
+    // path on purpose: an unattended handover must stay idempotent and must
+    // never churn the group or walk back a revoke. Keep the bundle to re-grant
+    // with, since the attempt below moves the original.
+    let readmit_bundle =
+        if !unattended && since.is_none() { Some(bundle.clone()) } else { None };
+
     let granted = if unattended {
         v.vault.grant_unattended(bundle, purpose)
     } else if let Some(since) = since {
@@ -2981,13 +2997,48 @@ fn grant_and_publish<'a>(
             }
             tag
         }
-        // **ALREADY IN IS SUCCESS, AND SAYING SO IS THE POINT.** The caller
-        // asked for this reader to be able to read, and they can. Publishing a
-        // second welcome would be the bug: see `Error::AlreadyGranted`. The tag
-        // is the same one the first grant returned, so the caller's bookkeeping
-        // is unchanged and a retry is indistinguishable from a first attempt —
-        // which is what makes the follower's retries free.
-        Err(diaswarm_keys::Error::AlreadyGranted(tag)) => tag,
+        // **ALREADY A MEMBER — BUT THAT IS NOT ALWAYS SUCCESS.** If a human
+        // asked (attended, whole history), re-admit them rather than silently
+        // returning the stale tag: see the re-admit note above. The
+        // unattended/scoped paths keep the old idempotent behaviour — return
+        // the tag, publish nothing — which is what makes a follower's handover
+        // retries free and what keeps a revoke from being walked back. The two
+        // publishes below each use `env` only on their diverging error arm, so
+        // it is still live for the final answer — the same shape the Ok arm has.
+        Err(diaswarm_keys::Error::AlreadyGranted(tag)) => match readmit_bundle {
+            Some(bundle) => {
+                let remove = match v.vault.revoke(tag) {
+                    Ok(remove) => remove,
+                    Err(e) => return to_jstring(env, format!("error readmit revoke {e}")),
+                };
+                match v.handle.block_on(diaswarm_keys::wire::publish_control(
+                    &v.store,
+                    &v.signing,
+                    &remove,
+                )) {
+                    Ok(op) => {
+                        push_live(v.push.as_ref(), &v.signing, op);
+                    }
+                    Err(e) => return to_jstring(env, format!("error publish {e}")),
+                }
+                let (welcome, tag) = match v.vault.grant(bundle, purpose) {
+                    Ok(pair) => pair,
+                    Err(e) => return to_jstring(env, format!("error readmit grant {e}")),
+                };
+                match v.handle.block_on(diaswarm_keys::wire::publish_control(
+                    &v.store,
+                    &v.signing,
+                    &welcome,
+                )) {
+                    Ok(op) => {
+                        push_live(v.push.as_ref(), &v.signing, op);
+                    }
+                    Err(e) => return to_jstring(env, format!("error publish {e}")),
+                }
+                tag
+            }
+            None => tag,
+        },
         // **A REFUSAL WORKING, SAID OUT LOUD.** Only the unattended door can
         // reach this. It is not an error the caller should retry away: it means
         // somebody who was revoked tried to come back through a handover.
@@ -3209,25 +3260,77 @@ pub fn follow_read(
     };
     let subject = identity.signer;
 
-    let existing = diaswarm_keys::Vault::open(joined_dir, offset_ms, signing)
+    // **ALREADY WELCOMED — THE CHEAP PATH, BUT NOT ALWAYS ENOUGH.** A welcomed
+    // vault is frozen at the epoch of its welcome. A later group *rotation* is a
+    // control message this vault has stored but never applied, so every segment
+    // sealed after it reads as `not_ours` — the silent blackout of 2026-10-26,
+    // where a follower granted at 19:57 went dark when the subject rotated at
+    // 23:16. Replaying the control log with `receive` lands those rotations
+    // without re-running `join` (which would throw away secrets costing a
+    // replication round trip): `receive` is idempotent through the orderer, so
+    // only the new messages take, and the bundle is kept. Tolerant per message —
+    // an add of some other reader is not our failure.
+    //
+    // 🔴 **BUT `receive` CANNOT CONSUME A RE-ADMIT, AND THAT IS THE OTHER HALF
+    // OF THE OUTAGE.** When the subject re-shares with a member whose welcome
+    // never reached them, it re-admits: `remove` (this follower receives its OWN
+    // removal) then a fresh `grant` (a new welcome at the new secret). Replaying
+    // `receive` applies the removal — the follower goes dark — and the new
+    // welcome does NOT bootstrap it back, because `receive` is not the welcome
+    // path and never reloads this device's own key manager (the secret the new
+    // welcome is wrapped towards). Observed live 2026-10-26: the subject
+    // re-shared, the welcome replicated, and `opened` stayed 0. Proven in
+    // `diaswarm-keys/tests/readmit_reaches_a_persisted_follower`.
+    //
+    // The tell is a welcomed vault that opens nothing while segments it cannot
+    // open exist (`not_ours > 0`): it has been revoked out from under itself.
+    // Only a clean `join` reloads our manager and bootstraps from the new
+    // welcome, so fall through to one. Guarded so a follower with simply no days
+    // yet (`not_ours == 0`) does not re-join on every refresh.
+    let welcomed = diaswarm_keys::Vault::open(joined_dir, offset_ms, signing)
         .ok()
         .filter(|v| v.is_welcomed());
 
-    let vault = match existing {
-        Some(v) => v,
-        None => match join_subject(
-            own_dir,
-            joined_dir,
-            store,
-            runtime,
-            signing,
-            keys_hex,
-            purpose,
-            offset_ms,
-        ) {
-            Ok((v, _)) => v,
-            Err(e) => return format!("error join {e}"),
-        },
+    if let Some(mut v) = welcomed {
+        if let Ok(control) =
+            runtime.block_on(diaswarm_keys::wire::control_from(store, &subject, None))
+        {
+            for message in &control {
+                let _ = v.receive(message);
+            }
+        }
+        match read_followed(&v, store, runtime, &subject, tail_days, from_epoch) {
+            Ok((ndjson, opened, unreadable)) => {
+                if opened > 0 || unreadable == 0 {
+                    return format!("ok {opened} {unreadable}\n{ndjson}");
+                }
+                // else: stranded by a re-admit — fall through to a clean re-join.
+            }
+            Err(e) => return format!("error read {e}"),
+        }
+    }
+
+    // Either never welcomed, or welcomed-but-revoked. (Re)join cleanly. A stale
+    // joined directory CANNOT be re-bootstrapped in place — `join` opens it per
+    // message and `Vault::join` refuses over existing group state, so a persisted
+    // follower would never re-join and stay dark forever. Clear it first so the
+    // bootstrap starts from nothing, exactly as a first-ever join does. The
+    // control log lives in the device's own store, not here, so nothing
+    // recoverable is lost: the secrets are re-derived from it.
+    let _ = std::fs::remove_dir_all(joined_dir);
+    let _ = std::fs::create_dir_all(joined_dir);
+    let vault = match join_subject(
+        own_dir,
+        joined_dir,
+        store,
+        runtime,
+        signing,
+        keys_hex,
+        purpose,
+        offset_ms,
+    ) {
+        Ok((v, _)) => v,
+        Err(e) => return format!("error join {e}"),
     };
 
     match read_followed(&vault, store, runtime, &subject, tail_days, from_epoch) {
