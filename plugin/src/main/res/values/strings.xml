@@ -16,7 +16,12 @@
     <string name="swarm_grant">Share with someone</string>
     <string name="swarm_grant_summary">Paste the key they gave you. They will be able to read as much history as the setting above allows.</string>
     <string name="swarm_revoke">Stop sharing with</string>
-    <string name="swarm_revoke_summary">Paste their key. They stop getting anything new, lose today, and keep every day that had already finished.</string>
+    <string name="swarm_revoke_summary">Paste their name or key. They stop getting anything new, lose today, and keep every day that had already finished.</string>
+    <!-- Shown as a toast after a withdrawal, because a silent one is
+         indistinguishable from a broken one — which was the complaint. -->
+    <string name="swarm_revoke_done">Stopped sharing. They get nothing new from now on.</string>
+    <string name="swarm_revoke_partial">Removed from your list. If they were reading, they keep today until their key next rotates.</string>
+    <string name="swarm_revoke_none">Nothing matched that name or key — your list is unchanged.</string>
 
     <string name="swarm_readers">Who can read</string>
     <string name="swarm_readers_summary">The people you have shared with</string>
@@ -34,7 +39,7 @@
          field existed, and at full length it buried the key and the purpose it
          sits between. Seen on a phone, not guessed at. -->
     <string name="swarm_reader_scope_unknown">Scope not recorded — shared before this was kept</string>
-    <string name="swarm_readers_explain">To stop sharing with someone, copy their key above and paste it into “Stop sharing with”.</string>
+    <string name="swarm_readers_explain">To stop sharing with someone, copy their name or key above and paste it into “Stop sharing with”.</string>
     <!-- THE HONEST SENTENCE, and it is better than people expect while still
          not being what they hope. Sealing re-seals the whole accumulated day
          under the newest secret, so stopping at noon takes this morning back

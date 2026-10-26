@@ -649,6 +649,31 @@ object SwarmNative {
      */
     external fun vaultReaderKeys(vaultPath: String, readerPub: String, purpose: String): String
 
+    /**
+     * Record a human label for a reader — the handle from their invite — so
+     * *Who can read* shows a name instead of a key.
+     *
+     * Creates the book row if there is not one yet, which a keys-only grant
+     * otherwise never did (the [vaultNoteReaderKeys]/[vaultNoteReaderScope]
+     * upserts quietly skip a reader with no row). Works straight on the private
+     * book, so it needs no core vault on disk. 0 on success.
+     */
+    external fun vaultRememberReader(
+        vaultPath: String,
+        readerPub: String,
+        purpose: String,
+        name: String
+    ): Long
+
+    /**
+     * Remove a reader from the private book, matched by key OR by name. Returns
+     * how many rows went (0 if nothing matched), or a negative error.
+     *
+     * Pairs with [keysRevokeReader]: that stops the data, this stops the name
+     * lingering in *Who can read*.
+     */
+    external fun vaultForgetReader(vaultPath: String, who: String): Long
+
     external fun keysGrantUnattended(handle: Long, readerBundle: String, purpose: String): String
 
     /**

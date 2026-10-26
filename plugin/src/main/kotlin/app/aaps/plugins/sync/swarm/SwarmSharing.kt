@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.Typeface
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.MultiFormatWriter
@@ -285,13 +286,27 @@ object SwarmSharing {
                         R.plurals.swarm_reader_scope_days, days.toInt(), days
                     )
                 }
+                // **A NAME IF THEY GAVE ONE, A KEY IF THEY DID NOT.** The handle
+                // from their invite is what a person recognises; a reader granted
+                // before this was kept has none, and falls back to the key. It is
+                // shown on its own line, selectable, because it is still what you
+                // paste into the withdraw box when there is nothing better.
+                val name = parts.getOrElse(3) { "" }
+                if (name.isNotEmpty()) {
+                    view.addView(TextView(ctx).apply {
+                        text = name
+                        textSize = 15f
+                        setTypeface(typeface, Typeface.BOLD)
+                        setPadding(0, dp(ctx, 8f), 0, 0)
+                    })
+                }
                 view.addView(TextView(ctx).apply {
                     // The whole key, not a prefix: this is the string you paste
                     // into the withdraw box, and a truncated one cannot be.
                     text = ctx.getString(R.string.swarm_reader_row, purpose, scope, key)
                     textSize = 11f
                     setTextIsSelectable(true)
-                    setPadding(0, dp(ctx, 6f), 0, dp(ctx, 6f))
+                    setPadding(0, dp(ctx, if (name.isEmpty()) 6f else 2f), 0, dp(ctx, 6f))
                 })
             }
             view.addView(TextView(ctx).apply {

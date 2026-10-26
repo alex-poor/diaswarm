@@ -12,6 +12,8 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sync.DataSyncSelector
 import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.core.ui.toast.ToastUtils
+import app.aaps.plugins.sync.swarm.R
 import app.aaps.plugins.sync.swarm.keys.SwarmLongKey
 import app.aaps.plugins.sync.swarm.keys.SwarmStringKey
 import org.json.JSONObject
@@ -1192,51 +1194,67 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         // KEYS-ONLY: the keys vault is the only vault, so withdrawal always
         // targets it. The reader's keys identity is still looked up in the
         // local readers book (readers.json) — the keys vault has no readers
-        // book of its own yet (no keysReaders JNI).
+        // book of its own yet (no keysReaders JNI). `who` may be the key OR the
+        // name, since the book now matches either.
+        val vaultPath = SwarmPaths.vault(context, this::class.java).absolutePath
         val theirKeys = try {
-            SwarmNative.vaultReaderKeys(
-                SwarmPaths.vault(context, this::class.java).absolutePath,
-                who,
-                PURPOSE
-            )
+            SwarmNative.vaultReaderKeys(vaultPath, who, PURPOSE)
         } catch (e: Throwable) {
             aapsLogger.error(LTag.CORE, "swarm: could not look up a reader's keys identity: $e")
-            return
+            ""
         }
-        if (theirKeys.isEmpty()) {
-            // **"I HAVE NO RECORD", NOT "THERE IS NOTHING".** Those are
-            // different statements and only one of them is reassuring. A reader
-            // granted before this book had the field, who IS a member of the
-            // keys group, looks exactly like a reader who never was — and the
-            // first one is still reading. It fills itself in: a handover
-            // records the identity the moment it proves it, and a follower
-            // sends one every half hour. But until it has, this phone cannot
-            // say they are out, so it does not.
+
+        // **THE KEYS-GROUP REVOKE — ONLY WHEN WE CAN NAME THE MEMBER.** Without
+        // their keys identity we cannot remove them from the group; a handover
+        // records it (a follower sends one every half hour), so until then the
+        // data half of the withdrawal may not land even though we still honour
+        // the user's decision to drop them from the list below.
+        var keysRevoked = false
+        if (theirKeys.isNotEmpty()) {
+            val handle = openShadow()
+            if (handle == 0L) {
+                aapsLogger.error(LTag.CORE, "swarm: keys withdrawal skipped — no keys vault")
+            } else {
+                try {
+                    val rc = SwarmNative.keysRevokeReader(handle, theirKeys, PURPOSE)
+                    if (rc == 0L) {
+                        keysRevoked = true
+                        aapsLogger.info(LTag.CORE, "swarm: withdrew ${who.take(16)}… from the keys vault")
+                    } else {
+                        aapsLogger.error(LTag.CORE, "swarm: keys withdrawal failed ($rc)")
+                    }
+                } catch (e: Throwable) {
+                    aapsLogger.error(LTag.CORE, "swarm: keys withdrawal threw: $e")
+                } finally {
+                    SwarmNative.keysClose(handle)
+                }
+            }
+            // Forget the handover so a later deliberate re-grant is not mistaken
+            // for a repeat — the tombstone decides whether they come back.
+            grantedHandovers.remove("$theirKeys|$PURPOSE")
+        } else {
             aapsLogger.warn(
                 LTag.CORE,
-                "swarm: no keys identity on record for ${who.take(16)}… — the core " +
-                    "withdrawal stands, but if they are a keys member this did NOT remove them. " +
-                    "Retry once they have handed over (within 30 minutes)."
+                "swarm: no keys identity on record for ${who.take(16)}… — removing them from " +
+                    "the list, but if they are an active keys member this did NOT revoke their key."
             )
-            return
         }
-        val handle = openShadow()
-        if (handle == 0L) {
-            aapsLogger.error(LTag.CORE, "swarm: keys withdrawal skipped — no keys vault")
-            return
-        }
-        try {
-            val rc = SwarmNative.keysRevokeReader(handle, theirKeys, PURPOSE)
-            if (rc == 0L) aapsLogger.info(LTag.CORE, "swarm: withdrew ${who.take(16)}… from the keys vault too")
-            else aapsLogger.error(LTag.CORE, "swarm: keys withdrawal failed ($rc)")
+
+        // **AND REMOVE THE ROW, SO THE SCREEN REFLECTS THE DECISION.** Leaving
+        // it meant "Stop sharing with" did nothing visible — the whole of the
+        // user's complaint. Matched by key or name. Then say what happened,
+        // because a silent withdrawal is indistinguishable from a broken one.
+        val removed = try {
+            SwarmNative.vaultForgetReader(vaultPath, who)
         } catch (e: Throwable) {
-            aapsLogger.error(LTag.CORE, "swarm: keys withdrawal threw: $e")
-        } finally {
-            SwarmNative.keysClose(handle)
+            aapsLogger.error(LTag.CORE, "swarm: could not update the readers book: $e")
+            -1L
         }
-        // Forget the handover so a later deliberate re-grant is not mistaken
-        // for a repeat — the tombstone decides whether they come back, not this.
-        grantedHandovers.remove("$theirKeys|$PURPOSE")
+        when {
+            removed <= 0L -> ToastUtils.warnToast(context, context.getString(R.string.swarm_revoke_none))
+            keysRevoked   -> ToastUtils.okToast(context, context.getString(R.string.swarm_revoke_done))
+            else          -> ToastUtils.warnToast(context, context.getString(R.string.swarm_revoke_partial))
+        }
     }
 
     /** Readers this process has already taken a handover for. */
@@ -1366,6 +1384,15 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
                     // the "Who can read" screen read it, and the keys vault has
                     // no readers book of its own yet. This is the only moment
                     // that holds both the reader and the window.
+                    //
+                    // REMEMBER FIRST, because it is the call that CREATES the row
+                    // — the note upserts below are silent no-ops when there is
+                    // none, which is why a keys-only grant used to leave "Who can
+                    // read" showing a bare key and nothing else. The label is the
+                    // handle from their invite (fields[5]); empty keeps the row
+                    // nameless rather than blanking an earlier one.
+                    val label = fields.getOrNull(5)?.trim().orEmpty()
+                    SwarmNative.vaultRememberReader(vault, who, PURPOSE, label)
                     SwarmNative.vaultNoteReaderKeys(vault, who, PURPOSE, theirKeys)
                     SwarmNative.vaultNoteReaderScope(vault, who, PURPOSE, days)
                     aapsLogger.info(

@@ -301,6 +301,14 @@ pub struct KnownReader {
     /// were — unknown is unknown.
     #[serde(default)]
     pub scope_days: Option<u64>,
+    /// A human label for this reader, taken from the handle in their invite —
+    /// what *Who can read* shows in place of a bare key.
+    ///
+    /// `None` for a reader granted before this field existed, or one whose
+    /// invite carried no handle; the screen then falls back to a short key.
+    /// `#[serde(default)]`, so an older book still loads.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// Read a subject's private readers book (`readers.json`) straight off disk,
@@ -318,6 +326,90 @@ pub fn read_readers_book(root: &Path) -> Result<Vec<KnownReader>, VaultError> {
         return Ok(Vec::new());
     }
     serde_json::from_slice(&fs::read(path)?).map_err(|e| VaultError::Malformed(e.to_string()))
+}
+
+/// Write a subject's private readers book back to disk, with the restrictive
+/// mode it has to have.
+///
+/// **THE FREE-FUNCTION TWIN OF [`Vault::write_readers`].** The keys-only paths
+/// have a `readers.json` but no `meta.json`, so they cannot open a whole
+/// [`Vault`] to call the method — and the book is an independent file, so they
+/// should not have to. See [`read_readers_book`].
+pub fn write_readers_book(root: &Path, book: &[KnownReader]) -> Result<(), VaultError> {
+    let path = root.join("readers.json");
+    fs::write(&path, serde_json::to_vec_pretty(book).unwrap())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+/// Record a human label for a reader, creating the row if this subject has not
+/// written one down yet.
+///
+/// **THE ROW HAS TO EXIST FOR A NAME TO STICK, AND A KEYS-ONLY GRANT NEVER MADE
+/// ONE.** [`Vault::remember_reader`] — the only thing that creates a row — runs
+/// on the retired core-vault path. A keys-only grant records keys and scope
+/// through the sibling upserts, which are silent no-ops when the row is absent,
+/// so nothing created it and *Who can read* had only a key to show. This
+/// upserts by reader+purpose (what the grant path holds, not the tag) and
+/// creates the row when missing, working straight on `readers.json` so it does
+/// not need a `meta.json` the keys-only phone never wrote.
+pub fn remember_reader_name(
+    root: &Path,
+    reader: &str,
+    purpose: &str,
+    name: &str,
+) -> Result<(), VaultError> {
+    let name = name.trim();
+    let mut book = read_readers_book(root)?;
+    match book
+        .iter_mut()
+        .find(|k| k.reader.eq_ignore_ascii_case(reader) && k.purpose == purpose)
+    {
+        Some(slot) => {
+            // Don't overwrite a real label with an empty one — a later keyless
+            // re-share must not blank a name an earlier invite carried.
+            if name.is_empty() || slot.name.as_deref() == Some(name) {
+                return Ok(());
+            }
+            slot.name = Some(name.to_string());
+        }
+        None => book.push(KnownReader {
+            tag: String::new(),
+            reader: reader.to_string(),
+            purpose: purpose.to_string(),
+            keys: None,
+            scope_days: None,
+            name: if name.is_empty() { None } else { Some(name.to_string()) },
+        }),
+    }
+    write_readers_book(root, &book)
+}
+
+/// Remove a reader from the private book, matched by their key OR their name,
+/// case-insensitively. Returns how many rows were dropped.
+///
+/// **WITHDRAWING HAS TO CHANGE WHAT THE SCREEN SHOWS.** The keys-group revoke
+/// stops the data, but the book is the only place a reader is named, so leaving
+/// the row behind means *Who can read* keeps listing somebody who can no longer
+/// read. Matches the name too, so what is pasted into the withdraw box can be
+/// the label on the screen and not only the key.
+pub fn forget_reader(root: &Path, who: &str) -> Result<usize, VaultError> {
+    let who = who.trim();
+    let mut book = read_readers_book(root)?;
+    let before = book.len();
+    book.retain(|k| {
+        !(k.reader.eq_ignore_ascii_case(who)
+            || k.name.as_deref().map(|n| n.eq_ignore_ascii_case(who)).unwrap_or(false))
+    });
+    let removed = before - book.len();
+    if removed > 0 {
+        write_readers_book(root, &book)?;
+    }
+    Ok(removed)
 }
 
 pub struct Vault {
@@ -864,6 +956,9 @@ impl Vault {
             // more: a re-grant cannot shrink what they already hold, so
             // forgetting the old scope here would silently narrow the answer.
             scope_days: book.iter().find(|k| k.tag == tag).and_then(|k| k.scope_days),
+            // KEPT ACROSS AN UPSERT: a re-grant must not blank the label an
+            // earlier invite gave them.
+            name: book.iter().find(|k| k.tag == tag).and_then(|k| k.name.clone()),
         };
         match book.iter_mut().find(|k| k.tag == tag) {
             Some(slot) => *slot = entry,

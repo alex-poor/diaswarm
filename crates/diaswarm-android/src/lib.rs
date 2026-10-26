@@ -1180,12 +1180,14 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultReaders<'a>(
     let listing = diaswarm_core::vault::read_readers_book(Path::new(&String::from(v)))
         .unwrap_or_default()
         .iter()
-        // Three fields now. The scope is "" when nobody wrote it down, which
-        // the caller must render as unknown rather than as unlimited — see
-        // `KnownReader::scope_days`.
+        // Four fields now. The scope is "" when nobody wrote it down, which the
+        // caller must render as unknown rather than as unlimited — see
+        // `KnownReader::scope_days`. The name is "" when the invite carried no
+        // handle; the caller then falls back to a short key.
         .map(|k| {
             let scope = k.scope_days.map(|d| d.to_string()).unwrap_or_default();
-            format!("{}\t{}\t{}", k.reader, k.purpose, scope)
+            let name = k.name.clone().unwrap_or_default();
+            format!("{}\t{}\t{}\t{}", k.reader, k.purpose, scope, name)
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -1454,6 +1456,64 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultNoteReaderScope<'a>
     let Ok(vault) = Vault::open(Path::new(&v)) else { return -3 };
     match vault.remember_reader_scope(&r, &p, days as u64) {
         Ok(()) => 0,
+        Err(_) => -4,
+    }
+}
+
+/// Record a human label for a reader, creating the book row if there is not one
+/// yet. Returns 0 on success.
+///
+/// **UNLIKE [`Java_nz_diaswarm_jni_SwarmNative_vaultNoteReaderKeys`] THIS DOES
+/// NOT OPEN THE WHOLE VAULT.** It works straight on `readers.json`, so it writes
+/// a name on a keys-only phone that has no `meta.json`, and it is what finally
+/// lets *Who can read* show a name instead of a key. It also creates the row the
+/// keys-only grant path otherwise never made, which the `NoteReader*` upserts
+/// quietly skip when it is missing.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultRememberReader<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    vault_path: JString<'a>,
+    reader_pub: JString<'a>,
+    purpose: JString<'a>,
+    name: JString<'a>,
+) -> jlong {
+    let (Ok(v), Ok(r), Ok(p), Ok(n)) = (
+        env.get_string(&vault_path),
+        env.get_string(&reader_pub),
+        env.get_string(&purpose),
+        env.get_string(&name),
+    ) else {
+        return -1;
+    };
+    let (v, r, p, n) =
+        (String::from(v), String::from(r), String::from(p), String::from(n));
+    match diaswarm_core::vault::remember_reader_name(Path::new(&v), &r, &p, &n) {
+        Ok(()) => 0,
+        Err(_) => -4,
+    }
+}
+
+/// Remove a reader from the private book, by key OR by name. Returns how many
+/// rows went, or a negative error.
+///
+/// Pairs with `keysRevokeReader` so that withdrawing actually changes what *Who
+/// can read* lists — the keys-group revoke stops the data, this stops the name
+/// lingering on the screen. Works straight on `readers.json`, no `meta.json`
+/// required.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_vaultForgetReader<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    vault_path: JString<'a>,
+    who: JString<'a>,
+) -> jlong {
+    let (Ok(v), Ok(w)) = (env.get_string(&vault_path), env.get_string(&who)) else {
+        return -1;
+    };
+    let (v, w) = (String::from(v), String::from(w));
+    match diaswarm_core::vault::forget_reader(Path::new(&v), &w) {
+        Ok(n) => n as jlong,
         Err(_) => -4,
     }
 }
