@@ -160,7 +160,10 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: alex-poor/AndroidAPS
-          ref: diaswarm-addon
+          # main is a strict superset of the old diaswarm-addon branch (it carries all the swarm
+          # wiring plus the live loop: split-bolus, the advisory nudges, the UI redesign, CamapsPlugin).
+          # diaswarm-addon drifted 63 commits behind; building from it shipped a stale loop. Build main.
+          ref: main
           path: aaps
       - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "21" }

@@ -15,7 +15,7 @@ name = "diaswarm-peer"
 # called 0.1.7 — one that reads v5, one that does not — is a worse bug than a
 # point bump, so this is a within-generation patch: same wire, adds v5 invite
 # parsing and a terminal QR.
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 publish = false
 description = "An always-on diaswarm pool member for a machine that does not sleep"
