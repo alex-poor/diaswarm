@@ -117,11 +117,12 @@ Builds:
       - rustup target add aarch64-linux-android armv7-linux-androideabi
       - cargo install cargo-ndk@4.1.2 --locked
 
-  # 0.1.9 (base versionCode 10 -> per-ABI 101/102). 0.1.8 was tagged but never
-  # added here, so F-Droid jumps 0.1.7 -> 0.1.9; that is fine, users get the newest.
-  - versionName: 0.1.9
-    versionCode: 101
-    commit: 735c2d86eab0ba9587efc2e26727245d14c4b1eb
+  # 0.1.10 (base versionCode 11 -> per-ABI 111/112) — carries the QR-scannability fix.
+  # 0.1.8/0.1.9 predated it and were never submitted here, so F-Droid jumps 0.1.7 -> 0.1.10;
+  # a no-QR build must not ship.
+  - versionName: 0.1.10
+    versionCode: 111
+    commit: a96217c38ebdbe63490e7e57146b6ce6fe0331a2
     subdir: follower
     sudo:
       - apt-get update
@@ -136,9 +137,9 @@ Builds:
       - rustup target add aarch64-linux-android armv7-linux-androideabi
       - cargo install cargo-ndk@4.1.2 --locked
 
-  - versionName: 0.1.9
-    versionCode: 102
-    commit: 735c2d86eab0ba9587efc2e26727245d14c4b1eb
+  - versionName: 0.1.10
+    versionCode: 112
+    commit: a96217c38ebdbe63490e7e57146b6ce6fe0331a2
     subdir: follower
     sudo:
       - apt-get update
@@ -180,5 +181,5 @@ UpdateCheckMode: Tags ^follower-v
 VercodeOperation:
   - "%c * 10 + 1"
   - "%c * 10 + 2"
-CurrentVersion: 0.1.9
-CurrentVersionCode: 102
+CurrentVersion: 0.1.10
+CurrentVersionCode: 112
