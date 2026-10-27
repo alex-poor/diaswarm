@@ -1,0 +1,8 @@
+The pairing QR scans now. The invite was encoded too densely to read off one
+phone's screen with another phone's camera; it now uses a lighter error-correction
+level and a proper quiet zone, so a single scan works.
+
+Sharing recovers on its own after a network change or a stuck re-share, instead
+of leaving a follower stuck on a reading that never updates.
+
+The invite screen shows a tick the moment someone scans it.

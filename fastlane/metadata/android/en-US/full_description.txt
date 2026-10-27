@@ -1,31 +1,10 @@
-Shows the glucose of somebody who has chosen to share it with you.
+See the glucose of someone who has chosen to share it with you. Ayni is a viewer — and only that.
 
-Ayni is a Quechua word for reciprocity — help given and returned over time.
-It is the shape of the network underneath: your phone carries other people's
-sealed records so that theirs carry yours when your phone is off or away,
-and no phone can read what it holds for anyone else.
+* **No insulin, no pump, no closed-loop code.** If you're looking for an artificial pancreas, this isn't one.
+* **Private by design.** Readings travel directly phone-to-phone, sealed before they leave the sender — no account, no server, no one in the middle who can read them. Sharing ends the instant the sender revokes your key.
+* **One scan to pair** — the person sharing scans your code and hands back their own address in the same motion.
+* **Every reading shows its age.** A follower's real danger isn't an error on screen; it's a stale number that looks current.
 
-It is a viewer and nothing else. It cannot deliver insulin, it contains no
-closed-loop code, and it does not talk to a pump. If you are looking for an
-artificial pancreas, this is not it and does not include one.
+Ayni is Quechua for *reciprocity*: your phone carries other people's sealed records so that theirs carry yours when your phone is away — and no phone can read what it holds for anyone else.
 
-Readings travel directly between phones. There is no account, no server
-holding your data, and nobody in the middle who can read it: records are
-sealed on the sender's phone before they are sent, and only somebody they
-have granted a key to can open them. Sharing is withdrawn by stopping the
-key, not by asking a service to stop serving.
-
-Pairing is one scan. The person sharing scans the follower's code; their
-phone grants access and hands back its own address in the same movement.
-
-Every reading is shown with its age. A follower's dangerous failure is not
-an error on screen — it is a number that looks current and is nine hours
-old.
-
-To share your own data you need the AndroidAPS add-on from the project's
-repository, which you build yourself. It is deliberately not distributed.
-
-A relay is used to introduce two phones that are on different networks. It
-carries encrypted traffic it cannot read and holds nothing, but it does see
-which node identifiers exchange bytes and when. The relay is chosen by the
-person sharing and travels in their invite, so it can be one they run.
+To share your own data you build the AndroidAPS add-on yourself, from the project's repository; it is deliberately not distributed.
