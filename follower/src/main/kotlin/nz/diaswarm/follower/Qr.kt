@@ -31,9 +31,12 @@ object Qr {
         // keeps the modules crisp — which matters more now the code is the only
         // thing in the dialog and a camera reads it off the glass.
         val side = (context.resources.displayMetrics.widthPixels * 0.85f).toInt()
+        // Error correction L, not H: the ~720-byte invite at H needs QR version ~29 (≈137 modules),
+        // too dense to read screen-to-screen; L drops the same payload to ~v19 (≈93). Quiet zone 4
+        // (spec minimum) — the old margin 1 left scanners unable to find the finder patterns.
         val hints = mapOf(
-            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.H,
-            EncodeHintType.MARGIN to 1
+            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L,
+            EncodeHintType.MARGIN to 4
         )
         val m = MultiFormatWriter().encode(text, BarcodeFormat.QR_CODE, side, side, hints)
         val px = IntArray(m.width * m.height)

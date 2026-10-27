@@ -64,9 +64,12 @@ object SwarmSharing {
         // against jitpack — it builds arbitrary source at an arbitrary commit,
         // so the dependency is not reproducible. One line of encoding is a
         // cheaper price than being unpublishable.
+        // Error correction L, not H: the ~720-byte invite at H needs QR version ~29 (≈137 modules),
+        // too dense to read screen-to-screen; L drops the same payload to ~v19 (≈93). Quiet zone 4
+        // (spec minimum) — the old margin 1 left scanners unable to find the finder patterns.
         val hints = mapOf(
-            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.H,
-            EncodeHintType.MARGIN to 1
+            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L,
+            EncodeHintType.MARGIN to 4
         )
         val matrix = MultiFormatWriter().encode(text, BarcodeFormat.QR_CODE, side, side, hints)
         val on = android.graphics.Color.BLACK
