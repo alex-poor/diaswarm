@@ -37,6 +37,7 @@ fun SettingsScreen(
     onPaste: () -> Unit,
     onShowInvite: () -> Unit,
     onChoose: (Follower.Subject) -> Unit,
+    onRename: (Follower.Subject) -> Unit,
     onUnits: () -> Unit,
     onKeysOnly: () -> Unit,
     keysOnly: Boolean,
@@ -85,11 +86,16 @@ fun SettingsScreen(
                         followed.forEachIndexed { i, s ->
                             // "Held but unreadable" and "nothing arrived" are different
                             // problems and must not look alike.
+                            //
+                            // s.label, not s.short: show the name they were given
+                            // (from their invite, or one you set) and fall back to
+                            // the hex only when there is none. The pencil renames.
                             SubjectRow(
-                                s.short,
+                                s.label,
                                 if (s.reached) "holding their history" else "nothing has arrived yet",
                                 selected = false,
-                                leading = Icons.Outlined.Person
+                                leading = Icons.Outlined.Person,
+                                onEdit = { onRename(s) }
                             ) { onChoose(s) }
                             if (i < followed.lastIndex) RowDivider()
                         }

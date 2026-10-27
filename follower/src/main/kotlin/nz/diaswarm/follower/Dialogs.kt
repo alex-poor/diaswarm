@@ -178,3 +178,40 @@ fun PasteInviteDialog(onFollow: (String) -> Unit, onClose: () -> Unit) {
         }
     )
 }
+
+/**
+ * Rename a followed person — a name for your eyes only.
+ *
+ * **IT IS A LOCAL LABEL, NOT PART OF THE PROTOCOL.** Nothing here is sent to the
+ * subject or any carrier; it only changes what this phone writes to
+ * [Prefs.setHandleFor] for this subject's key. [current] is whatever is stored
+ * now (the invite's handle, a previous edit, or empty), prefilled so a rename is
+ * an edit rather than a retype. Clearing it and saving falls the list back to
+ * the short hex — the sole place that key is ever shown. 40-char cap matches the
+ * store; the subject's own key is shown so there is no doubt who is being named.
+ */
+@Composable
+fun EditNameDialog(current: String, subjectShort: String, onSave: (String) -> Unit, onClose: () -> Unit) {
+    var text by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onClose,
+        confirmButton = { TextButton(onClick = { onSave(text.trim()); onClose() }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } },
+        title = { Text("Name this person") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "A name for your eyes only — it is never sent to them or anyone " +
+                        "carrying their data. Clear it to go back to showing $subjectShort.",
+                    color = Text2, fontSize = 13.sp
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it.take(40) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    )
+}

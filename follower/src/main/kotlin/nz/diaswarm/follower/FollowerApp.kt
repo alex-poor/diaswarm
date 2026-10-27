@@ -40,6 +40,10 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     var showPeople by remember { mutableStateOf(false) }
     var showPaste by remember { mutableStateOf(false) }
     var showCarrying by remember { mutableStateOf(false) }
+    // The subject being renamed, or null. Held here (not in SettingsScreen) so
+    // the dialog renders inside the theme block with the others — see the note
+    // below about dialogs drawn against Material's default scheme.
+    var renameTarget by remember { mutableStateOf<Follower.Subject?>(null) }
     // When the on-screen sync loop last asked for a pass, so the waiting state
     // can say "last tried 20s ago" rather than leave someone staring at a card
     // with no sign anything is happening.
@@ -256,12 +260,23 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             onClose = { showPaste = false }
         )
         if (showCarrying) CarryingDialog(carrying, Prefs.carryingAt(context)) { showCarrying = false }
+        renameTarget?.let { target ->
+            EditNameDialog(
+                current = target.handle,
+                subjectShort = target.short,
+                onSave = { Prefs.setHandleFor(context, target.key, it); tick++ },
+                onClose = { renameTarget = null }
+            )
+        }
         if (showPeople) SettingsScreen(
             followed = followed,
             onScan = { showPeople = false; onScan() },
             onPaste = { showPeople = false; showPaste = true },
             onShowInvite = { showPeople = false; Endpoint.expectOffer(); showInvite = true },
             onChoose = { Prefs.setGraphSubject(context, it.key); tick++; showPeople = false },
+            // Keep the list open underneath; the dialog overlays it and the row
+            // updates live once the name is saved.
+            onRename = { renameTarget = it },
             onUnits = { Prefs.setMmol(context, !Prefs.mmol(context)); tick++ },
             // "New vault" is always on now (the toggle was a footgun — see
             // [Prefs.keysVault]); only the read-side "Ignore old vault" switch

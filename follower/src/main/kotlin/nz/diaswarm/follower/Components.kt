@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -130,9 +132,15 @@ fun ActionRow(title: String, subtitle: String? = null, leading: ImageVector? = n
     }
 }
 
-/** A person in the follow list: name + what this phone has of theirs. */
+/**
+ * A person in the follow list: name + what this phone has of theirs.
+ *
+ * [onEdit], when given, draws a trailing pencil that renames them. It is its own
+ * tappable target inside the row, so the pencil renames while the rest of the
+ * row still does [onClick] — a child clickable consumes its own tap.
+ */
 @Composable
-fun SubjectRow(title: String, status: String, selected: Boolean, leading: ImageVector? = null, onClick: () -> Unit) {
+fun SubjectRow(title: String, status: String, selected: Boolean, leading: ImageVector? = null, onEdit: (() -> Unit)? = null, onClick: () -> Unit) {
     RowShell(onClick = onClick, leading = leading) {
         Column(Modifier.weight(1f)) {
             Text(title, color = AyniColor.Text1, fontSize = AyniType.Body,
@@ -142,6 +150,13 @@ fun SubjectRow(title: String, status: String, selected: Boolean, leading: ImageV
         if (selected) {
             Spacer(Modifier.width(AyniSpace.s3))
             Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(AyniColor.InRange))
+        }
+        if (onEdit != null) {
+            Spacer(Modifier.width(AyniSpace.s2))
+            IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Outlined.Edit, contentDescription = "Rename", tint = AyniColor.Text3,
+                    modifier = Modifier.size(19.dp))
+            }
         }
     }
 }
