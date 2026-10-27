@@ -95,6 +95,12 @@ android {
     kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21) } }
 
     sourceSets["main"].jniLibs.srcDirs("src/main/jniLibs")
+    // Shared JNI sources compiled into both this app and the AAPS plugin — see
+    // ../shared-jni/nz/diaswarm/jni/NetworkWatch.kt. `../` resolves to the repo
+    // root from the module dir, the same root the plugin's srcDir resolves to,
+    // so both builds compile the one file. Kept here (not a Gradle module)
+    // because the plugin is built inside the AndroidAPS tree, not this build.
+    sourceSets["main"].java.srcDir("../shared-jni")
     packaging {
         jniLibs {
             useLegacyPackaging = false

@@ -1,3 +1,13 @@
+// SHARED SOURCE — ONE FILE, TWO BUILDS. This lives in the repo-root `shared-jni/`
+// tree and is compiled into BOTH the Ayni follower (`follower/`, its own Gradle
+// build) AND the AAPS plugin (`plugin/`, built inside the AndroidAPS tree) via a
+// `sourceSets["main"].java.srcDir("../shared-jni")` line in each module's
+// build.gradle.kts. Edit it HERE and only here — there is deliberately no second
+// copy. It once existed twice and the plugin copy kept leaking into AndroidAPS
+// after the follower copy was fixed (diaswarm e982c7e fixed one, 70567be the
+// other). Keep it dependency-free beyond the Android SDK so both builds can take
+// it as-is. SwarmNative.kt is intentionally NOT shared — the plugin exposes
+// publisher-only JNI the follower does not.
 package nz.diaswarm.jni
 
 import android.content.Context

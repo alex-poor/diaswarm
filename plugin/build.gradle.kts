@@ -15,6 +15,13 @@ android {
     namespace = "app.aaps.plugins.sync.swarm"
 
     sourceSets["main"].jniLibs.srcDirs("src/main/jniLibs")
+    // Shared JNI sources compiled into both this plugin and the Ayni follower —
+    // see ../shared-jni/nz/diaswarm/jni/NetworkWatch.kt. The plugin's projectDir
+    // is the diaswarm repo's `plugin/` even though it builds inside AndroidAPS,
+    // so `../shared-jni` resolves to the repo root — the same file the follower
+    // compiles. One file, no drift. (SwarmNative.kt stays per-module: the plugin
+    // exposes publisher-only JNI the follower does not.)
+    sourceSets["main"].java.srcDir("../shared-jni")
 
     buildFeatures {
         compose = true

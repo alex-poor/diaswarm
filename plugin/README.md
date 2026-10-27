@@ -17,6 +17,32 @@ which is asserted byte-identical to `tools/canon.py` over 19,129 real records.
 Kotlin owns only what Rust cannot see: the typed `DataPair`s, the `isValid`
 check, and this plugin's own high-water marks.
 
+## Shared JNI sources (`../shared-jni`)
+
+`NetworkWatch.kt` is identical to the follower's and belongs to neither, so it
+lives once in the repo-root [`shared-jni/`](../shared-jni) tree and both builds
+compile it:
+
+```kotlin
+sourceSets["main"].java.srcDir("../shared-jni")   // in BOTH build.gradle.kts files
+```
+
+`../` resolves to the repo root from each module's `projectDir` — the follower's
+own build and this plugin's (even though the plugin builds inside the AndroidAPS
+tree) — so the one file, `shared-jni/nz/diaswarm/jni/NetworkWatch.kt`, is the
+only copy. **Edit it there; do not reintroduce a per-module copy.** It was
+duplicated once and the two drifted: a leak fix landed in the follower's copy
+(`e982c7e`) and the plugin kept leaking into AndroidAPS until the same fix was
+applied to its copy (`70567be`) — exactly the drift this arrangement removes.
+
+A plain shared source dir, not a Gradle module, because the plugin is included
+in the AndroidAPS build while the follower is its own build — a module would
+have to be registered in both, one of them AAPS's `settings.gradle`. Keep
+anything in `shared-jni` dependency-free beyond the Android SDK for the same
+reason. `SwarmNative.kt` is deliberately **not** shared: the plugin declares
+publisher-only JNI (`keysRevokeAll`, `vaultRememberReader`, …) the follower has
+no business exposing.
+
 ## Wiring it into an AAPS checkout
 
 **The checkout this is wired into builds a live closed loop**, and more than one
