@@ -25,6 +25,7 @@ import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.validators.preferences.AdaptiveClickPreference
 import app.aaps.core.validators.preferences.AdaptiveListPreference
 import app.aaps.core.validators.preferences.AdaptiveStringPreference
@@ -251,6 +252,25 @@ class SwarmPlugin @Inject constructor(
                     stringKey = SwarmStringKey.RevokeReader,
                     title = R.string.swarm_revoke,
                     summary = R.string.swarm_revoke_summary
+                )
+            )
+            addPreference(
+                AdaptiveClickPreference(
+                    ctx = context,
+                    stringKey = SwarmStringKey.RevokeAllReaders,
+                    title = R.string.swarm_revoke_all,
+                    summary = R.string.swarm_revoke_all_summary,
+                    onPreferenceClickListener = {
+                        // Confirm first — it is every reader at once — then queue
+                        // the group-wide withdrawal for the next pass.
+                        OKDialog.showConfirmation(
+                            it.context,
+                            context.getString(R.string.swarm_revoke_all),
+                            context.getString(R.string.swarm_revoke_all_confirm),
+                            Runnable { revokeAll() }
+                        )
+                        true
+                    }
                 )
             )
             addPreference(
@@ -656,7 +676,15 @@ class SwarmPlugin @Inject constructor(
      * pass already running pick it up.
      */
     private fun revokeReader(who: String) {
-        preferences.put(SwarmStringKey.RevokeReader, who)
+        // APPEND to the queue, never overwrite — stopping several readers at once
+        // must withdraw all of them, not just the last. See [SwarmRevokeQueue].
+        SwarmRevokeQueue.add(preferences, who)
+        enqueue()
+    }
+
+    /** Queue a group-wide withdrawal: every current reader, off the live member set. */
+    private fun revokeAll() {
+        SwarmRevokeQueue.add(preferences, SwarmRevokeQueue.ALL)
         enqueue()
     }
 

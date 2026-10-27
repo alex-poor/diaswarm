@@ -1011,6 +1011,20 @@ impl Vault {
         msg.stamp(self.me)
     }
 
+    /// Every reader currently in the group — the members other than this
+    /// subject's own.
+    ///
+    /// **THE GROUP IS THE SOURCE OF TRUTH FOR A WITHDRAWAL, NOT THE READERS
+    /// BOOK.** A revoke driven off the book can only reach readers the book
+    /// still names; a reader dropped from the book but not the group stays a
+    /// member and keeps reading, which is exactly the hole a list-only "stop"
+    /// left behind (2026-10-28). Reading the live member set lets a withdrawal
+    /// be made complete regardless of what the book remembers.
+    pub fn reader_members(&self) -> Vec<MemberId> {
+        let Some(state) = self.state.as_ref() else { return Vec::new() };
+        state.dcgka.dgm.members.iter().copied().filter(|m| *m != self.me).collect()
+    }
+
     /// Take in a control message from the subject of this vault's group.
     ///
     /// **IT WILL NOT TAKE A BARE [`Message`].** An [`Authentic`] can only come

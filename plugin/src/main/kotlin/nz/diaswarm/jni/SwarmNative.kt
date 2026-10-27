@@ -641,6 +641,15 @@ object SwarmNative {
     external fun keysRevokeReader(handle: Long, readerBundle: String, purpose: String): Long
 
     /**
+     * Withdraw EVERY current reader at once, read from the group's live member
+     * set rather than the readers book. Reliable even when the book has been
+     * emptied — a reader dropped from the list but not the group keeps reading,
+     * and this is what closes that. Returns how many were removed, negative on
+     * error.
+     */
+    external fun keysRevokeAll(handle: Long): Long
+
+    /**
      * What this subject's private book says a reader's keys identity is, or
      * empty.
      *

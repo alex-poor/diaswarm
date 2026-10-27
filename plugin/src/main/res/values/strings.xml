@@ -22,6 +22,10 @@
     <string name="swarm_revoke_done">Stopped sharing. They get nothing new from now on.</string>
     <string name="swarm_revoke_partial">Removed from your list. If they were reading, they keep today until their key next rotates.</string>
     <string name="swarm_revoke_none">Nothing matched that name or key — your list is unchanged.</string>
+    <string name="swarm_revoke_all">Stop sharing with everyone</string>
+    <string name="swarm_revoke_all_summary">Withdraw every reader at once. They keep days that already finished but get nothing new. Reliable even if the list looks empty.</string>
+    <string name="swarm_revoke_all_confirm">Stop sharing with everyone? Every reader is removed from the group and gets nothing new. Finished days they already hold stay readable.</string>
+    <string name="swarm_revoke_all_done">Stopped sharing with everyone — %1$d removed.</string>
 
     <string name="swarm_readers">Who can read</string>
     <string name="swarm_readers_summary">The people you have shared with</string>

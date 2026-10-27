@@ -1447,13 +1447,45 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             }
         }
 
-        preferences.get(SwarmStringKey.RevokeReader).trim().takeIf { it.isNotEmpty() }?.let { who ->
-            preferences.put(SwarmStringKey.RevokeReader, "")
-            // KEYS-ONLY: withdrawal targets the keys vault only — the hand-rolled
-            // core-vault revoke (vaultRevoke) is gone. revokeOnKeys looks the
-            // reader's keys identity up in the local readers book and removes
-            // them from the group (which rotates, so it bites the current day).
-            revokeOnKeys(who)
+        // **DRAIN THE WHOLE QUEUE, NOT ONE.** A single `get` + `revokeOnKeys`
+        // withdrew only the last reader stopped before this pass and left the
+        // rest in the group — removed from the screen but still reading. Every
+        // queued withdrawal is processed; each rotates the group, so a reader
+        // removed on an earlier line cannot be let back by a later one.
+        // KEYS-ONLY: revokeOnKeys looks the reader's keys identity up in the
+        // local readers book and removes them from the group.
+        val queued = SwarmRevokeQueue.drain(preferences)
+        if (queued.contains(SwarmRevokeQueue.ALL)) revokeAllOnKeys()
+        queued.filter { it != SwarmRevokeQueue.ALL }.forEach { who -> revokeOnKeys(who) }
+    }
+
+    /**
+     * Withdraw everyone, off the group's live members rather than the readers
+     * book — so it is complete even when the book has been emptied (a reader
+     * removed from the list but not the group keeps reading). The reliable
+     * "stop sharing with everyone", and the repair for a list-only stop.
+     */
+    private fun revokeAllOnKeys() {
+        val handle = openShadow()
+        if (handle == 0L) {
+            aapsLogger.error(LTag.CORE, "swarm: stop-everyone skipped — no keys vault")
+            ToastUtils.warnToast(context, context.getString(R.string.swarm_revoke_partial))
+            return
+        }
+        val n = try {
+            SwarmNative.keysRevokeAll(handle)
+        } catch (e: Throwable) {
+            aapsLogger.error(LTag.CORE, "swarm: stop-everyone threw: $e"); -1L
+        } finally {
+            SwarmNative.keysClose(handle)
+        }
+        if (n >= 0) {
+            grantedHandovers.clear()
+            aapsLogger.info(LTag.CORE, "swarm: withdrew everyone — $n reader(s) removed from the group")
+            ToastUtils.okToast(context, context.getString(R.string.swarm_revoke_all_done, n))
+        } else {
+            aapsLogger.error(LTag.CORE, "swarm: stop-everyone failed ($n)")
+            ToastUtils.warnToast(context, context.getString(R.string.swarm_revoke_partial))
         }
     }
 

@@ -2968,6 +2968,47 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRevokeReader<'a>(
     }
 }
 
+/// Withdraw EVERY current reader at once, from the group's own member set.
+///
+/// **THE RELIABLE "STOP SHARING WITH EVERYONE", AND THE REPAIR FOR A LIST-ONLY
+/// STOP.** `keysRevokeReader` needs the reader's identity out of the readers
+/// book, so a reader dropped from the book but not the group cannot be named and
+/// keeps reading — the hole behind "I removed everyone and phone B still gets my
+/// data" (2026-10-28). This reads the live members instead
+/// ([`diaswarm_keys::Vault::reader_members`]) and removes each, so it is
+/// complete whatever the book remembers. Each removal rotates the group, so the
+/// last one leaves a secret no former reader holds. Returns how many were
+/// removed, or a negative error.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRevokeAll<'a>(
+    _env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+) -> jlong {
+    let Some(v) = keys_vault(handle) else { return -3 };
+    let members = v.vault.reader_members();
+    let mut removed = 0i64;
+    for tag in members {
+        match v.vault.revoke(tag) {
+            Ok(message) => {
+                match v.handle.block_on(diaswarm_keys::wire::publish_control(
+                    &v.store,
+                    &v.signing,
+                    &message,
+                )) {
+                    Ok(op) => { push_live(v.push.as_ref(), &v.signing, op); }
+                    Err(_) => return -5,
+                }
+                removed += 1;
+            }
+            // Already gone is success for that one.
+            Err(diaswarm_keys::Error::Group(_)) => {}
+            Err(_) => return -6,
+        }
+    }
+    removed
+}
+
 /// Grant from a D27 handover: the same grant, minus the authority to reverse a
 /// revoke.
 ///

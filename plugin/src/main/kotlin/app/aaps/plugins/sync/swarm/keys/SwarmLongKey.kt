@@ -167,6 +167,9 @@ enum class SwarmStringKey(
     /** Same, for the list of who can currently read. */
     ShowReaders("swarm_show_readers", "", exportable = false),
 
+    /** Same, for the "stop sharing with everyone" button. */
+    RevokeAllReaders("swarm_revoke_all", "", exportable = false),
+
     /** Same, for the camera. */
     ScanCode("swarm_scan_code", "", exportable = false),
 
