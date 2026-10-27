@@ -35,11 +35,22 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Java is here. This is the part we had never written.
  *
- * **IT NOTIFIES ON EVERY CALLBACK RATHER THAN GUESSING WHICH ONES MATTER.**
- * Upstream is explicit that "even when the network did not change [...] there is
- * no harm in calling this function", and the failure being guarded against is an
- * hour of silence. Bursts are coalesced to one in-flight notification, so a
- * handover that fires four callbacks costs one call, not four.
+ * **IT NOTIFIES ONLY WHEN THE NETWORK IDENTITY ACTUALLY CHANGES.** Upstream says
+ * "even when the network did not change [...] there is no harm in calling this
+ * function" — and on this follower there is: each call rebinds the iroh endpoint
+ * and leaks ~1 MB of ring / connection state. Android delivers capability and
+ * link-property callbacks every few seconds (signal strength, validation,
+ * metering) on a network that has not actually moved, so notifying on every one
+ * leaked ~20 MB/min and drove the follower past a 1 GB heap in half an hour
+ * (observed live 2026-10-27).
+ *
+ * So what the sockets actually depend on is fingerprinted — the default
+ * network's id, its transports, its interface and its link addresses — and a
+ * notification fires only when that fingerprint changes. A real handover
+ * (wifi<->cellular, a new DHCP lease, a network lost or gained) still changes it
+ * and still notifies, so the 71-minute outage this class exists to prevent stays
+ * prevented; a signal-strength flicker on the same network no longer does.
+ * Bursts are still coalesced to one in-flight notification.
  */
 object NetworkWatch {
 
@@ -69,6 +80,30 @@ object NetworkWatch {
     private var countSinceLogged = 0
 
     /**
+     * The last network the sockets were told about, as a fingerprint of the
+     * things they depend on. A callback whose fingerprint equals this one is a
+     * flicker on the same network — not a move — and must not rebind the
+     * endpoint, because rebinding leaks (see the class comment). Guarded by
+     * [stateLock], a plain lock rather than the [NetworkWatch] monitor, so a
+     * callback on a binder thread never blocks behind a running notification's
+     * JNI call.
+     */
+    private val stateLock = Any()
+    private var curNetwork: Network? = null
+    private var curCaps: NetworkCapabilities? = null
+    private var curProps: LinkProperties? = null
+    private var lastKey: String? = null
+
+    /** What the sockets depend on: which network, its transports, interface and addresses — NOT signal strength or validation, which churn without moving anything. */
+    private fun fingerprint(net: Network?, caps: NetworkCapabilities?, props: LinkProperties?): String {
+        if (net == null) return "none"
+        val transports = (0..7).filter { caps?.hasTransport(it) == true }.joinToString(",")
+        val iface = props?.interfaceName ?: "?"
+        val addrs = props?.linkAddresses?.map { it.toString() }?.sorted()?.joinToString(",") ?: "?"
+        return "$net|$transports|$iface|$addrs"
+    }
+
+    /**
      * Start watching, notifying the swarm [handle] gives back on every change.
      *
      * A supplier rather than a value because the two apps each hold their handle
@@ -89,6 +124,9 @@ object NetworkWatch {
         // Zero so the first change after a (re)start is always logged.
         lastLoggedAt = 0L
         countSinceLogged = 0
+        // Forget the last network, so the first callback after a (re)start always
+        // counts as a change and tells the swarm once.
+        synchronized(stateLock) { curNetwork = null; curCaps = null; curProps = null; lastKey = null }
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: run {
             log("network watch: no ConnectivityManager — changes will go unnoticed")
             return
@@ -152,11 +190,29 @@ object NetworkWatch {
                 }, "diaswarm-netwatch").start()
             }
         }
+        // **NOTIFY ONLY ON A REAL CHANGE.** Each callback updates the cached
+        // picture of the default network and recomputes the fingerprint; `notify`
+        // fires only when it differs from the last network the sockets were told
+        // about. A signal-strength or validation callback on the same network
+        // leaves the fingerprint unchanged and costs nothing — which is what
+        // stops the rebind-per-flicker leak.
+        fun onChange(mutate: () -> Unit) {
+            val changed = synchronized(stateLock) {
+                mutate()
+                val key = fingerprint(curNetwork, curCaps, curProps)
+                (key != lastKey).also { if (it) lastKey = key }
+            }
+            if (changed) notify()
+        }
         val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = notify()
-            override fun onLost(network: Network) = notify()
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = notify()
-            override fun onLinkPropertiesChanged(network: Network, props: LinkProperties) = notify()
+            override fun onAvailable(network: Network) = onChange { curNetwork = network }
+            override fun onLost(network: Network) = onChange {
+                if (curNetwork == network) { curNetwork = null; curCaps = null; curProps = null }
+            }
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) =
+                onChange { curNetwork = network; curCaps = caps }
+            override fun onLinkPropertiesChanged(network: Network, props: LinkProperties) =
+                onChange { curNetwork = network; curProps = props }
         }
         try {
             // THE DEFAULT NETWORK, because that is the one the sockets use. A
