@@ -39,13 +39,14 @@ jobs:
         with:
           path: diaswarm
 
-      # The add-on compiles into this; diaswarm-addon is the branch that carries
-      # the `:plugins:sync:swarm` include. main does not and would not build.
+      # The add-on compiles into this. main is a strict superset of the old diaswarm-addon
+      # branch and carries the `:plugins:sync:swarm` include, so build main. (diaswarm-addon
+      # was retired — it had drifted behind main and the checkout here was failing.)
       - name: Check out the AndroidAPS fork
         uses: actions/checkout@v7
         with:
           repository: alex-poor/AndroidAPS
-          ref: diaswarm-addon
+          ref: main
           path: aaps
 
       - uses: actions/setup-java@v6
