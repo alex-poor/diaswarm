@@ -45,8 +45,16 @@ RestartSec=30s
 # **BOTH, NOT EITHER.** `MemoryHigh` only throttles and lets the process swap the
 # machine to death first, which is exactly what happened; `MemoryMax` is the hard
 # ceiling. High starts reclaim early, Max ends it.
+#
+# **AND SWAP, OR THE CEILING IS A FICTION.** 2026-10-27 the carrier leaked ~23 GB
+# of anon data that the kernel paged out to ~12 GB of swap. `MemoryMax` charges
+# RAM, not swapped pages, so RSS stayed ~1 GB, the 2 GB ceiling never fired, and
+# the machine thrashed its disk to 78 C instead. `MemorySwapMax=0` forbids the
+# cgroup any swap, so a runaway hits the RAM ceiling and OOM-restarts (the whole
+# point of this block) rather than silently swapping the host to death.
 MemoryHigh=1G
 MemoryMax=2G
+MemorySwapMax=0
 
 # THE SAME DIRECTORY THE BINARY USES WHEN RUN BY HAND. An earlier version of
 # this file pointed the service at `%S` (~/.local/state) while
