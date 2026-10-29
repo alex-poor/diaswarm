@@ -1,0 +1,4 @@
+People you follow now show the name from their invite — or a name you set —
+instead of a string of hex. Tap the pencil on anyone in Settings to rename them;
+it is a label for your eyes only and is never sent to them or to anyone carrying
+their data. Clear it to go back to the short code.
