@@ -4,9 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.RectF
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.MultiFormatWriter
@@ -40,22 +37,29 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 object SwarmSharing {
 
     /**
-     * Render an invite as a QR big enough to scan and small enough to leave
-     * room for everything else.
+     * Render an invite as a QR a camera on another phone can actually read.
      *
-     * SIZED AGAINST THE SHORT EDGE AT ABOUT HALF, not three quarters. The
-     * first version used 3/4 of the smaller screen dimension, which on a
-     * 1080x2400 phone is 810px: the code rendered perfectly and pushed the
-     * title, the explanation, the invite text and both buttons off the dialog,
-     * leaving a QR and nothing else. It looked fine in a screenshot and was
-     * unusable — you could not read what it was or copy it.
+     * **NO CENTRE BADGE, AND THAT IS THE FIX.** The brand ring was stamped into
+     * the middle of the code on the theory that error correction rebuilds the
+     * modules the pad hides. That holds at level H — which the follower's own
+     * code uses — but this invite carries a p2panda key bundle and is far too
+     * dense at H to read screen-to-screen, so it is encoded at level L. L has
+     * almost no budget to spare (~7%), and a pad ~24% of the side (≈6% of the
+     * area) consumed all of it: a follower could not decode this code at all.
+     * The plain code scans; the badge was costing the entire feature. (The
+     * follower keeps its badge because it encodes at H and can afford it.)
      *
-     * Error correction H: the code gets read off a screen at an angle, in a
-     * kitchen, by someone's parent. Losing a quarter of the modules and still
-     * decoding is worth the density.
+     * Error correction L because even the compact v5 (base64url) invite is a
+     * few hundred bytes with the bundle, and H would push it past ~v29 (≈137
+     * modules) — unreadable off a screen. Quiet zone 4 (spec minimum); the old
+     * margin 1 left scanners unable to find the finder patterns.
+     *
+     * Sized at 0.9 of the short edge so the modules stay crisp once
+     * [InviteSheet] draws the code at full width; a source smaller than the
+     * display was upscaled and softened every module.
      */
     private fun qr(context: Context, text: String): Bitmap {
-        val side = (context.resources.displayMetrics.widthPixels * 0.55f).toInt()
+        val side = (context.resources.displayMetrics.widthPixels * 0.9f).toInt()
         // ZXING'S OWN ENCODER, NOT A WRAPPER AROUND IT. `zxing-android-embedded`
         // is already here for the scanner and brings `com.google.zxing:core`
         // with it, which is what any QR wrapper would have called anyway.
@@ -64,9 +68,6 @@ object SwarmSharing {
         // against jitpack — it builds arbitrary source at an arbitrary commit,
         // so the dependency is not reproducible. One line of encoding is a
         // cheaper price than being unpublishable.
-        // Error correction L, not H: the ~720-byte invite at H needs QR version ~29 (≈137 modules),
-        // too dense to read screen-to-screen; L drops the same payload to ~v19 (≈93). Quiet zone 4
-        // (spec minimum) — the old margin 1 left scanners unable to find the finder patterns.
         val hints = mapOf(
             EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L,
             EncodeHintType.MARGIN to 4
@@ -79,51 +80,7 @@ object SwarmSharing {
             val row = y * matrix.width
             for (x in 0 until matrix.width) pixels[row + x] = if (matrix.get(x, y)) on else off
         }
-        return withBadge(Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.ARGB_8888))
-    }
-
-    /**
-     * Stamp the ayni mark into the middle of the code.
-     *
-     * A white rounded pad first, so the scanner reads a clean block and not a
-     * fringe of half-covered modules; level-H error correction then
-     * reconstructs the modules the pad hides. The pad is ~24% of the side —
-     * roughly 6% of the area — which sits well inside H's ~30% budget even on a
-     * long v4 invite, where the code is densest and the mark covers the fewest
-     * modules.
-     *
-     * The mark is the two-arc ring the follower shows as its launcher icon,
-     * drawn here rather than inflated so the plugin carries no drawable: one
-     * ring in two 138.8-degree arcs (315 degrees and its half-turn), green on
-     * the pad.
-     */
-    private fun withBadge(src: Bitmap): Bitmap {
-        val out = src.copy(Bitmap.Config.ARGB_8888, true) ?: return src
-        val w = out.width.toFloat()
-        val cx = w / 2f
-        val cy = w / 2f
-        val canvas = Canvas(out)
-
-        val pad = w * 0.24f
-        val half = pad / 2f
-        val padRadius = pad * 0.22f
-        val white = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE
-            style = Paint.Style.FILL
-        }
-        canvas.drawRoundRect(cx - half, cy - half, cx + half, cy + half, padRadius, padRadius, white)
-
-        val rr = pad * 0.28f
-        val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.parseColor("#35D08A")
-            style = Paint.Style.STROKE
-            strokeWidth = pad * 0.10f
-            strokeCap = Paint.Cap.ROUND
-        }
-        val box = RectF(cx - rr, cy - rr, cx + rr, cy + rr)
-        canvas.drawArc(box, 315f, 138.8f, false, ring)
-        canvas.drawArc(box, 135f, 138.8f, false, ring)
-        return out
+        return Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.ARGB_8888)
     }
 
     /**

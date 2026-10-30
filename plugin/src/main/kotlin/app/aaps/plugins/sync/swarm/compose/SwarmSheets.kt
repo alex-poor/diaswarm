@@ -9,9 +9,9 @@ import android.view.ViewGroup
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -82,7 +82,15 @@ fun InviteSheet(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Image(bitmap = qr.asImageBitmap(), contentDescription = null, modifier = Modifier.size(240.dp))
+                // FULL WIDTH, NOT A FIXED 240.dp. The code carries a key bundle
+                // and is dense; shown small, another phone's camera could not
+                // resolve the modules. Drawn edge to edge (square) it reads like
+                // the follower's own invite does.
+                Image(
+                    bitmap = qr.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1f)
+                )
                 Text(explain, style = AapsTheme.type.body, color = AapsTheme.colors.textSecondary)
                 PrimaryButton(copyLabel, onCopy, Modifier.fillMaxWidth())
             }
