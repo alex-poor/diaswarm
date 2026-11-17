@@ -7,9 +7,11 @@ parts are not home-made: transport, membership and gossip are
 [p2panda-net](https://p2panda.org) over [iroh](https://www.iroh.computer), and the
 group encryption that manages and rotates keys is
 [p2panda-encryption](https://p2panda.org) — open-source libraries, not
-cryptography invented here. On top of them diaswarm adds a **segment-custody
-layer** of its own, composed from standard primitives (X25519, HKDF-SHA256,
-ChaCha20-Poly1305; Ed25519 header signing comes from p2panda-core).
+cryptography invented here. Segments are sealed with p2panda-encryption's own
+AEAD (XChaCha20-Poly1305) under the group's current secret, and Ed25519 header
+signing comes from p2panda-core. On top of them diaswarm adds a **custody layer**
+of its own: the segment format, the split into a segment log and a control log,
+grant tags (X25519 + HKDF-SHA256), and how the pool decides who holds what.
 
 **That custody layer has had no formal third-party review.** It is tested, it is
 documented, and two independent implementations agree byte for byte — none of
@@ -23,6 +25,13 @@ somebody who does this for a living has said so.
 **If you are deciding whether to trust this with your data today:** treat it as
 capable, actively developed software, not something battle-hardened — and if you
 rely on it, be ready to be the person who finds the problem.
+
+**Which vault this describes.** The phones run `crates/diaswarm-keys`, where a
+grant is membership of a p2panda-encryption group. `crates/diaswarm-core` is the
+earlier reference vault, with one key per segment wrapped separately to each
+reader (X25519 + HKDF-SHA256, ChaCha20-Poly1305). It is still in the repository
+and still tested, and findings against it are welcome, but it is not what ships
+([D26](docs/decisions.md)).
 
 ## Reporting something
 
@@ -39,11 +48,10 @@ take it seriously.
 
 The design makes specific claims. Any of these being false is a real finding:
 
-- **A holder can read what it holds.** Peers store sealed segments, every
-  reader's wraps, and the grant log. None of it should open without a granted
-  key.
-- **A revoked reader gains anything new.** Withdrawal rotates the segment; from
-  that point they should be wrapped for nothing.
+- **A holder can read what it holds.** Peers store the segment log and the
+  control (grant) log. Nothing in either should open without a group secret.
+- **A removed reader gains anything new.** Removal rotates the group secret;
+  nothing sealed after it should open with any secret they were given.
 - **A grant log can be altered undetectably** by anyone, including the subject,
   in a copy someone else also holds.
 - **The log identifies a reader.** Tags derive from a shared secret; the same
@@ -58,11 +66,12 @@ These are consequences of the design, written down so nobody has to rediscover
 them as surprises. They are discussed in
 [docs/feasibility.md](docs/feasibility.md) and [docs/decisions.md](docs/decisions.md).
 
-- **No forward secrecy.** A leaked key opens everything it was ever wrapped for,
-  for ever. There is no expiry.
-- **Publication is permanent.** There is no delete and no recall. Revocation is
-  prospective only — it stops the next segment, and cannot touch a copy someone
-  already has.
+- **No forward secrecy.** A leaked group secret opens every segment sealed under
+  it, for ever, and a reader's device holds every secret it was ever given. There
+  is no expiry.
+- **Publication is permanent.** There is no delete and no recall. Removing a
+  reader is prospective only — it changes the secret for what comes next, and
+  cannot touch a copy someone already has.
 - **Reads are invisible.** Nobody can learn who read their data, or when. This
   is deliberate and it cuts both ways.
 - **Metadata leaks.** How many grants exist and roughly when they happened is
