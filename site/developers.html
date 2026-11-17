@@ -53,8 +53,48 @@ footer{background:#0f1317;color:#a9b0b7;font-size:15px}
 footer .wrap{padding-block:40px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px 40px}
 footer a{color:#e9ebe6}
 footer a:hover{color:#3ad68e}
+.budget,.avail{display:flex;flex-direction:column;gap:22px;background:#faf8f3;border:1px solid #ddd6c7;border-radius:24px;padding:28px}
+.budget-head{display:flex;flex-direction:column;gap:6px}
+.budget-head h3{font-size:24px;font-weight:800;letter-spacing:-.015em;text-wrap:balance}
+.budget-head p{color:#4d5157;font-size:16px}
+.bud-chart{position:relative;padding:34px 0 28px}
+.bud-bar{display:flex;height:58px;border-radius:14px;overflow:hidden;background:#e8e3d8}
+.bud-seg{display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 14px;min-width:0;overflow:hidden;white-space:nowrap}
+.bud-seg b{font-size:15px;font-weight:800}
+.bud-seg i{font-style:normal;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px}
+.bud-seg.seal{background:#1a1d20;color:#e9ebe6}
+.bud-seg.seal i{color:#9aa3ab}
+.bud-seg.push{background:#3ad68e;padding:0}
+.bud-seg.poll{background:#d9eee2;color:#0c4a2f;border-left:2px solid #faf8f3}
+.bud-marker{position:absolute;top:0;bottom:24px;width:0;border-left:2px dashed #c03d16}
+.bud-marker span{position:absolute;top:0;left:8px;white-space:nowrap;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;font-weight:600;color:#c03d16}
+.bud-axis{position:absolute;left:0;right:0;bottom:0;height:20px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:12.5px;color:#4d5157}
+.bud-axis span{position:absolute;transform:translateX(-50%);font-variant-numeric:tabular-nums;white-space:nowrap}
+.bud-axis span:first-child{transform:none}
+.bud-axis span:last-child{transform:translateX(-100%)}
+.bud-notes{margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px 28px}
+.bud-notes div{display:flex;flex-direction:column;gap:4px;border-top:2px solid #1a1d20;padding-top:12px;min-width:0}
+.bud-notes dt{font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#4d5157}
+.bud-notes dd{margin:0;font-size:16px;color:#2a2e33;text-wrap:pretty}
+.bud-caveat{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px 28px;background:#f0ebe0;border-radius:16px;padding:18px 20px}
+.bud-caveat p{font-size:16px;color:#2a2e33;text-wrap:pretty}
+.legend{display:flex;flex-wrap:wrap;gap:8px}
+.tag{display:inline-block;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:12.5px;font-weight:600;line-height:1;padding:6px 10px;border-radius:999px;white-space:nowrap;vertical-align:1px}
+.tag.ok{background:#d6efe1;color:#0c6e45}
+.tag.lab{background:#dde6f7;color:#2f5aa8}
+.tag.gap{background:#f8ddd2;color:#b13a14}
+.cases{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px}
+.case{background:#fff;border:1px solid #e3ddd0;border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.case h4{margin:0;font-size:19px;font-weight:800;letter-spacing:-.01em;line-height:1.25;text-wrap:balance}
+.case p{font-size:16px;color:#3d4146;text-wrap:pretty}
+.case .ev{font-size:14.5px;color:#4d5157;line-height:1.5;border-top:1px solid #eee8dc;padding-top:10px}
+.case .ev .tag{margin-right:6px}
 @media (max-width:640px){
   .wrap{padding-left:16px;padding-right:16px}
+  .budget,.avail{padding:20px 16px;border-radius:20px}
+  .cases{grid-template-columns:minmax(0,1fr)}
+  .bud-seg{padding:0 10px}
+  .bud-seg.seal b,.bud-seg.poll b{font-size:13px}
   .hero{padding-block:44px 52px}
   .sec{padding-block:52px}
 }
@@ -66,6 +106,7 @@ footer a:hover{color:#3ad68e}
     <a class="brand" href="index.html"><img src="assets/icon.png" alt="Ayni icon"><b>ayni</b><span>/ diaswarm / developers</span></a>
     <nav>
       <a href="#walkthrough">walkthrough</a>
+      <a href="#live">latency &amp; availability</a>
       <a href="#read">read the source</a>
       <a href="index.html">← main site</a>
     </nav>
@@ -128,6 +169,7 @@ footer a:hover{color:#3ad68e}
             <dt>nonce</dt><dd>24 bytes, random per segment</dd>
             <dt>segment</dt><dd><code>{epoch, secret_id, nonce, ciphertext}</code></dd>
             <dt>compression</dt><dd>none</dd>
+            <dt>cadence</dt><dd>every 60 s, or sooner at 32 KB of backfill</dd>
             <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-keys/src/lib.rs">crates/diaswarm-keys/src/lib.rs</a></dd>
           </dl>
         </li>
@@ -180,7 +222,7 @@ footer a:hover{color:#3ad68e}
           <p>Holders catch up on the subject's logs with p2panda log sync, then receive new operations live over gossip. They verify signatures and store ciphertext. They hold no group secret, so they can't open anything.</p>
           <dl class="ex-spec">
             <dt>catch-up</dt><dd><code>LogSync</code> / <code>TopicLogSync</code></dd>
-            <dt>live</dt><dd>gossip on the subject's topic</dd>
+            <dt>live</dt><dd>gossip on the subject's topic, pushed as each entry is appended</dd>
             <dt>store</dt><dd>operations in SQLite (<code>keys.sqlite</code> on the desktop peer)</dd>
             <dt>size</dt><dd>~13 MB/yr per subject at 5-min CGM; ~55 MB/yr at 1-min</dd>
             <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-net/src/replicate.rs">crates/diaswarm-net/src/replicate.rs</a></dd>
@@ -190,7 +232,8 @@ footer a:hover{color:#3ad68e}
           <h3>The subject can be offline</h3>
           <p>The reader syncs every two minutes while its phone is awake, from whichever holder answers. The subject's phone doesn't need to be reachable. When the reader's phone sleeps, Android Doze can stretch the interval.</p>
           <dl class="ex-spec">
-            <dt>interval</dt><dd>120 s (<code>SyncWorker.EVERY_SECONDS</code>)</dd>
+            <dt>interval</dt><dd>120 s (<code>SyncWorker.EVERY_SECONDS</code>); measured 105 s and 123 s</dd>
+            <dt>age on screen</dt><dd>63 s, measured across CGNAT and home wifi</dd>
             <dt>source</dt><dd>any peer holding the subject's logs</dd>
             <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/follower/src/main/kotlin/nz/diaswarm/follower/SyncWorker.kt">follower/…/SyncWorker.kt</a></dd>
           </dl>
@@ -230,6 +273,86 @@ footer a:hover{color:#3ad68e}
         </li>
       </ol>
     </figure>
+  </div>
+</section>
+
+<section id="live">
+  <div class="wrap sec">
+    <div class="sec-head">
+      <h2>Latency and availability</h2>
+      <p>Two questions people who run Nightscout ask first: how old is the number when a follower sees it, and what happens when the phone that has the data is unreachable. Here is what the code does, what has been measured, and what hasn't.</p>
+    </div>
+
+    <div class="budget">
+      <div class="budget-head">
+        <h3>How old a reading is on the reader's screen</h3>
+        <p>Worst case with both phones awake, counted from when AAPS has the reading. Drawn to scale. The measured mark is the age the reader showed on screen.</p>
+      </div>
+      <div class="bud-chart" role="img" aria-label="Worst-case latency while both phones are awake: up to 60 seconds before the subject seals and publishes, near zero for gossip to holders, and up to 120 seconds until the reader's next poll, about 3 minutes in total. Measured: a reading shown 63 seconds old, across two networks.">
+        <div class="bud-bar">
+          <span class="bud-seg seal" style="width:33.333%"><b>seal + publish</b><i>≤ 60 s</i></span>
+          <span class="bud-seg push" style="width:1.2%"></span>
+          <span class="bud-seg poll" style="width:65.467%"><b>reader's next poll</b><i>≤ 120 s</i></span>
+        </div>
+        <div class="bud-marker" style="left:35%"><span>measured: 63 s old</span></div>
+        <div class="bud-axis"><span style="left:0">0 s</span><span style="left:33.333%">60 s</span><span style="left:66.667%">120 s</span><span style="left:100%">180 s</span></div>
+      </div>
+      <dl class="bud-notes">
+        <div><dt>Subject</dt><dd>The plugin seals and publishes every 60 s, or sooner once 32 KB of backfill is waiting (<code>SHADOW_SEAL_INTERVAL_MS</code>).</dd></div>
+        <div><dt>Holders</dt><dd>Pushed to over gossip as each entry is appended. There is no polling interval on this hop.</dd></div>
+        <div><dt>Reader</dt><dd>Polls every 120 s while awake. Measured at 105 s and 123 s between unattended refreshes.</dd></div>
+        <div><dt>Measured</dt><dd>2026-09-11: subject on mobile data behind CGNAT, reader on home wifi. Each refresh showed the newest reading as <code>0m old</code>, and the screen read 9.4 mmol/L, 63 seconds old.</dd></div>
+      </dl>
+      <div class="bud-caveat">
+        <p><strong>The reader isn't pushed to, by design.</strong> The subject doesn't know who follows them: the grant log names nobody, and a fetch doesn't say who is fetching. So the reader has to ask (<a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md">D17</a>).</p>
+        <p><strong>In a pocket, Android sets the interval.</strong> Doze batches background work, so a reader phone that isn't excused from battery optimisation refreshes much less often. A held-open subscription would help while the app is open, but Doze closes sockets in the background either way. That's why every reading is drawn with its age, and counts as stale at 15 minutes.</p>
+      </div>
+    </div>
+
+    <div class="avail">
+      <div class="budget-head">
+        <h3>When something is unreachable</h3>
+        <p>What a reader gets in each case. The tags say how far each claim has been tested.</p>
+      </div>
+      <div class="legend">
+        <span class="tag ok">shown on phones</span>
+        <span class="tag lab">tested off-device</span>
+        <span class="tag gap">known gap</span>
+      </div>
+      <div class="cases">
+        <div class="case">
+          <h4>The subject's phone is off or out of signal</h4>
+          <p>Readers fetch from the three holders, which verify and serve identical ciphertext. Nothing new arrives until the phone is back.</p>
+          <div class="ev"><span class="tag ok">shown on phones</span> with the reference vault: a stranger peer served a 73-day, 33,800-record history while the subject's phone was off.</div>
+          <div class="ev"><span class="tag lab">tested off-device</span> with the shipped vault: two peers in one process. Not yet repeated on phones (D28).</div>
+        </div>
+        <div class="case">
+          <h4>A holder leaves the pool</h4>
+          <p>Every peer recomputes the pool size, bucket depth and top three holders on its next pass. Survivors pick up the gap. There's no repair process and nothing to elect.</p>
+          <div class="ev"><span class="tag lab">tested off-device</span> Disjoint shares need four or more devices. The pool has only ever been three phones.</div>
+        </div>
+        <div class="case">
+          <h4>Every holder is a phone, and they're all asleep</h4>
+          <p>Doze, and Android killing the foreground service after about six hours, can leave no holder serving. A desktop peer is mains-powered and has neither problem, so one in the pool removes this case.</p>
+          <div class="ev"><span class="tag gap">known gap</span> on phones alone. The desktop peer (<code>diaswarm-peer</code>) is released for this.</div>
+        </div>
+        <div class="case">
+          <h4>The pool is smaller than three</h4>
+          <p>With fewer than three peers, every peer holds every bucket, so there are as many copies as there are peers.</p>
+          <div class="ev"><span class="tag lab">tested off-device</span> <code>depth_for(2)</code> is 1, so both peers hold both buckets on every run.</div>
+        </div>
+        <div class="case">
+          <h4>The relay is unreachable</h4>
+          <p>Phones on the same network still find each other over mDNS. Across networks, phones behind NAT can't find each other without a relay. It's the single third party in the design. The relay URL travels in the invite, so you can run your own.</p>
+          <div class="ev"><span class="tag ok">shown on phones</span> through n0's relay across CGNAT; LAN-only over mDNS.</div>
+        </div>
+        <div class="case">
+          <h4>The reader's phone has been quiet for hours</h4>
+          <p>Ayni shows every reading's age. It tells "held but can't open" apart from "nothing sent" and reports which peers it couldn't reach. Nothing yet warns that the silence has gone on too long.</p>
+          <div class="ev"><span class="tag gap">known gap</span> No alert for long silence. Stale readings never raise glucose alerts.</div>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
