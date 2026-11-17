@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>diaswarm for developers — how a reading moves</title>
+<meta name="description" content="The technical version of how diaswarm works: canonical records, sealed segments, p2panda logs and encryption groups, iroh networking, bucket replication, and what the network can still see.">
+<meta property="og:title" content="diaswarm for developers — how a reading moves">
+<meta property="og:description" content="Canonical records, XChaCha20-Poly1305 segments, p2panda logs and groups, iroh, rendezvous-hashed buckets, and the honest limits.">
+<meta property="og:type" content="website">
+<link rel="icon" href="assets/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,400;0,700;0,800;1,400&amp;family=Atkinson+Hyperlegible+Mono:wght@400;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/explainer.css">
+<style>
+html{scroll-behavior:smooth}
+body{margin:0;background:#f2efe7;color:#1a1d20;font-family:'Atkinson Hyperlegible Next',system-ui,sans-serif;font-size:18px;line-height:1.55;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:inherit;text-decoration:underline;text-decoration-thickness:1.5px;text-underline-offset:3px}
+a:hover{color:#c03d16}
+::selection{background:#3ad68e;color:#0f1317}
+h1,h2,h3,p{margin:0}
+code{font-family:'Atkinson Hyperlegible Mono',monospace;font-size:.88em}
+.wrap{max-width:1280px;margin:0 auto;padding-left:32px;padding-right:32px}
+.top{background:#0f1317;color:#e9ebe6}
+.bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px 32px;padding-block:22px;border-bottom:1px solid #262c33}
+.brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:#e9ebe6}
+.brand img{width:30px;height:30px;border-radius:7px;display:block}
+.brand b{font-weight:800;font-size:22px;letter-spacing:-.02em}
+.brand span{font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#8b939b}
+.bar nav{display:flex;flex-wrap:wrap;gap:8px 28px;font-size:16px;font-weight:700}
+.bar nav a{text-decoration:none;color:#b8bec4}
+.bar nav a:hover{color:#3ad68e}
+.hero{padding-block:64px 72px;display:flex;flex-direction:column;gap:22px;max-width:900px}
+.eyebrow{font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;color:#8b939b}
+.hero h1{font-size:clamp(38px,5.4vw,72px);line-height:1;font-weight:800;letter-spacing:-.035em;text-wrap:balance}
+.hero p{font-size:20px;color:#c9ced3;max-width:40em;text-wrap:pretty}
+.hero p.small{font-size:16px;color:#8b939b}
+.hero p.small a{color:#e9ebe6}
+.hero p.small a:hover{color:#3ad68e}
+main section{border-bottom:1px solid #cfc9bb}
+.sec{padding-block:72px;display:flex;flex-direction:column;gap:32px}
+.sec-head{display:flex;flex-direction:column;gap:12px;max-width:820px}
+.sec-head h2{font-size:clamp(30px,3.8vw,48px);line-height:1.04;font-weight:800;letter-spacing:-.03em;text-wrap:balance}
+.sec-head p{font-size:19px;color:#4d5157;text-wrap:pretty}
+.read{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:28px 36px}
+.read div{border-top:2px solid #1a1d20;padding-top:16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.read h3{font-size:20px;font-weight:800;letter-spacing:-.01em}
+.read p{color:#3d4146;font-size:16px;text-wrap:pretty}
+.read a{font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px;overflow-wrap:anywhere}
+footer{background:#0f1317;color:#a9b0b7;font-size:15px}
+footer .wrap{padding-block:40px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px 40px}
+footer a{color:#e9ebe6}
+footer a:hover{color:#3ad68e}
+@media (max-width:640px){
+  .wrap{padding-left:16px;padding-right:16px}
+  .hero{padding-block:44px 52px}
+  .sec{padding-block:52px}
+}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="wrap bar">
+    <a class="brand" href="index.html"><img src="assets/icon.png" alt="Ayni icon"><b>ayni</b><span>/ diaswarm / developers</span></a>
+    <nav>
+      <a href="#walkthrough">walkthrough</a>
+      <a href="#read">read the source</a>
+      <a href="index.html">← main site</a>
+    </nav>
+  </div>
+  <div class="wrap hero">
+    <p class="eyebrow">for people building or auditing loops</p>
+    <h1>How one glucose reading moves through diaswarm</h1>
+    <p>From an AAPS database row to a follower's screen: the record format, the encryption, the logs, the network, where the bytes are stored, and what each party can and can't see.</p>
+    <p class="small">This shows the path the phones run today: <code>diaswarm-keys</code> over <code>diaswarm-net</code>. The older <code>diaswarm-core</code> vault with per-reader wraps is still in the repo as a reference, and some docs still describe it. The custody layer has not been independently reviewed. See <a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+  </div>
+</div>
+
+<main>
+<section id="walkthrough">
+  <div class="wrap sec">
+    <div class="sec-head">
+      <h2>The walkthrough</h2>
+      <p>Eleven steps. Each one names the algorithm, the identifier or the interval involved, and links to the code that does it.</p>
+    </div>
+
+    <figure id="explainer" class="ex dev" data-scene="dev" aria-label="How a reading moves through diaswarm, in eleven technical steps">
+      <div class="ex-head">
+        <span class="ex-eyebrow">subject → pool → reader</span>
+      </div>
+      <div class="ex-stage">
+        <svg role="img" aria-label="Animated diagram: the subject's phone, an iroh relay, six pool peers and the reader's phone. A reading is sealed, appended to a signed log, replicated to three peers chosen by hash, and opened by the reader. The caption and spec panel below describe each step."></svg>
+      </div>
+      <div class="ex-panel">
+        <div class="ex-cap" aria-live="polite">
+          <span class="ex-count"></span>
+          <h3></h3>
+          <p></p>
+        </div>
+        <div class="ex-specbox"></div>
+        <div class="ex-ctrl">
+          <ol class="ex-dots" aria-label="Steps"></ol>
+          <div class="ex-btns">
+            <button type="button" class="ex-btn" data-ex="prev" aria-label="Previous step"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.4 5.4 9 12l6.4 6.6-1.8 1.8L5.4 12l8.2-8.4z"/></svg></button>
+            <button type="button" class="ex-btn play" data-ex="play" aria-label="Pause"><svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.4"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.4"/></svg><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg></button>
+            <button type="button" class="ex-btn" data-ex="next" aria-label="Next step"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 18.6 15 12 8.6 5.4l1.8-1.8 8.2 8.4-8.2 8.4z"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <ol class="ex-steps">
+        <li>
+          <h3>A record, made canonical</h3>
+          <p>The AAPS plugin drains new rows and writes one canonical NDJSON line per event. Keys are sorted, glucose is in mg/dL, time is UTC milliseconds. Two implementations produce byte-identical lines, so streams can be hashed and diffed.</p>
+          <dl class="ex-spec">
+            <dt>format</dt><dd>NDJSON, sorted keys, no nulls</dd>
+            <dt>order</dt><dd><code>(t, k)</code>, ties by the canonical line</dd>
+            <dt>epoch</dt><dd>one day, cut at the subject's fixed UTC offset</dd>
+            <dt>spec</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/spec/records.md">spec/records.md</a></dd>
+          </dl>
+        </li>
+        <li>
+          <h3>Sealed under the group's current secret</h3>
+          <p>New records are encrypted as a delta segment under the latest group secret. Each segment names the secret it used, so a reader can open it without having opened any other segment.</p>
+          <dl class="ex-spec">
+            <dt>AEAD</dt><dd>XChaCha20-Poly1305 (p2panda-encryption <code>encrypt_data</code>)</dd>
+            <dt>nonce</dt><dd>24 bytes, random per segment</dd>
+            <dt>segment</dt><dd><code>{epoch, secret_id, nonce, ciphertext}</code></dd>
+            <dt>compression</dt><dd>none</dd>
+            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-keys/src/lib.rs">crates/diaswarm-keys/src/lib.rs</a></dd>
+          </dl>
+        </li>
+        <li>
+          <h3>Signed and appended to the subject's log</h3>
+          <p>The segment becomes a p2panda operation in log 0 of the subject's Ed25519 key. Each operation is signed and hash-chained to the one before it, so any holder can check it without being able to read it.</p>
+          <dl class="ex-spec">
+            <dt>log 0</dt><dd>segments, one author per log</dd>
+            <dt>header</dt><dd><code>SegmentArgs{epoch, secret_id, nonce}</code></dd>
+            <dt>body</dt><dd>ciphertext</dd>
+            <dt>integrity</dt><dd>Ed25519 signature, backlink, <code>seq_num</code></dd>
+            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-keys/src/wire.rs">crates/diaswarm-keys/src/wire.rs</a></dd>
+          </dl>
+        </li>
+        <li>
+          <h3>Peers find each other</h3>
+          <p>On the same network, peers find each other over mDNS. Across networks, both sides connect to the iroh relay named in the invite. It introduces them, and drops out of the path once they hole-punch a direct QUIC connection. Each peer counts the pool from the presence topic.</p>
+          <dl class="ex-spec">
+            <dt>transport</dt><dd>iroh QUIC, ALPN <code>diaswarm/6</code></dd>
+            <dt>gossip</dt><dd>iroh-gossip (HyParView) via p2panda-net</dd>
+            <dt>discovery</dt><dd>mDNS on the LAN; relay URL carried in the invite</dd>
+            <dt>presence</dt><dd><code>SHA-256("diaswarm-presence-v1")</code></dd>
+            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-net/src/swarm.rs">crates/diaswarm-net/src/swarm.rs</a></dd>
+          </dl>
+        </li>
+        <li>
+          <h3>A grant is group membership</h3>
+          <p>Sharing adds the reader to the subject's encryption group. A welcome message, sealed to the reader's X25519 key bundle, carries the group secrets. Grants go in a separate control log and name members by a tag only the two parties can compute.</p>
+          <dl class="ex-spec">
+            <dt>log 1</dt><dd>control: create, add, remove, update, welcome</dd>
+            <dt>reader key</dt><dd>p2panda <code>LongTermKeyBundle</code> (X25519)</dd>
+            <dt>member tag</dt><dd><code>HKDF-SHA256(ECDH(subject, reader), "diaswarm-grant-tag-v1" ‖ purpose)</code></dd>
+            <dt>access</dt><dd>holding the secret; the log is for accountability</dd>
+            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-keys/src/group.rs">crates/diaswarm-keys/src/group.rs</a></dd>
+          </dl>
+        </li>
+        <li>
+          <h3>Every peer picks the same three holders</h3>
+          <p>A subject falls in the bucket given by the top bits of its hash. Every peer ranks every other peer for that bucket by a rendezvous hash and takes the top three. Nobody coordinates: the same peer list gives every peer the same answer.</p>
+          <dl class="ex-spec">
+            <dt>depth</dt><dd>⌈log₂(pool size)⌉</dd>
+            <dt>bucket</dt><dd>top <code>depth</code> bits of <code>SHA-256(subject)</code></dd>
+            <dt>holders</dt><dd>top 3 by <code>SHA-256(peer ‖ "\0bucket\0" ‖ bucket)</code></dd>
+            <dt>topic</dt><dd><code>SHA-256("diaswarm-bucket-v1" ‖ depth ‖ bucket)</code></dd>
+            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-net/src/pool.rs">crates/diaswarm-net/src/pool.rs</a></dd>
+          </dl>
+        </li>
+        <li>
+          <h3>Holders replicate what they can't read</h3>
+          <p>Holders catch up on the subject's logs with p2panda log sync, then receive new operations live over gossip. They verify signatures and store ciphertext. They hold no group secret, so they can't open anything.</p>
+          <dl class="ex-spec">
+            <dt>catch-up</dt><dd><code>LogSync</code> / <code>TopicLogSync</code></dd>
+            <dt>live</dt><dd>gossip on the subject's topic</dd>
+            <dt>store</dt><dd>operations in SQLite (<code>keys.sqlite</code> on the desktop peer)</dd>
+            <dt>size</dt><dd>~13 MB/yr per subject at 5-min CGM; ~55 MB/yr at 1-min</dd>
+            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-net/src/replicate.rs">crates/diaswarm-net/src/replicate.rs</a></dd>
+          </dl>
+        </li>
+        <li>
+          <h3>The subject can be offline</h3>
+          <p>The reader syncs every two minutes while its phone is awake, from whichever holder answers. The subject's phone doesn't need to be reachable. When the reader's phone sleeps, Android Doze can stretch the interval.</p>
+          <dl class="ex-spec">
+            <dt>interval</dt><dd>120 s (<code>SyncWorker.EVERY_SECONDS</code>)</dd>
+            <dt>source</dt><dd>any peer holding the subject's logs</dd>
+            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/follower/src/main/kotlin/nz/diaswarm/follower/SyncWorker.kt">follower/…/SyncWorker.kt</a></dd>
+          </dl>
+        </li>
+        <li>
+          <h3>The reader opens it</h3>
+          <p>Ayni opens the welcome addressed to it, then replays later control messages to pick up each rotation. It decrypts every segment with the secret that segment names. Records are deduplicated and drawn with their age. At 15 minutes old, a reading counts as stale.</p>
+          <dl class="ex-spec">
+            <dt>join</dt><dd>find our welcome in log 1, replay what follows</dd>
+            <dt>read</dt><dd>walk back from the log tip until the days asked for are covered</dd>
+            <dt>errors</dt><dd><code>not_ours</code> and <code>lost</code> reported separately</dd>
+            <dt>stale</dt><dd>≥ 15 min; stale readings never alert</dd>
+            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-keys/src/follow.rs">crates/diaswarm-keys/src/follow.rs</a></dd>
+          </dl>
+        </li>
+        <li>
+          <h3>Stopping sharing rotates the secret</h3>
+          <p>Removing a reader rotates the group secret. The next segment is sealed under secret #2, which the reader never receives. Holders still carry it and the reader can still fetch it, but can't open it. Anything sealed under a secret the reader already holds stays readable to them.</p>
+          <dl class="ex-spec">
+            <dt>operation</dt><dd><code>Group::remove</code>, then a new secret</dd>
+            <dt>control</dt><dd>a <code>remove</code> message in log 1</dd>
+            <dt>schedule</dt><dd>the plugin also rotates every 24 h, so grants can be scoped by day</dd>
+            <dt>not recalled</dt><dd>anything under secrets the reader already holds</dd>
+            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-keys/src/lib.rs">Vault::revoke in diaswarm-keys</a></dd>
+          </dl>
+        </li>
+        <li>
+          <h3>What the network can still see</h3>
+          <p>No holder and no relay can read a record. The relay does see which node ids talk to each other, from which IP addresses, and when. Holders can see how many grants there are and when they happened. Publication is permanent, and a leaked secret opens everything sealed under it.</p>
+          <dl class="ex-spec">
+            <dt>relay</dt><dd>n0's by default; run <code>iroh-relay</code> and put your URL in the invite</dd>
+            <dt>forward secrecy</dt><dd>none</dd>
+            <dt>reads</dt><dd>not observable by anyone</dd>
+            <dt>review</dt><dd>custody layer not yet independently reviewed</dd>
+            <dt>more</dt><dd><a href="https://github.com/alex-poor/diaswarm#the-trade">README: The trade</a> · <a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md">SECURITY.md</a></dd>
+          </dl>
+        </li>
+      </ol>
+    </figure>
+  </div>
+</section>
+
+<section id="read">
+  <div class="wrap sec">
+    <div class="sec-head">
+      <h2>Read the source</h2>
+      <p>Where to start, depending on what you want to check.</p>
+    </div>
+    <div class="read">
+      <div><h3>Record format</h3><p>The frozen contract every later stage encodes against, with the mistakes that shaped it.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/spec/records.md">spec/records.md</a></div>
+      <div><h3>Keys vault</h3><p>Segments, group secrets, grants, rotation and the follower's read path.</p><a href="https://github.com/alex-poor/diaswarm/tree/main/crates/diaswarm-keys">crates/diaswarm-keys</a></div>
+      <div><h3>Networking</h3><p>Swarm setup, topics, bucket assignment and replication on p2panda-net and iroh.</p><a href="https://github.com/alex-poor/diaswarm/tree/main/crates/diaswarm-net">crates/diaswarm-net</a></div>
+      <div><h3>Decisions</h3><p>Why each piece is the way it is, including the ones that were reversed.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md">docs/decisions.md</a></div>
+      <div><h3>What we won't claim</h3><p>The sentences this project may never say, and the true version of each.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/docs/feasibility.md">docs/feasibility.md §11</a></div>
+      <div><h3>Security</h3><p>Scope, known limits, and how to report a problem.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md">SECURITY.md</a></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>part of the diaswarm project · AGPL-3.0 · Not affiliated with, endorsed by, or part of the AndroidAPS project.</p>
+    <p><a href="index.html">Main site</a> · <a href="https://github.com/alex-poor/diaswarm">GitHub</a></p>
+  </div>
+</footer>
+<script src="assets/explainer.js" defer></script>
+<script src="assets/scene-dev.js" defer></script>
+</body>
+</html>

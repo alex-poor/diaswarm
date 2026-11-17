@@ -12,6 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,400;0,700;0,800;1,400&amp;family=Atkinson+Hyperlegible+Mono:wght@400;600&amp;family=Newsreader:ital,opsz,wght@1,6..72,400&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/explainer.css">
 <style>
 html{scroll-behavior:smooth}
 body{margin:0;background:#f2efe7;color:#1a1d20;font-family:'Atkinson Hyperlegible Next',system-ui,sans-serif;font-size:18px;line-height:1.55;-webkit-font-smoothing:antialiased}
@@ -38,91 +39,6 @@ h1,h2,h3,p{margin:0}
 .hv16:hover{color:#3ad68e !important}
 .hv17:hover{color:#3ad68e !important}
 
-/* explainer animation — behaviour in assets/explainer.js */
-.ex{margin:0;border-radius:28px;overflow:hidden;background:radial-gradient(120% 90% at 50% 0%,#18212a 0%,#0f1317 62%);color:#e9ebe6;box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 24px 60px -24px rgba(15,19,23,.55)}
-.ex-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:22px 28px 0}
-.ex-eyebrow{display:inline-flex;align-items:center;gap:8px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#8b939b}
-.ex-eyebrow::before{content:'';width:8px;height:8px;border-radius:50%;background:#3ad68e;box-shadow:0 0 0 4px rgba(58,214,142,.16)}
-.ex-stage{padding:14px 20px 4px;background-image:radial-gradient(rgba(255,255,255,.055) 1px,transparent 1.2px);background-size:22px 22px}
-.ex-stage svg{display:block;width:100%;height:auto;margin:0 auto;overflow:visible}
-.ex-stage svg.tall{max-width:460px}
-.ex-panel{display:flex;flex-wrap:wrap;gap:18px 32px;align-items:flex-end;justify-content:space-between;padding:20px 28px 26px;border-top:1px solid rgba(255,255,255,.07);background:rgba(10,13,16,.45)}
-.ex-cap{flex:1 1 420px;min-width:0;min-height:8.2em}
-.ex-count{font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#3ad68e}
-.ex-cap h3{font-size:clamp(22px,2.4vw,27px);line-height:1.15;font-weight:800;letter-spacing:-.015em;margin:6px 0 8px;color:#fff;text-wrap:balance}
-.ex-cap p{color:#b8bec4;font-size:17px;line-height:1.5;max-width:40em;text-wrap:pretty}
-.ex-ctrl{display:flex;flex-direction:column;align-items:flex-end;gap:10px}
-.ex-btns{display:flex;gap:8px}
-.ex-btn{display:grid;place-items:center;width:46px;height:46px;border-radius:50%;border:1.5px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#e9ebe6;cursor:pointer;padding:0;transition:background .2s,border-color .2s,color .2s,transform .15s}
-.ex-btn:hover{border-color:#3ad68e;color:#3ad68e}
-.ex-btn:active{transform:scale(.94)}
-.ex-btn:focus-visible,.ex-dots button:focus-visible{outline:2px solid #3ad68e;outline-offset:3px}
-.ex-btn svg{width:18px;height:18px;fill:currentColor}
-.ex-btn.play{background:#3ad68e;border-color:#3ad68e;color:#0f1317;width:54px;height:54px}
-.ex-btn.play:hover{background:#5fe3a6;color:#0f1317}
-.ex-btn.play .i-play,.ex-btn.play.paused .i-pause{display:none}
-.ex-btn.play.paused .i-play{display:block}
-.ex-dots{display:flex;gap:2px;list-style:none;margin:0;padding:0}
-.ex-dots button{display:block;width:26px;height:24px;background:none;border:0;cursor:pointer;padding:0;position:relative;border-radius:6px}
-.ex-dots button::after{content:'';position:absolute;left:4px;right:4px;top:10px;height:4px;border-radius:2px;background:rgba(255,255,255,.16);transition:background .3s}
-.ex-dots button.past::after{background:rgba(58,214,142,.5)}
-.ex-dots button[aria-current="step"]::after{background:#3ad68e}
-.ex-dots button:hover::after{background:#8b939b}
-.ex-steps{margin:0;padding:24px 28px 28px;list-style:none;counter-reset:exs;display:grid;gap:16px}
-.ex-steps li{counter-increment:exs}
-.ex-steps h3{font-size:19px;font-weight:800;color:#fff}
-.ex-steps h3::before{content:counter(exs) '. ';color:#3ad68e}
-.ex-steps p{color:#b8bec4;font-size:16px}
-.ex:not(.js) .ex-stage,.ex:not(.js) .ex-panel{display:none}
-.ex.js .ex-steps{display:none}
-@media (max-width:640px){
-  .ex{border-radius:20px}
-  .ex-head{padding:18px 16px 0}
-  .ex-stage{padding:10px 8px 0}
-  .ex-panel{padding:16px 16px 20px;flex-direction:column;align-items:stretch}
-  .ex-cap{flex:none;min-height:10.5em}
-  .ex-cap p{font-size:16px}
-  .ex-ctrl{flex-direction:column-reverse;align-items:center;gap:14px}
-}
-/* svg parts */
-.ex-flows path{fill:none;stroke:rgba(255,255,255,.09);stroke-width:2;stroke-dasharray:2 7;stroke-linecap:round}
-.ex-phone{fill:#1c242b;stroke:#333d46;stroke-width:1.5}
-.ex-phone.you{stroke:rgba(233,235,230,.45)}
-.ex-phone.mum{stroke:rgba(58,214,142,.7)}
-.ex-screen{fill:url(#ex-screengrad)}
-.ex-notch{fill:#2b343d}
-.ex-ring{fill:none;stroke:#3ad68e;stroke-width:3;opacity:0;transform-box:fill-box;transform-origin:center}
-.ex-ring.stranger{stroke:#e9ebe6}
-.ex-pill rect{fill:rgba(255,255,255,.07);stroke:rgba(255,255,255,.12)}
-.ex-pill text{fill:#e9ebe6;font-weight:700}
-.ex-pill.mum rect{fill:rgba(58,214,142,.14);stroke:rgba(58,214,142,.4)}
-.ex-pill.mum text{fill:#3ad68e}
-.ex-grp{fill:#8b939b;font-family:'Atkinson Hyperlegible Mono',monospace}
-.ex-env{fill:url(#ex-envgrad)}
-.ex-flap{fill:none;stroke:#0f1317;stroke-opacity:.22;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
-.ex-shackle{fill:none;stroke:#0f1317;stroke-width:3}
-.ex-lockbody{fill:#0f1317}
-.ex-tag{transform-box:fill-box;transform-origin:center}
-.ex-keytag{fill:#3ad68e;stroke:#0f1317;stroke-width:2.5}
-.ex-keyglyph{fill:none;stroke:#0f1317;stroke-width:2.4;stroke-linecap:round}
-.ex-noslot{fill:#0f1317;stroke:#ff8a5c;stroke-width:2;stroke-dasharray:4 3}
-.ex-noslash{stroke:#ff8a5c;stroke-width:2.2;stroke-linecap:round}
-[data-state="denied"] .ex-env{stroke:#ff8a5c;stroke-width:3}
-.ex-val{fill:#e9ebe6;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
-.ex-chip.mum .ex-val{fill:#3ad68e}
-.ex-sub{fill:#8b939b;font-family:'Atkinson Hyperlegible Mono',monospace}
-.ex-agepill{fill:rgba(58,214,142,.14)}
-.ex-chip.mum .ex-sub{fill:#3ad68e}
-[data-state="stale"] .ex-agepill{fill:rgba(255,138,92,.16)}
-[data-state="stale"] .ex-sub{fill:#ff8a5c}
-.ex-badge text{fill:#8b939b;font-family:'Atkinson Hyperlegible Mono',monospace}
-.ex-minilock path{stroke:#8b939b;stroke-width:2}
-.ex-minilock rect{fill:#8b939b}
-.ex-keylbl{fill:#3ad68e;font-weight:700}
-.ex-nokey{fill:#ff8a5c;font-weight:700}
-.ex-sleep rect{fill:#06080a;opacity:.86}
-.ex-sleep text{fill:#8b939b;font-family:'Atkinson Hyperlegible Mono',monospace}
-.ex-moon{fill:#8b939b}
 </style>
 </head>
 <body>
@@ -355,9 +271,10 @@ h1,h2,h3,p{margin:0}
         <h2 style="font-size:clamp(34px,4.2vw,54px);line-height:1.02;font-weight:800;letter-spacing:-0.03em;text-wrap:balance">One reading, from the phone that recorded it to the phone that draws it</h2>
         <p style="font-size:20px;color:#4d5157;text-wrap:pretty">The padlock is on for the whole of the middle. The pool holds the ciphertext and serves it to anyone; only a granted reader's private key — which never leaves their device — can open it.</p>
       </div>
-      <figure id="explainer" class="ex" aria-label="How sharing works, in seven steps">
+      <figure id="explainer" class="ex" data-scene="simple" aria-label="How sharing works, in seven steps">
         <div class="ex-head">
           <span class="ex-eyebrow">the idea in seven steps</span>
+          <a class="ex-techlink" href="developers.html">the technical version →</a>
         </div>
         <div class="ex-stage">
           <svg role="img" aria-label="Animated diagram of a sealed reading travelling from your phone, through strangers' phones, to Mum's phone. The caption below describes each step."></svg>
@@ -570,5 +487,6 @@ h1,h2,h3,p{margin:0}
 })();
 </script>
 <script src="assets/explainer.js" defer></script>
+<script src="assets/scene-simple.js" defer></script>
 </body>
 </html>
