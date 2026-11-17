@@ -1,8 +1,19 @@
 //! Moving a vault between peers, over iroh.
 //!
+//! **TWO VAULTS PASS THROUGH THIS CRATE, AND MOST OF THIS HEADER IS ABOUT THE
+//! OLDER ONE.** The phones run `diaswarm-keys` (D26): a subject is an author
+//! with two p2panda logs — segments in log 0, the control log of group
+//! messages in log 1 — moved by p2panda log sync and gossip in [`replicate`],
+//! on the bucket topics in [`pool`]. There are no wraps on that path: a reader
+//! is a member of the subject's encryption group and holds its secrets. The
+//! request/response protocol defined below ([`Request`]: `Have`, `Manifest`,
+//! `Grants`, `Segment`, `Wraps`) serves the `diaswarm-core` reference vault,
+//! and the rest of this header describes that.
+//!
 //! WHY THIS NEEDS NO PRIVILEGED CHANNEL. Everything a vault holds is already
-//! ciphertext or already public: segments are sealed, wraps are encrypted to one
-//! reader, and the grant log names nobody (D13). So the protocol serves whatever
+//! ciphertext or already public: segments are sealed, wraps (core) are
+//! encrypted to one reader, group secrets (keys) travel only sealed to a
+//! member, and the grant log names nobody (D13). That is true of both vaults. So the protocol serves whatever
 //! is asked for, to whoever asks, and the access control is the same as it is
 //! everywhere else in this design — who holds a key, not who a server decides to
 //! serve.
@@ -13,8 +24,8 @@
 //! distribution. A transport that authenticated readers would be re-introducing
 //! the thing the architecture removed.
 //!
-//! WHAT REPLICATES, and the third item is a requirement rather than a
-//! convenience (D13):
+//! WHAT REPLICATES in the core protocol, and the third item is a requirement
+//! rather than a convenience (D13):
 //!
 //!   * **sealed segments** — the history, unreadable without a wrap;
 //!   * **wraps** — one per reader per segment, useless to anyone else;
@@ -22,11 +33,14 @@
 //!     other copies existing. A subject who can truncate the only copy has a log
 //!     that proves nothing.
 //!
-//! WHAT THIS DOES NOT DO. It is pull, not gossip: a reader asks, a subject
-//! answers. That is enough to demonstrate the property across a real network and
-//! is the wrong shape for the flagship, where a follower needs data while the
-//! subject's phone is asleep. Push and store-and-forward are the next problem,
-//! not this one.
+//! The keys path replicates the same shape with two of the three items
+//! changed: segment log for segments, control log for grant log, and nothing
+//! in place of wraps. The requirement on the grant log carries over unchanged.
+//!
+//! WHAT THE CORE PROTOCOL DOES NOT DO. It is pull, not gossip: a reader asks, a
+//! peer answers. The keys path is the answer to that — log sync catches a
+//! holder up and gossip keeps it live, so a follower can read from a holder
+//! while the subject's phone is asleep ([`replicate`]).
 
 pub mod peer;
 pub mod replicate;
