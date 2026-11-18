@@ -135,3 +135,28 @@
 .ex-leak text{fill:#ffc46b;font-family:'Atkinson Hyperlegible Mono',monospace}
 .ex-techlink{font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13px;color:#b8bec4;text-decoration-thickness:1px}
 .ex-techlink:hover{color:#3ad68e}
+
+/* ---- scale-up scene (developers.html, "the idea at scale") ---- */
+.ex-node .ex-ncirc{fill:#16212b;stroke:#3ad68e;stroke-width:2.5}
+.ex-node .ex-gly{fill:none;stroke:#0f1317;stroke-width:2.4;stroke-linecap:round}
+.ex-node .ex-gly-f{fill:#0f1317}
+.ex-snode-hero .ex-ncirc{fill:#3ad68e;stroke:#06281b;stroke-width:1.5}
+.ex-rnode-hero .ex-ncirc{fill:#16212b;stroke:#3ad68e}
+.ex-cnode-hero .ex-ncirc{fill:#16212b;stroke:#8fb3ff}
+.ex-cnode-hero .ex-gly{stroke:#8fb3ff}
+.ex-anode-hero .ex-ncirc{fill:#16212b;stroke:#ffc46b}
+.ex-anode-hero .ex-gly{stroke:#ffc46b}
+.ex-snode{fill:#3ad68e;stroke:#06281b;stroke-width:1.5}
+.ex-rnode{fill:#16212b;stroke:#3ad68e;stroke-width:2}
+.ex-mlink{stroke:rgba(255,255,255,.22);stroke-width:1.5}
+.ex-ktok circle.ex-keytag{fill:#3ad68e;stroke:#0f1317;stroke-width:2}
+.ex-ktok .ex-keyglyph{fill:none;stroke:#0f1317;stroke-width:2.2;stroke-linecap:round}
+.ex-carrier{fill:#3a4550}
+.ex-mesh{fill:none;stroke:#3ad68e;stroke-width:1.4;stroke-linecap:round;opacity:0}
+.ex-spoke{fill:none;stroke:#c0603d;stroke-width:1.6;stroke-dasharray:4 5;stroke-linecap:round}
+.ex-server rect{fill:#2a1c1a;stroke:#c0603d;stroke-width:2}
+.ex-servertext{fill:#e9a583;font-family:'Atkinson Hyperlegible Mono',monospace;font-weight:600;letter-spacing:.08em}
+.ex-nlabel text{fill:#b8bec4;font-family:'Atkinson Hyperlegible Mono',monospace}
+.ex-nlabel.clin text{fill:#8fb3ff}
+.ex-nlabel.res text{fill:#ffc46b}
+.ex-bignote text{fill:#3ad68e;font-family:'Atkinson Hyperlegible Next',sans-serif;font-weight:800}
