@@ -153,6 +153,16 @@
 .ex-ktok .ex-keyglyph{fill:none;stroke:#0f1317;stroke-width:2.2;stroke-linecap:round}
 .ex-carrier{fill:#3a4550}
 .ex-mesh{fill:none;stroke:#3ad68e;stroke-width:1.4;stroke-linecap:round;opacity:0}
+.ex-cnode-mini{fill:#16212b;stroke:#8fb3ff;stroke-width:2}
+.ex-anode-mini{fill:#16212b;stroke:#ffc46b;stroke-width:2}
+@media (prefers-reduced-motion:no-preference){
+  .ex.scale .ex-mesh{animation-name:ex-flow;animation-timing-function:linear;animation-iteration-count:infinite}
+  .ex.scale .ex-mesh.rev{animation-direction:reverse}
+  @keyframes ex-flow{to{stroke-dashoffset:-16}}
+}
+@media (prefers-reduced-motion:reduce){
+  .ex.scale .ex-mesh{stroke-dasharray:none !important}
+}
 .ex-spoke{fill:none;stroke:#c0603d;stroke-width:1.6;stroke-dasharray:4 5;stroke-linecap:round}
 .ex-server rect{fill:#2a1c1a;stroke:#c0603d;stroke-width:2}
 .ex-servertext{fill:#e9a583;font-family:'Atkinson Hyperlegible Mono',monospace;font-weight:600;letter-spacing:.08em}
