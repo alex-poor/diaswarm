@@ -12,6 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,400;0,700;0,800;1,400&amp;family=Atkinson+Hyperlegible+Mono:wght@400;600&amp;family=Newsreader:ital,opsz,wght@1,6..72,400&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/explainer.css">
 <style>
 html{scroll-behavior:smooth}
 body{margin:0;background:#f2efe7;color:#1a1d20;font-family:'Atkinson Hyperlegible Next',system-ui,sans-serif;font-size:18px;line-height:1.55;-webkit-font-smoothing:antialiased}
@@ -37,6 +38,7 @@ h1,h2,h3,p{margin:0}
 .hv15:hover{color:#3ad68e !important}
 .hv16:hover{color:#3ad68e !important}
 .hv17:hover{color:#3ad68e !important}
+
 </style>
 </head>
 <body>
@@ -269,6 +271,39 @@ h1,h2,h3,p{margin:0}
         <h2 style="font-size:clamp(34px,4.2vw,54px);line-height:1.02;font-weight:800;letter-spacing:-0.03em;text-wrap:balance">One reading, from the phone that recorded it to the phone that draws it</h2>
         <p style="font-size:20px;color:#4d5157;text-wrap:pretty">The padlock is on for the whole of the middle. The pool holds the ciphertext and serves it to anyone; only a granted reader's private key — which never leaves their device — can open it.</p>
       </div>
+      <figure id="explainer" class="ex" data-scene="simple" aria-label="How sharing works, in seven steps">
+        <div class="ex-head">
+          <span class="ex-eyebrow">the idea in seven steps</span>
+          <a class="ex-techlink" href="developers.html">the technical version →</a>
+        </div>
+        <div class="ex-stage">
+          <svg role="img" aria-label="Animated diagram of a sealed reading travelling from your phone, through strangers' phones, to Mum's phone. The caption below describes each step."></svg>
+        </div>
+        <div class="ex-panel">
+          <div class="ex-cap" aria-live="polite">
+            <span class="ex-count"></span>
+            <h3></h3>
+            <p></p>
+          </div>
+          <div class="ex-ctrl">
+            <div class="ex-btns">
+              <button type="button" class="ex-btn" data-ex="prev" aria-label="Previous step"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.4 5.4 9 12l6.4 6.6-1.8 1.8L5.4 12l8.2-8.4z"/></svg></button>
+              <button type="button" class="ex-btn play" data-ex="play" aria-label="Pause"><svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.4"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.4"/></svg><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg></button>
+              <button type="button" class="ex-btn" data-ex="next" aria-label="Next step"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 18.6 15 12 8.6 5.4l1.8-1.8 8.2 8.4-8.2 8.4z"/></svg></button>
+            </div>
+            <ol class="ex-dots" aria-label="Steps"></ol>
+          </div>
+        </div>
+        <ol class="ex-steps">
+          <li><h3>A reading is taken</h3><p>Your phone records a glucose reading. Your loop keeps running exactly as it does now — sharing is added on the side.</p></li>
+          <li><h3>It's sealed before it leaves</h3><p>The reading goes into an envelope that's locked on your phone. From here on, the padlock never comes off in the middle.</p></li>
+          <li><h3>A key, given to one person</h3><p>Your phone gives Mum's phone the key to these envelopes, sealed so that only her phone can take it out. You choose who gets one, and nobody else can hand them out.</p></li>
+          <li><h3>Strangers carry it, and can't open it</h3><p>Copies go to other phones in the pool. They hold your envelopes the way you hold theirs, and none of them can read a thing.</p></li>
+          <li><h3>Your phone can sleep</h3><p>Your phone goes offline. Mum's phone simply fetches the envelope from someone else in the pool — there's no server to go down.</p></li>
+          <li><h3>Only Mum can open it</h3><p>Her phone unlocks it with her key and shows the reading — always with its age, so an old number can't pass for a fresh one.</p></li>
+          <li><h3>Stopping means changing the key</h3><p>Next day, you've stopped sharing. Your phone switches to a new key and doesn't give it to her: she can still fetch the new envelope, but can't open it. What she already had, she keeps — and nobody in the middle had to be asked.</p></li>
+        </ol>
+      </figure>
       <figure style="margin:0;display:flex;flex-direction:column;gap:14px">
         <img src="assets/journey.png" alt="A three-lane diagram: the sender's phone records a reading in plain form, seals it into a segment and wraps the key to one chosen reader; the sealed segment publishes to strangers' phones that hold it and cannot open it; the reader fetches the ciphertext and opens it with a private key that never left their device." style="width:100%;height:auto;display:block;border:1px solid #cfc9bb;background:#f5f5f5">
         <figcaption style="display:flex;flex-wrap:wrap;gap:8px 32px;justify-content:space-between;font-size:16px;color:#4d5157">
@@ -451,5 +486,7 @@ h1,h2,h3,p{margin:0}
   },1000);
 })();
 </script>
+<script src="assets/explainer.js" defer></script>
+<script src="assets/scene-simple.js" defer></script>
 </body>
 </html>

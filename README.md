@@ -31,7 +31,9 @@ Done end to end on real hardware, with real data:
 * **A carrier that cannot read.** A stranger peer, granted nothing, replicated 146
   segments and all 219 wraps, could open none of it, and served the complete
   history to a granted reader while the originating phone was switched off. 33,800
-  records over 73 days.
+  records over 73 days. *That run used the reference vault, `diaswarm-core`. On
+  the vault the phones run now, carrying has so far been tested between two peers
+  in one process, not on phones ([D28](docs/decisions.md)).*
 * **A pool.** Phones on a network, with nothing configured between them, found each
   other, agreed independently on the size of the pool, and each worked out the same
   share of the subject space to carry. Turning the feature on is the whole
@@ -85,46 +87,59 @@ it is whoever runs the server, not you.
 
 diaswarm removes the server. Data is published as ciphertext to whatever devices
 care to hold it. Access is decided by **who holds a key**, and by nothing else.
-Withdrawing access does not ask a server to stop serving; it stops wrapping the
-next key.
+Withdrawing access does not ask a server to stop serving; it rotates to a new
+key that person is never given.
 
 ## How it works
 
 Follow one reading — 5.7 mmol/L, taken at 07:32 — from the phone that recorded it
 to the phone that draws it. The padlock is on it for the whole of the middle:
 
-![Where one glucose reading goes: a swimlane diagram in three lanes. Your phone records the reading in plain form, seals it into a segment, and wraps the segment key to one chosen reader. The sealed segment and the wraps publish to three strangers' phones, which hold them and cannot open them. Mum's phone fetches the ciphertext — from a peer or straight from you — and opens it with a private key that never left her device.](docs/img/journey.png)
+![Where one glucose reading goes: a swimlane diagram in three lanes. Your phone records the reading in plain form and seals it into a segment under the group secret that one chosen reader, Mum, was given. The sealed segment and the grant log publish to three strangers' phones, which hold them and cannot open them. Mum's phone fetches the ciphertext — from a peer or straight from you — and opens it with that secret. Her private key never left her device; the secret reached her sealed to it.](docs/img/journey.png)
 
 The same path, as text:
 
 ```
-records ──▶ epochs ──▶ segments ──▶ sealed ──▶ served to anyone
-                          │                          │
-                          └─▶ wrapped per reader ────┘
-                                     │
-                              grant log (signs, names nobody)
+records ──▶ epochs ──▶ segments ──▶ sealed under the ──▶ log 0, served to anyone
+                                    group secret
+grants  ──▶ encryption group ──▶ log 1, signed, names nobody, served to anyone
+                   │
+                   └─▶ secrets sealed to each reader's own key
 ```
 
 1. **Records** are normalised into a canonical stream — one line per event, stable
    bytes, defined in [`spec/records.md`](spec/records.md).
 2. **Epochs** are days, cut at *your* fixed UTC offset rather than UTC, so a day is
    a day where you live.
-3. **Segments** are the unit of key custody. A day can hold several; withdrawing
-   access cuts a new one immediately rather than waiting for midnight.
-4. Each segment is **sealed** under its own key (ChaCha20-Poly1305), and that key is
-   **wrapped** separately to each reader (X25519 + HKDF-SHA256).
-5. Grants are **signed and hash-chained**, and filed under a tag derived from the
-   shared secret — so the log proves what happened without naming anyone in it.
-6. Peers **hold a share of the pool and serve what they hold**. A peer stores
-   segments, every reader's wraps, and the grant log — and can read none of it.
+3. **Segments** are deltas. About once a minute the phone seals what is new and
+   appends it, as a signed and hash-chained entry, to its own log. Each segment
+   names the secret it was sealed under, so it opens on its own.
+4. Each segment is **sealed** under the current secret of the subject's
+   **encryption group** (XChaCha20-Poly1305, from
+   [p2panda-encryption](https://p2panda.org)). A reader is a member of that group:
+   a welcome sealed to their own X25519 key bundle hands them the secrets, and
+   later rotations reach them the same way.
+5. Grants are **signed and hash-chained** in a separate control log, and name each
+   member by a tag derived from a secret only the subject and that reader share —
+   so the log proves what happened without naming anyone in it.
+6. Peers **hold a share of the pool and serve what they hold**. A peer stores the
+   segment log and the control log — and can read none of it.
 
-Revocation is the absence of a file. Nobody is told; the departing reader is simply
-not wrapped for the next segment. What they already downloaded stays readable, and
-nothing here pretends otherwise.
+Stopping is a rotation. Removing a reader makes a new group secret, the next
+segment is sealed under it, and they are never given it. Nobody else is told.
+What they already downloaded, and anything sealed under a secret they already
+hold, stays readable, and nothing here pretends otherwise. The phone also rotates
+once a day, so a grant can be limited to whole days.
+
+The repository also holds `diaswarm-core`, the reference vault this started
+from: one key per segment, wrapped separately to each reader (X25519 +
+HKDF-SHA256, ChaCha20-Poly1305). The phones no longer run it
+([D26](docs/decisions.md)); the command line under
+[Try it without a phone](#try-it-without-a-phone) still does.
 
 That is the same picture again, one day later, with one box changed:
 
-![Where tomorrow's reading goes, after you withdraw: the same three lanes. The phone records, seals and publishes exactly as before, but no key is wrapped for the withdrawn reader — the box where the wrap would be is empty. The pool still holds the ciphertext and still serves it to her; her fetch still succeeds and nothing refuses her. She cannot open anything sealed after the cut, and every segment she downloaded before it stays readable permanently.](docs/img/revocation.png)
+![Where tomorrow's reading goes, after you withdraw: the same three lanes. The phone records, seals and publishes exactly as before, but under a new group secret that the withdrawn reader was never given. The pool still holds the ciphertext and still serves it to her; her fetch still succeeds and nothing refuses her. She cannot open anything sealed after the cut, and every segment she downloaded before it stays readable permanently.](docs/img/revocation.png)
 
 Nothing on the network was asked to stop, because nothing on the network could be.
 Both diagrams are generated from [`docs/img/src/`](docs/img/src) — edit the HTML and
@@ -176,7 +191,7 @@ connection to one, it introduces them, they hole-punch to a direct connection,
 and it drops out of the path. If hole-punching fails it stays as a fallback.
 
 **A relay cannot read anything.** Traffic reaching it is encrypted twice: your
-records are sealed under epoch keys before they touch the network, and that
+records are sealed under the group secret before they touch the network, and that
 ciphertext travels inside a QUIC/TLS connection keyed to the two endpoints. In
 iroh's words, relays *"can not decode any traffic for other iroh endpoints and
 only forward it"*.
@@ -263,8 +278,9 @@ than as a bare number that implies it is current: a follower's dangerous failure
 not an error on screen, it is a value that looks fresh and is nine hours old.
 
 Nothing needs re-granting as time passes. Every segment sealed after a grant is
-wrapped for that reader as it is written, so a follower keeps receiving data
-indefinitely until it is withdrawn.
+under a secret the reader holds — the daily rotation's new secret reaches every
+member as a control message — so a follower keeps receiving data indefinitely
+until it is withdrawn.
 
 ## The trade
 
@@ -306,6 +322,9 @@ tagged so the drain can never re-publish them as the follower's own, and nothing
 is mirrored until somebody says whose line it is.
 
 ## Try it without a phone
+
+This exercises `diaswarm-core`, the reference vault with per-reader wraps, not
+the group-secret vault the phones run ([How it works](#how-it-works)).
 
 ```sh
 cd crates/diaswarm-core
@@ -460,11 +479,12 @@ Released builds are signed by CI on a `follower-v*` tag; the workflow is
 - **No formal cryptographic audit.** The foundations are mainline, not home-made:
   transport and membership are [p2panda-net](https://p2panda.org) over iroh, and the
   key layer is [p2panda-encryption](https://p2panda.org) ([D26](docs/decisions.md)).
-  On top of those, diaswarm adds its own segment-custody layer using standard
-  primitives (X25519, ChaCha20-Poly1305, HKDF-SHA256) from the dalek/RustCrypto
-  crates. Standard parts, but a novel composition that has had no third-party review —
+  On top of those, diaswarm adds its own layer — the segment format, the log
+  layout, grant tags (X25519 + HKDF-SHA256) and bucket assignment — using
+  standard primitives from the dalek/RustCrypto crates. Standard parts, but a novel composition that has had no third-party review —
   so do not rely on it where being wrong would matter.
-- **No forward secrecy.** A key that leaks opens everything it was ever wrapped for.
+- **No forward secrecy.** A group secret that leaks opens every segment sealed under
+  it, and a reader's device holds every secret it was ever given.
 - **Reads are invisible.** Nobody can tell you who has read their copy, or when.
 - **Peers find each other; people do not.** Joining the pool needs nothing, but to
   *read* someone you still exchange a code and they still have to grant you. There

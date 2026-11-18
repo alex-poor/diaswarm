@@ -36,11 +36,18 @@ pub const LOG_ID: u32 = 0;
 
 /// Control messages go in a **separate log**, and that is not tidiness.
 ///
-/// [`segments_tail`] asks for the last N entries of [`LOG_ID`] and calls them
-/// the last N days. That holds only because every entry in that log is one
-/// day's segment. Interleaving grants would quietly make "the last seven
-/// entries" mean fewer than seven days, and the failure would look like a
-/// follower missing data rather than like a log-id decision.
+/// A reader finds a day's data by walking [`LOG_ID`] back from the tip and
+/// reading each entry's epoch ([`segments_covering`]). That only works if every
+/// entry in the log is a segment. Interleaved grants carry no epoch, would
+/// each cost an Ed25519 verification for nothing, and would make the stopping
+/// rule — "stop once something older than the wanted epochs appears" — reason
+/// about entries that are not data.
+///
+/// **THIS USED TO GIVE A DIFFERENT REASON, AND IT STOPPED BEING TRUE.** It said
+/// every entry in log 0 was one day's segment, so [`segments_tail`]'s "last N
+/// entries" meant "last N days". Since publishing moved to deltas
+/// (`seal_delta`, one segment per flush, about once a minute) a day is many
+/// entries; see `follow.rs`. The separate log was right for both reasons.
 ///
 /// Separate logs also mean a carrier can replicate segments without
 /// replicating grants, and the other way round.
@@ -163,8 +170,13 @@ pub async fn publish(
 /// The on-disk layout gets away with a filter because the epoch is in the
 /// filename and the directory is the index. A log has no such index, but it has
 /// `after`: `get_log_entries` takes a sequence-number range and the store does
-/// the skipping. Segments are appended in epoch order, so "the last N days" is
-/// "the last N entries", which is what a follower actually wants.
+/// the skipping.
+///
+/// **"THE LAST N ENTRIES" IS NOT "THE LAST N DAYS" ANY MORE.** That held when
+/// each entry was a whole day; a subject now publishes a delta per flush, so N
+/// entries can be N minutes of today. Readers use [`segments_covering`]. This
+/// stays for callers that really do want entries by count — the replication
+/// tests and `twokeys` — and should not be used to mean days.
 pub async fn segments_tail(
     store: &SqliteStore,
     author: &VerifyingKey,
