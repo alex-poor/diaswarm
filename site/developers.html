@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>diaswarm for developers — how a reading moves</title>
-<meta name="description" content="The technical version of how diaswarm works: canonical records, sealed segments, p2panda logs and encryption groups, iroh networking, bucket replication, and what the network can still see.">
-<meta property="og:title" content="diaswarm for developers — how a reading moves">
-<meta property="og:description" content="Canonical records, XChaCha20-Poly1305 segments, p2panda logs and groups, iroh, rendezvous-hashed buckets, and the honest limits.">
+<title>diaswarm — a diabetes data commons</title>
+<meta name="description" content="diaswarm as a substrate for a diabetes data commons: no custodian to fund or switch off, five connection layers from individuals to research, honest alignment with the Diabetes Data Rights Charter, and why there is nothing in the middle to monetise.">
+<meta property="og:title" content="diaswarm — a diabetes data commons with no custodian">
+<meta property="og:description" content="A server-free substrate for sharing open-source AID data — individuals, followers, clinics, research and the commons itself, with how a reading actually moves alongside.">
 <meta property="og:type" content="website">
 <link rel="icon" href="assets/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -98,6 +98,51 @@ footer a:hover{color:#3ad68e}
   .hero{padding-block:44px 52px}
   .sec{padding-block:52px}
 }
+
+/* ---- vision lens (toggle, sections) ---- */
+.lead-sub{font-size:19px;color:#e9ebe6;font-weight:700;max-width:40em}
+.viewtabs{display:flex;gap:8px;padding-bottom:24px;flex-wrap:wrap}
+.vtab{font-family:inherit;font-weight:800;font-size:15px;color:#b8bec4;background:rgba(255,255,255,.05);border:1.5px solid #2b333b;border-radius:999px;padding:10px 20px;cursor:pointer;transition:background .18s,color .18s,border-color .18s}
+.vtab:hover{color:#e9ebe6;border-color:#3ad68e}
+.vtab.active{background:#3ad68e;color:#0f1317;border-color:#3ad68e}
+.vtab:focus-visible{outline:2px solid #3ad68e;outline-offset:3px}
+.view[hidden]{display:none}
+.kicker{font-size:19px;color:#2a2e33;max-width:62ch;text-wrap:pretty;font-weight:500}
+.pull{border-left:4px solid #0c6e45;padding:2px 0 2px 22px;max-width:62ch}
+.pull p{font-size:22px;line-height:1.4;font-weight:600;letter-spacing:-.01em;text-wrap:pretty}
+.note{background:#f0ebe0;border-radius:16px;padding:20px 22px;display:flex;flex-direction:column;gap:8px;max-width:78ch}
+.note-label{font-family:'Atkinson Hyperlegible Mono',monospace;font-size:12.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#8a5a00}
+.note p{font-size:16px;color:#2a2e33;text-wrap:pretty}
+.tag.warn{background:#fae9c8;color:#8a5a00}
+.layer-cards .case,.cases .case{gap:9px}
+.case .role{font-family:'Atkinson Hyperlegible Mono',monospace;font-size:12.5px;color:#4d5157}
+.case h4+p{margin:0}
+.case .tag{align-self:flex-start;margin-top:2px}
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.col{border-radius:18px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.col.centralised{background:#f3e7e2;border:1px solid #e6cfc6}
+.col.decentralised{background:#e4f1ea;border:1px solid #c7e3d4}
+.col h3{font-size:19px;font-weight:800;letter-spacing:-.01em}
+.col ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:9px}
+.col li{font-size:16px;color:#2a2e33;text-wrap:pretty}
+.col-foot{font-family:'Atkinson Hyperlegible Mono',monospace;font-size:13.5px;margin-top:auto;padding-top:4px}
+.col.centralised .col-foot{color:#8a3a1a}
+.col.decentralised .col-foot{color:#0c6e45}
+.reframes{display:flex;flex-direction:column;gap:18px}
+.reframe{display:grid;grid-template-columns:1fr 1.5fr;gap:12px 28px;border-top:2px solid #1a1d20;padding-top:16px}
+.reframe .old{color:#7a4a36;font-size:16px;text-wrap:pretty}
+.reframe .new{color:#1a1d20;font-size:17px;text-wrap:pretty}
+.reframe b{display:block;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px;font-weight:600}
+.reframe .old b{color:#b06a4a}
+.reframe .new b{color:#0c6e45}
+.statusboard{display:flex;flex-direction:column;border-top:2px solid #1a1d20}
+.srow{display:flex;gap:18px;justify-content:space-between;align-items:baseline;padding:14px 0;border-bottom:1px solid #d8d2c4}
+.srow p{font-size:16px;color:#2a2e33;text-wrap:pretty}
+.srow .tag{flex:none}
+@media (max-width:760px){
+  .compare{grid-template-columns:1fr}
+  .reframe{grid-template-columns:1fr;gap:8px}
+}
 </style>
 </head>
 <body>
@@ -105,21 +150,189 @@ footer a:hover{color:#3ad68e}
   <div class="wrap bar">
     <a class="brand" href="index.html"><img src="assets/icon.png" alt="Ayni icon"><b>ayni</b><span>/ diaswarm / developers</span></a>
     <nav>
-      <a href="#walkthrough">walkthrough</a>
-      <a href="#live">latency &amp; availability</a>
-      <a href="#read">read the source</a>
+      <a href="#commons" data-view="scale">the commons</a>
+      <a href="#scale" data-view="scale">at scale</a>
+      <a href="#charter" data-view="scale">data rights</a>
+      <a href="#seeds" data-view="scale">seed boxes</a>
+      <a href="#walkthrough" data-view="how">how it works</a>
+      <a href="#read">source</a>
       <a href="index.html">← main site</a>
     </nav>
   </div>
   <div class="wrap hero">
-    <p class="eyebrow">for people building or auditing loops</p>
-    <h1>How one glucose reading moves through diaswarm</h1>
-    <p>From an AAPS database row to a follower's screen: the record format, the encryption, the logs, the network, where the bytes are stored, and what each party can and can't see.</p>
-    <p class="small">This shows the path the phones run today: <code>diaswarm-keys</code> over <code>diaswarm-net</code>. The older <code>diaswarm-core</code> vault with per-reader wraps is still in the repo as a reference, and some docs still describe it. The custody layer has not been independently reviewed. See <a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+    <p class="eyebrow">a new shape for diabetes data</p>
+    <h1>The data commons that can't be bought, captured, or switched off</h1>
+    <p>Every diabetes data platform so far has had a middle — a server, a company, a foundation, a grant — and the data has only ever been as safe, as private, and as permanent as that middle. diaswarm removes the middle entirely. Your loop's data lives as sealed ciphertext spread across the community's own devices. Who can read it is decided by who holds a key. There is no host to trust, no operator to capture, and nothing anyone can switch off.</p>
+    <p class="lead-sub">It already runs — on a live closed loop, phone to phone, across networks, with nobody in the middle. This is what comes after the server.</p>
+    <p class="small">Honest scope, because this page is for people who will check: the custody and transport layers run today on Android/AAPS and the Ayni follower. An iOS follower does not exist yet (<a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md">D12</a>), and the research-export gateway is designed but <strong>not built</strong> — every claim below carries a tag for what actually ships. The cryptography is standard primitives in a composition that has had no third-party review (<a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md">SECURITY.md</a>).</p>
+  </div>
+  <div class="wrap viewtabs" role="tablist" aria-label="Choose a view">
+    <button type="button" class="vtab active" role="tab" aria-selected="true" data-view="scale">The idea at scale</button>
+    <button type="button" class="vtab" role="tab" aria-selected="false" data-view="how">How a reading moves</button>
   </div>
 </div>
 
 <main>
+<div id="view-scale" class="view">
+
+<section id="commons">
+  <div class="wrap sec">
+    <div class="sec-head">
+      <h2>When the host dies, the commons dies with it</h2>
+      <p>For years, people have been able to donate their loop data to research through hosted data commons — you upload, an institution holds it, studies draw on it. Those pathways keep disappearing: a grant ends, a project winds down, priorities shift, and the commons goes dark with its host. That isn't bad luck — it's the design.</p>
+    </div>
+    <div class="pull"><p>diaswarm is built so that can't happen. The commons isn't a place you upload to — it's a set of keys. The data lives, encrypted, on the devices of the people in it. No server to fund, no company to acquire, nothing to defund. A research project is just someone you hand a key to, and stop handing keys to when you're done.</p></div>
+    <p class="kicker">The community already generates some of the richest health data in the world. It should outlive whoever happens to be hosting it this year.</p>
+  </div>
+</section>
+
+<section id="scale">
+  <div class="wrap sec">
+    <div class="sec-head">
+      <h2>One gesture. Every scale.</h2>
+      <p>Sharing your glucose with your mum and feeding a global research cohort are the same act — seal data, hand a key to whoever you chose. Watch it scale.</p>
+    </div>
+    <figure class="ex scale" data-scene="scale" aria-label="An animation that starts with one person handing one follower a key, then the same gesture to a clinic and a study, then zooms out to a whole commons of devices with no centre, then shows a server appear and dissolve.">
+      <div class="ex-head"><span class="ex-eyebrow">one key → a whole commons</span></div>
+      <div class="ex-stage"><svg role="img" aria-label="Animated: one subject node hands a key to a follower, then to a clinic and a study, then the view zooms out into a field of clusters and carriers with no centre, then a server box appears and dissolves. The caption below describes each beat."></svg></div>
+      <div class="ex-panel">
+        <div class="ex-cap" aria-live="polite"><span class="ex-count"></span><h3></h3><p></p></div>
+        <div class="ex-ctrl">
+          <div class="ex-btns">
+            <button type="button" class="ex-btn" data-ex="prev" aria-label="Previous step"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.4 5.4 9 12l6.4 6.6-1.8 1.8L5.4 12l8.2-8.4z"/></svg></button>
+            <button type="button" class="ex-btn play" data-ex="play" aria-label="Pause"><svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.4"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.4"/></svg><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg></button>
+            <button type="button" class="ex-btn" data-ex="next" aria-label="Next step"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 18.6 15 12 8.6 5.4l1.8-1.8 8.2 8.4-8.2 8.4z"/></svg></button>
+          </div>
+          <ol class="ex-dots" aria-label="Beats"></ol>
+        </div>
+      </div>
+      <ol class="ex-steps">
+        <li><h3>One person, one key</h3><p>A reading is sealed on your phone and a key is handed to one reader. That's the whole idea — everything else is this, repeated.</p></li>
+        <li><h3>The same gesture, three scopes</h3><p>Hand that key to a parent, a clinic, or a study. The gesture doesn't change — only the scope of the key does. A clinic's opens a 90-day window; a study gets rows, not a person.</p></li>
+        <li><h3>Zoom out: it's a commons</h3><p>Thousands of people doing the same thing, and every phone quietly carrying a little of everyone else's sealed data — able to read none of it. The more people, the stronger it gets.</p></li>
+        <li><h3>There was never a middle</h3><p>Picture the server every other system puts here. Now take it away. Nothing to run, nothing to capture, nothing anyone can switch off.</p></li>
+      </ol>
+    </figure>
+    <div class="cases layer-cards">
+      <div class="case"><span class="role">01 · individuals</span><h4>The person with diabetes</h4><p>Your phone seals its own history and publishes it. You hold the keys; nobody reads a byte unless you hand them one.</p><span class="tag ok">running · AAPS</span></div>
+      <div class="case"><span class="role">02 · followers</span><h4>A parent or partner</h4><p>Handed a key one at a time, and cut off one at a time — not the all-or-nothing shared password every server forces on you.</p><span class="tag ok">running · Ayni</span></div>
+      <div class="case"><span class="role">03 · providers</span><h4>A clinic</h4><p>Granted a window the key itself enforces — older data is unreadable to them, not merely hidden.</p><span class="tag warn">protocol today · app next</span></div>
+      <div class="case"><span class="role">04 · research</span><h4>A study</h4><p>A granted member on the swarm side, standard research formats (CSV, Parquet, FHIR) on the other. The donation role, re-homed where it can't be defunded.</p><span class="tag gap">specced · next build</span></div>
+      <div class="case"><span class="role">05 · the commons</span><h4>Every device, carrying</h4><p>Each phone holds a share of others' sealed data it can't read, so a sleeping phone stays reachable — and it self-heals as people come and go.</p><span class="tag ok">running · the substrate</span></div>
+    </div>
+    <div class="note"><span class="note-label">clinics &amp; researchers</span><p>Both connect through the exact same key mechanism — the only difference is the scope of the key and the shape at the edge. A clinic's key opens a bounded window. A study's data is translated into research formats on the granted reader's own device, so even the exporter never becomes a custodian. No new trust model, no new server, at either end.</p></div>
+  </div>
+</section>
+
+<section id="charter">
+  <div class="wrap sec">
+    <div class="sec-head">
+      <h2>Everything the Diabetes Data Rights Charter is asking for, running on a phone</h2>
+      <p>People with diabetes spent seven roundtables across 16 countries writing down what control of their data should mean — the <a href="https://www.diabetesdatarights.com/">Diabetes Data Rights Charter</a>. They described a system that doesn't exist in the commercial world. diaswarm is a working demonstration that it can be built: running code, not a policy asking a manufacturer to behave.</p>
+    </div>
+    <div class="cases">
+      <div class="case"><h4>Consent &amp; control that's real</h4><p>Per person, by key, and withdrawable without asking a server's permission. Revoking one follower doesn't revoke everyone.</p></div>
+      <div class="case"><h4>Privacy by design, in the strongest form</h4><p>The people holding your data <em>cannot read it</em> — structurally, not as a policy they could quietly change.</p></div>
+      <div class="case"><h4>Access with no vendor in the chain</h4><p>Sensor to open source to your chosen reader. Nobody's cloud in the middle.</p></div>
+    </div>
+    <div class="note"><span class="note-label">the honest part — because it's the project's style</span><p>The project keeps a public, unflinching self-assessment against all eight principles, including where it still falls short and what would close each gap. That document is itself the kind of transparency the Charter is asking industry to adopt. → <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/rights.md">docs/rights.md</a></p></div>
+  </div>
+</section>
+
+<section id="economics">
+  <div class="wrap sec">
+    <div class="sec-head">
+      <h2>You can't buy the middle, because there is no middle</h2>
+      <p>Every company circling this space is selling the same thing: a place in the middle — the server you rent, the account they gate, the data they broker, the lock-in that keeps you. Centralised platforms can be monetised because there's a chokepoint to own.</p>
+    </div>
+    <div class="compare">
+      <div class="col centralised">
+        <h3>What a custodian charges for</h3>
+        <ul><li>The host and the database the data lives in</li><li>The account and directory that gate who's who</li><li>The API that reads and writes it</li><li>Brokering the aggregate data onward to third parties</li><li>The friction of migrating off — lock-in</li></ul>
+        <p class="col-foot">Each is a chokepoint someone owns.</p>
+      </div>
+      <div class="col decentralised">
+        <h3>What diaswarm leaves</h3>
+        <ul><li>No server to meter — data is ciphertext on participants' devices</li><li>No custodian holding the data to broker</li><li>No directory — you can't even search for a person, by design</li><li>Access is key custody; withdrawing asks no server's permission</li><li>AGPL, no APK sold, no account to lock in</li></ul>
+        <p class="col-foot">No chokepoint to charge rent on.</p>
+      </div>
+    </div>
+    <p class="kicker">The same thing that means nobody can sell it means nobody can capture it, subpoena it out of an operator, or pull its funding — because there's no operator and no funding to pull. It's AGPL, it's the community's, and it stays that way. The honest cost, said out loud: there's no company behind it either. What keeps it alive is the people who build and run it.</p>
+  </div>
+</section>
+
+<section id="mindset">
+  <div class="wrap sec">
+    <div class="sec-head">
+      <h2>The questions change</h2>
+      <p>Most worries about a system like this come from a lifetime of thinking in servers. Take the server away and the questions don't get harder — they change.</p>
+    </div>
+    <div class="reframes">
+      <div class="reframe">
+        <div class="old"><b>the old question</b>What happens when the server goes down — or when their phone is off?</div>
+        <div class="new"><b>the shift</b>There's no server to go down, and no single phone the answer depends on. Many devices hold your data at once; the more people, the more available it gets, and it repairs itself as people come and go. Availability stops being "is the one machine up?" and becomes a property of the crowd.</div>
+      </div>
+      <div class="reframe">
+        <div class="old"><b>the old question</b>How do I edit the bad row in the database?</div>
+        <div class="new"><b>the shift</b>There's no row to edit — the history is a signed, append-only ledger, which is <em>why</em> nobody can tamper with yours either. You correct forward: the right value is published and the trend reflects it, in the open, the way a ledger posts a correction rather than silently rewriting the past.</div>
+      </div>
+      <div class="reframe">
+        <div class="old"><b>the old question</b>Can I make the server delete it?</div>
+        <div class="new"><b>the shift</b>"Delete" on a server was always a polite fiction — backups, replicas, caches, whoever already copied it. Here the guarantee is honest and stronger where it counts: you stop handing out keys, and from that moment nothing new is readable to them, ever. What's already out is ciphertext nobody without a key can open. We'll never claim data was erased from the world, because no system can truthfully promise that.</div>
+      </div>
+    </div>
+    <p class="kicker">None of these are things diaswarm fails to do. They're things the server made you <em>expect</em> in a shape that was never quite true. Same guarantees, told honestly — and, in the ways that actually protect you, stronger.</p>
+  </div>
+</section>
+
+<section id="seeds">
+  <div class="wrap sec">
+    <div class="sec-head">
+      <h2>A role for Nightscout: seed the swarm, hold nothing</h2>
+      <p>The Nightscout Foundation has always been far bigger than the web dashboard it's best known for — a stewardship and advocacy organisation that has helped carry a whole field of open-source diabetes projects forward, and one that has recently been substantially funded. None of this is about it becoming obsolete; it plainly isn't. It's about a role that fits what the Foundation already is, and that a commons with no middle uniquely needs.</p>
+    </div>
+    <div class="pull"><p>Availability gets stronger the more always-on devices sit in the pool. A handful of seed boxes — funded by the Foundation and scattered around the world — would make it structural rather than a matter of how many followers happen to be awake. Each carries a share of the swarm's sealed data and can read none of it. A seed box breach is not a data breach.</p></div>
+    <div class="cases">
+      <div class="case"><h4>Runs on anything</h4><p>A small Rust binary. An old phone, a Raspberry Pi, a spare NAS, a retired laptop — mains power and a network connection is the whole spec. No battery, no Doze, so it's simply always there.</p></div>
+      <div class="case"><h4>Costs next to nothing</h4><p>A pool share is tens of megabytes a year and a trickle of bandwidth. Run one on hardware you were about to throw out, for roughly the electricity of a nightlight.</p></div>
+      <div class="case"><h4>Holds nothing it can read</h4><p>Every byte on a seed is ciphertext for people it was never granted. The Foundation strengthens the commons without ever becoming a custodian, a data controller, or a breach target.</p></div>
+      <div class="case"><h4>Nothing central</h4><p>Seeds don't coordinate and none is privileged — they just add always-on shoulders under the pool. Lose one and the arithmetic heals.</p></div>
+    </div>
+    <div class="note"><span class="note-label">the honest sweetener</span><p>The pool has so far only run on a handful of phones. A dozen funded seed boxes wouldn't just harden availability — they'd be the first real test of the swarm at scale, the one thing the project most needs and can't fake with three devices. Funding the seeds <em>is</em> funding the proof.</p></div>
+    <p class="kicker">It's the cleanest role there is for an organisation that cares about this community's data: make it more available to everyone, while holding none of it, reading none of it, and being liable for none of it.</p>
+  </div>
+</section>
+
+<section id="status">
+  <div class="wrap sec">
+    <div class="sec-head">
+      <h2>Where it stands</h2>
+      <p>Everything above the line runs. Everything below is a known next step with a design already written — which is exactly where a project invites the people who want to shape it.</p>
+    </div>
+    <div class="statusboard">
+      <div class="srow"><p>Running on real hardware — sealing, granting, revoking, the swarm, phone-to-phone across different networks, on a live closed loop.</p><span class="tag ok">shipped</span></div>
+      <div class="srow"><p>The follower app (Ayni) — a real Android app that shows someone's glucose.</p><span class="tag ok">shipped</span></div>
+      <div class="srow"><p>iOS — the core is platform-neutral Rust; no iOS follower yet. The obvious next build, and where the Trio community comes in.</p><span class="tag warn">open</span></div>
+      <div class="srow"><p>The research gateway — the export formats that make the commons a commons are specced, not written.</p><span class="tag warn">next</span></div>
+      <div class="srow"><p>The clinic app — the protocol enforces scoped windows today; the provider UI is still to build.</p><span class="tag warn">next</span></div>
+      <div class="srow"><p>Security review — standard primitives, composed by hand, no third-party audit yet. We say so everywhere and we'd welcome it.</p><span class="tag gap">honest gap</span></div>
+    </div>
+  </div>
+</section>
+
+</div><!-- /view-scale -->
+
+<div id="view-how" class="view" hidden>
+
+<section class="howintro">
+  <div class="wrap sec">
+    <div class="sec-head">
+      <h2>How a reading actually moves</h2>
+      <p>The mechanism under all of that, step by step — the record format, the encryption, the logs, the network, and what each party can and can't see.</p>
+    </div>
+  </div>
+</section>
+
 <section id="walkthrough">
   <div class="wrap sec">
     <div class="sec-head">
@@ -356,6 +569,8 @@ footer a:hover{color:#3ad68e}
   </div>
 </section>
 
+</div><!-- /view-how -->
+
 <section id="read">
   <div class="wrap sec">
     <div class="sec-head">
@@ -369,6 +584,8 @@ footer a:hover{color:#3ad68e}
       <div><h3>Decisions</h3><p>Why each piece is the way it is, including the ones that were reversed.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md">docs/decisions.md</a></div>
       <div><h3>What we won't claim</h3><p>The sentences this project may never say, and the true version of each.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/docs/feasibility.md">docs/feasibility.md §11</a></div>
       <div><h3>Security</h3><p>Scope, known limits, and how to report a problem.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md">SECURITY.md</a></div>
+      <div><h3>Roles</h3><p>Who each layer is, what they may truthfully be told, and the honest limit on each.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/docs/roles.md">docs/roles.md</a></div>
+      <div><h3>Data rights</h3><p>The full per-principle assessment against the Charter, with the evidence that would change each verdict.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/docs/rights.md">docs/rights.md</a></div>
     </div>
   </div>
 </section>
@@ -382,5 +599,32 @@ footer a:hover{color:#3ad68e}
 </footer>
 <script src="assets/explainer.js" defer></script>
 <script src="assets/scene-dev.js" defer></script>
+<script src="assets/scene-scale.js" defer></script>
+<script>
+(function(){
+  var views={scale:document.getElementById('view-scale'),how:document.getElementById('view-how')};
+  var tabs=[].slice.call(document.querySelectorAll('.vtab'));
+  var HOW=['walkthrough','live'];
+  function viewForHash(h){h=(h||'').replace(/^#/,'');if(h==='how'||HOW.indexOf(h)>=0)return'how';return'scale';}
+  function show(name,hash){
+    if(!views[name])name='scale';
+    for(var k in views){if(views[k])views[k].hidden=(k!==name);}
+    tabs.forEach(function(t){var on=t.getAttribute('data-view')===name;t.classList.toggle('active',on);t.setAttribute('aria-selected',on?'true':'false');});
+    try{history.replaceState(null,'','#'+(hash||name));}catch(e){}
+  }
+  [].slice.call(document.querySelectorAll('[data-view]')).forEach(function(el){
+    el.addEventListener('click',function(e){
+      var name=el.getAttribute('data-view');
+      var href=el.getAttribute('href')||'';
+      var id=href.charAt(0)==='#'?href.slice(1):null;
+      show(name,id||name);
+      if(id){var t=document.getElementById(id);if(t){e.preventDefault();t.scrollIntoView({behavior:'smooth',block:'start'});}}
+      else{window.scrollTo({top:0,behavior:'smooth'});}
+    });
+  });
+  show(viewForHash(location.hash), location.hash?location.hash.slice(1):null);
+  window.addEventListener('hashchange',function(){show(viewForHash(location.hash), location.hash.slice(1));});
+})();
+</script>
 </body>
 </html>
