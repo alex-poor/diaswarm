@@ -21,15 +21,18 @@ publish = false
 # p2panda_core::VerifyingKey and OperationId for p2panda_core::Hash, so the
 # whole thing runs on production types.
 [dependencies]
-p2panda-encryption = "=0.7.1"
-p2panda-core = "=0.7.1"
-p2panda-store = { version = "=0.7.1", features = ["macros"] }
+# MIGRATION SPIKE (feat/p2panda-rewrite-migration): point the whole p2panda
+# stack at the #1612 sync-rewrite merge commit on main to surface API breaks.
+# Not for merge — reverts to crates.io once the rewrite is in a tagged release.
+p2panda-encryption = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
+p2panda-core = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
+p2panda-store = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85", features = ["macros"] }
 # NOT TEST-ONLY ANY MORE. `open_bounded_store` builds the pool itself so it can
 # cap `cache_size` and the connection count, which the p2panda builder does not
 # expose; `SqliteStore::from_pool` is the supported way in. Same version and
 # features p2panda-store already pulls, so it unifies rather than adding a
 # second sqlx.
-sqlx = { version = "=0.8.6", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 diaswarm-core = { path = "../diaswarm-core" }
 serde = { version = "1", features = ["derive"] }

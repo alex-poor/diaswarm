@@ -8,36 +8,31 @@ description = "Move a vault between peers over iroh"
 [dependencies]
 diaswarm-core = { path = "../diaswarm-core" }
 diaswarm-keys = { path = "../diaswarm-keys" }
-iroh = "1.1"
+# MIGRATION SPIKE: iroh#4390 is fixed upstream (closed 2026-10-06, in >=1.4),
+# and the rewrite requires 1.5 — so the vendored iroh fork is dropped here.
+iroh = "1.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "fs", "signal", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-# D2a: the moment two devices must sync, p2panda-net over iroh is the answer.
-p2panda-net = "=0.7.1"
-p2panda-core = "=0.7.1"
-p2panda-store = { version = "=0.7.1", features = ["macros"] }
-p2panda-sync = "=0.7.1"
+# MIGRATION SPIKE (feat/p2panda-rewrite-migration): whole p2panda stack pinned
+# to the #1612 sync-rewrite merge commit on main. Reverts to crates.io =x.y.z
+# once the rewrite ships in a tagged release.
+p2panda-net = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
+p2panda-core = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
+p2panda-store = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85", features = ["macros"] }
+p2panda-sync = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
 futures-util = "0.3"
 anyhow = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
-p2panda-encryption = "=0.7.1"
-# Only to reopen a carrier's store and assert its encryption-state tables stay
-# empty (keys_replicate.rs). Same version/features p2panda-store already pulls,
-# so it unifies rather than adding a second sqlx.
-sqlx = { version = "=0.8.6", features = ["runtime-tokio", "sqlite"] }
+p2panda-encryption = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
+# sqlx bumped 0.8.6 -> 0.9 to track p2panda-store (#1322, sqlx 0.9.0 in 0.8.0).
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
 
-# **IROH IS VENDORED AND PATCHED HERE.** Not a fork for its own sake: upstream
-# grows `pending_open_paths` geometrically until the allocator fails, which is
-# what has been killing the follower overnight. One deduplicating function,
-# taken verbatim from the maintainer-facing hot-fix in iroh#4390, both of whose
-# issues are still open. `vendor/iroh/DIASWARM-PATCH.md` has the measurements
-# and the instructions for removing this again.
-[patch.crates-io]
-iroh = { path = "../../vendor/iroh" }
-# Local fork of p2panda-sync 0.7.1 with the session-channel leak fixed
-# (from_session_tx/rx removal). See vendor/p2panda-sync and the memory note
-# diaswarm-ayni-leak-is-reader-readcost. Remove once upstreamed.
-p2panda-sync = { path = "../../vendor/p2panda-sync" }
+# MIGRATION SPIKE: both vendored forks are GONE in this branch.
+#   - vendor/iroh (iroh#4390 dedup) — fix is upstream in iroh >=1.4.
+#   - vendor/p2panda-sync (session-channel reap) — the whole manager/ module it
+#     patched is DELETED by the #1612 rewrite; superseded by broadcast->mpsc.
+# No [patch.crates-io] section remains.
