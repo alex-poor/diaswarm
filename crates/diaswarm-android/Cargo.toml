@@ -13,10 +13,13 @@ crate-type = ["cdylib", "rlib"]
 diaswarm-core = { path = "../diaswarm-core" }
 diaswarm-net = { path = "../diaswarm-net" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
-iroh = "1.1"
+# MIGRATION SPIKE: iroh#4390 fixed upstream (>=1.4); rewrite needs 1.5.
+iroh = "1.5"
 jni = "0.21"
 serde_json = "1"
-p2panda-core = "=0.7.1"
+# MIGRATION SPIKE (feat/p2panda-rewrite-migration): #1612 merge commit, matching
+# diaswarm-{net,keys,peer}. Reverts to crates.io on a tagged release.
+p2panda-core = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
 diaswarm-keys = { path = "../diaswarm-keys" }
 # Hands Android's Context to the iroh stack — see `initAndroid`.
 ndk-context = "0.1.1"
@@ -47,14 +50,6 @@ lto = true
 codegen-units = 1
 opt-level = "z"
 
-# **IROH IS VENDORED AND PATCHED HERE.** Not a fork for its own sake: upstream
-# grows `pending_open_paths` geometrically until the allocator fails, which is
-# what has been killing the follower overnight. One deduplicating function,
-# taken verbatim from the maintainer-facing hot-fix in iroh#4390, both of whose
-# issues are still open. `vendor/iroh/DIASWARM-PATCH.md` has the measurements
-# and the instructions for removing this again.
-[patch.crates-io]
-iroh = { path = "../../vendor/iroh" }
-# Leak-fix fork of p2panda-sync 0.7.1 (session-channel reaping); shared by the
-# Ayni follower and the AAPS plugin. See vendor/p2panda-sync + memory note.
-p2panda-sync = { path = "../../vendor/p2panda-sync" }
+# MIGRATION SPIKE: both vendored forks are GONE in this branch (iroh#4390 fixed
+# upstream in >=1.4; the p2panda-sync manager/ module is deleted by #1612). No
+# [patch.crates-io] remains.
