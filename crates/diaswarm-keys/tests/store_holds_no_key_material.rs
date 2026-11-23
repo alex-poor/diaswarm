@@ -92,7 +92,9 @@ async fn a_published_keys_store_holds_no_key_material() {
     // migrations create them), so the COUNT is real, not a missing-table pass.
     let probe = sqlx::SqlitePool::connect(&format!("sqlite://{}", db.display())).await.unwrap();
     for table in ["groups_v1", "key_secrets_v1", "key_registry_v1", "spaces_v1"] {
-        let rows: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        // sqlx 0.9 requires dynamic SQL to be explicitly asserted safe; `table`
+        // is one of four hard-coded literals above, so this is audited-safe.
+        let rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
             .fetch_one(&probe)
             .await
             .unwrap();

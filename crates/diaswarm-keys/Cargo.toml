@@ -34,6 +34,9 @@ p2panda-store = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ad
 # second sqlx.
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# MIGRATION SPIKE: LogStore::log_entries now returns a futures BoxStream
+# (lazy) instead of a Vec; StreamExt::next drains it in wire.rs::read_ops.
+futures-util = "0.3"
 diaswarm-core = { path = "../diaswarm-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

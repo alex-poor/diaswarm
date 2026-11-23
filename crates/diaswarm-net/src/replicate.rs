@@ -307,7 +307,8 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         let out: Result<(), p2panda_store::SqliteError> = async {
             tx!(store, {
                 for log_id in &logs {
-                    store.associate(&topic, &key, log_id).await?;
+                    // MIGRATION (#1612): TopicStore::associate -> associate_tx.
+                    store.associate_tx(&topic, &key, log_id).await?;
                 }
             });
             Ok(())
@@ -402,7 +403,7 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
                             let out: Result<(), p2panda_store::SqliteError> = async {
                                 tx!(store, {
                                     store
-                                        .insert_operation(
+                                        .insert_operation_tx(
                                             &operation.hash,
                                             &*operation,
                                             &log_id,

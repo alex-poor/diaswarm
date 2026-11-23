@@ -29,7 +29,6 @@ use diaswarm_net::replicate::KeysReplicator;
 use diaswarm_net::swarm::{network_id, Swarm};
 use p2panda_core::{Hash, SigningKey, VerifyingKey};
 use diaswarm_keys::Rng;
-use diaswarm_keys::wire::KeysOperation;
 use p2panda_store::logs::LogStore;
 use p2panda_store::{SqliteStore, SqliteStoreBuilder};
 
@@ -68,7 +67,7 @@ fn day(epoch: i64, mgdl: f64) -> Vec<Record> {
 /// event; `sent` counts topics published on. None of them bounds another, and
 /// a test that assumed one did flaked for a day. This asks the store.
 async fn held(store: &SqliteStore, author: &VerifyingKey, log_id: u32) -> u32 {
-    let size = <SqliteStore as LogStore<KeysOperation, VerifyingKey, u32, u32, Hash>>::get_log_size(
+    let size = <SqliteStore as LogStore<p2panda_core::AnyOperation, VerifyingKey, u32, u32, Hash>>::get_log_size(
         store, author, &log_id, None, None,
     )
     .await

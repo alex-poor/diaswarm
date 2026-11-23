@@ -38,13 +38,11 @@
 //! person's phone publishing their own data.
 
 use p2panda_core::{Hash, VerifyingKey};
-use p2panda_store::logs::LogStore;
 use p2panda_store::SqliteStore;
 
-use crate::wire::{KeysOperation, CONTROL_LOG_ID};
+use crate::wire::CONTROL_LOG_ID;
 use crate::Error;
 
-type LogId = u32;
 type SeqNum = u32;
 
 /// One walk of one copy of a subject's control log.
@@ -144,17 +142,9 @@ pub async fn verify_control_chain(
     store: &SqliteStore,
     subject: &VerifyingKey,
 ) -> Result<Chain, Error> {
-    let entries = <SqliteStore as LogStore<
-        KeysOperation,
-        VerifyingKey,
-        LogId,
-        SeqNum,
-        Hash,
-    >>::get_log_entries(store, subject, &CONTROL_LOG_ID, None, None)
-    .await?;
-
-    let operations: Vec<KeysOperation> =
-        entries.into_iter().flatten().map(|(op, _encoded_header)| op).collect();
+    // MIGRATION (#1612): the store returns an untyped `AnyOperation` stream now;
+    // `wire::read_ops` drains it and decodes each header back into `KeysArgs`.
+    let operations = crate::wire::read_ops(store, subject, &CONTROL_LOG_ID, None, None).await?;
 
     let mut hashes = Vec::with_capacity(operations.len());
     let mut broken_at = None;
