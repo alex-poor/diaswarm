@@ -117,7 +117,20 @@ pub async fn open_bounded_store(url: &str) -> Result<SqliteStore, p2panda_store:
         // ordinary contention into an error the caller sees. Five seconds is
         // long enough to outlast any write this app makes and short enough that
         // a genuine deadlock still surfaces as one.
-        .busy_timeout(std::time::Duration::from_secs(5));
+        .busy_timeout(std::time::Duration::from_secs(5))
+        // **WAL, SO A READER NEVER WAITS ON THE WRITER.** The default rollback
+        // journal takes an EXCLUSIVE lock for the duration of a write
+        // transaction, which blocks every reader on the file until it commits.
+        // A heavy sync pass then starves the UI's vault read: measured on
+        // phone B 2026-11-26, the store held a reading 10s old while the screen
+        // sat frozen on one 21 MINUTES old — `produceState` keeps the last
+        // bundle until a fresh read COMPLETES, and the read kept hitting the
+        // write lock and timing out. WAL lets the pool's readers run against the
+        // last commit while the writer appends, so the display tracks the store.
+        // `synchronous=NORMAL` is the documented-safe pairing for WAL and drops
+        // the fsync-per-commit the default does.
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .synchronous(sqlx::sqlite::SqliteSynchronous::Normal);
     // **THE POOL SIZE IS LEFT ALONE ON PURPOSE.** Capping it to four was tried
     // and measured: `keys_pool` went from passing in 4-5 s to taking 8-17 s and
     // failing two runs in five. Fewer connections is fewer concurrent readers,
