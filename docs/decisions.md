@@ -2448,6 +2448,38 @@ seven and renumbered them**, which is how an open question stops being tracked.
 | — | **Is "nothing new will be sent" recognisable as *withdrawal*?** D4's question, reshaped: granularity is solved, semantics are not. Nobody has asked a person whether a withdrawal that recalls nothing counts as one | Not in §12; rights.md §12 has a route |
 | — | **Who operates the commons**, and does being a named, revocable peer actually change what an ethics committee thinks? That is the claim this design makes to that audience and it has never been tested on one | Not in §12; the gate on D5 |
 
+### D34 · The keys vault is authoritative; the core data vault is read-only legacy
+
+**Recorded 2026-11-26.** The cutover itself landed earlier, in code only — this
+entry closes exactly the gap the migration note warns about, where a change of
+direction must be written down in the same breath and twice was not.
+
+**What shipped: a keys-only cutover.** [D26](decisions.md) chose
+`p2panda-encryption`; the publisher now acts on that vault alone. It seals with
+`keysSealChecked` and grants with `keysGrant`/`keysGrantSince`; the hand-rolled
+core-vault write path — `vaultSeal`, `vaultGrant`, `vaultRevoke`, the rewrap
+repair — is gone from the plugin, and an old-format invite carrying no keys
+bundle is refused rather than half-granted. On a current follower every sync
+pass therefore logs `merged 0 core + N keys`: the core data vault carries
+nothing new, and that line is health, not a fault.
+
+**What is deliberately kept: the follower's core READ.** `Follower.readings()`
+still merges the core vault with keys (deduped), and `keysOnly` is off by
+default, so a follower reads both. This is the migration safety net — it quietly
+covers any gap in keys during the transition and lets a follower still open
+pre-cutover history. It retires only when BOTH `keysOnly` becomes the default and
+no follower needs pre-cutover core and no pre-cutover publisher remains.
+
+**What is NOT legacy: the `diaswarm-core` crate.** Identity, the invite (v1–v5),
+the `Record` model and its canonicalisation, the seal-TAG derivation
+(`grant_tag_from_shared`, used by the keys vault itself) and the readers book are
+the foundation the keys vault is built on. "Core" the crate is permanent; only
+"core" the *data vault* is legacy.
+
+**Immediately removable** as dead code (grep shows no callers): the publisher's
+`vaultSeal`/`vaultGrant`/`vaultRevoke` JNI and the Rust write path behind them.
+Not the read path, not the transport, not the crate.
+
 ### D33 · Nightscout compatibility is a data-model claim, not a connection
 
 **Settled 2026-09-16.** Asked directly — *"this is meant to be decentralised, so
