@@ -8,30 +8,29 @@ description = "Move a vault between peers over iroh"
 [dependencies]
 diaswarm-core = { path = "../diaswarm-core" }
 diaswarm-keys = { path = "../diaswarm-keys" }
-# MIGRATION SPIKE: iroh#4390 is fixed upstream (closed 2026-10-06, in >=1.4),
-# and the rewrite requires 1.5 — so the vendored iroh fork is dropped here.
+# iroh#4390 is fixed upstream (closed 2026-10-06, in >=1.4), and p2panda 0.8.2
+# requires iroh 1.5 (#1614) — so the vendored iroh fork is dropped.
 iroh = "1.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "fs", "signal", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-# MIGRATION SPIKE (feat/p2panda-rewrite-migration): whole p2panda stack pinned
-# to the #1612 sync-rewrite merge commit on main. Reverts to crates.io =x.y.z
-# once the rewrite ships in a tagged release.
-p2panda-net = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
-p2panda-core = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
-p2panda-store = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85", features = ["macros"] }
-p2panda-sync = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
+# p2panda 0.8.2 carries the #1612 sync-session rewrite (broadcast->mpsc) that
+# closes leak issue #1556 and deletes the manager/ module our fork patched.
+p2panda-net = "=0.8.2"
+p2panda-core = "=0.8.2"
+p2panda-store = { version = "=0.8.2", features = ["macros"] }
+p2panda-sync = "=0.8.2"
 futures-util = "0.3"
 anyhow = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
-p2panda-encryption = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
+p2panda-encryption = "=0.8.2"
 # sqlx bumped 0.8.6 -> 0.9 to track p2panda-store (#1322, sqlx 0.9.0 in 0.8.0).
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
 
-# MIGRATION SPIKE: both vendored forks are GONE in this branch.
+# Both vendored forks are GONE:
 #   - vendor/iroh (iroh#4390 dedup) — fix is upstream in iroh >=1.4.
 #   - vendor/p2panda-sync (session-channel reap) — the whole manager/ module it
 #     patched is DELETED by the #1612 rewrite; superseded by broadcast->mpsc.

@@ -21,12 +21,12 @@ publish = false
 # p2panda_core::VerifyingKey and OperationId for p2panda_core::Hash, so the
 # whole thing runs on production types.
 [dependencies]
-# MIGRATION SPIKE (feat/p2panda-rewrite-migration): point the whole p2panda
-# stack at the #1612 sync-rewrite merge commit on main to surface API breaks.
-# Not for merge — reverts to crates.io once the rewrite is in a tagged release.
-p2panda-encryption = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
-p2panda-core = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
-p2panda-store = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85", features = ["macros"] }
+# p2panda 0.8.2 (released 2026-11-25) carries the #1612 sync-session rewrite that
+# closes our leak issue #1556; its untyped-read store API is why wire.rs decodes
+# AnyOperation. sqlx 0.9 + the Signer trait arrived with the same 0.8.x line.
+p2panda-encryption = "=0.8.2"
+p2panda-core = "=0.8.2"
+p2panda-store = { version = "=0.8.2", features = ["macros"] }
 # NOT TEST-ONLY ANY MORE. `open_bounded_store` builds the pool itself so it can
 # cap `cache_size` and the connection count, which the p2panda builder does not
 # expose; `SqliteStore::from_pool` is the supported way in. Same version and
@@ -34,7 +34,7 @@ p2panda-store = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ad
 # second sqlx.
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-# MIGRATION SPIKE: LogStore::log_entries now returns a futures BoxStream
+# p2panda 0.8.2: LogStore::log_entries now returns a futures BoxStream
 # (lazy) instead of a Vec; StreamExt::next drains it in wire.rs::read_ops.
 futures-util = "0.3"
 diaswarm-core = { path = "../diaswarm-core" }

@@ -13,13 +13,12 @@ crate-type = ["cdylib", "rlib"]
 diaswarm-core = { path = "../diaswarm-core" }
 diaswarm-net = { path = "../diaswarm-net" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
-# MIGRATION SPIKE: iroh#4390 fixed upstream (>=1.4); rewrite needs 1.5.
+# iroh#4390 fixed upstream (>=1.4); p2panda 0.8.2 needs iroh 1.5 (#1614).
 iroh = "1.5"
 jni = "0.21"
 serde_json = "1"
-# MIGRATION SPIKE (feat/p2panda-rewrite-migration): #1612 merge commit, matching
-# diaswarm-{net,keys,peer}. Reverts to crates.io on a tagged release.
-p2panda-core = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
+# p2panda 0.8.2 (#1612 rewrite), matching diaswarm-{net,keys,peer}.
+p2panda-core = "=0.8.2"
 diaswarm-keys = { path = "../diaswarm-keys" }
 # Hands Android's Context to the iroh stack — see `initAndroid`.
 ndk-context = "0.1.1"
@@ -50,6 +49,5 @@ lto = true
 codegen-units = 1
 opt-level = "z"
 
-# MIGRATION SPIKE: both vendored forks are GONE in this branch (iroh#4390 fixed
-# upstream in >=1.4; the p2panda-sync manager/ module is deleted by #1612). No
-# [patch.crates-io] remains.
+# Both vendored forks are GONE (iroh#4390 fixed upstream in >=1.4; the
+# p2panda-sync manager/ module is deleted by #1612). No [patch.crates-io] remains.

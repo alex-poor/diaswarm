@@ -37,11 +37,10 @@ diaswarm-net = { path = "../diaswarm-net" }
 diaswarm-keys = { path = "../diaswarm-keys" }
 # For `Record`, which is what a read hands back and an export writes out.
 diaswarm-core = { path = "../diaswarm-core" }
-# MIGRATION SPIKE (feat/p2panda-rewrite-migration): pinned to the #1612 merge
-# commit, matching diaswarm-{net,keys}. Reverts to crates.io on a tagged release.
-p2panda-core = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85" }
+# p2panda 0.8.2 (#1612 rewrite), matching diaswarm-{net,keys}.
+p2panda-core = "=0.8.2"
 # For asking the store what it actually holds, rather than trusting a counter.
-p2panda-store = { git = "https://github.com/p2panda/p2panda", rev = "eacfe83b8ada128a635fdc7cad63dd783ad26c85", features = ["macros"] }
+p2panda-store = { version = "=0.8.2", features = ["macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 anyhow = "1"
 # ARGUMENT PARSING IS NOT A THING TO HAND-ROLL. The first version of this had
@@ -69,5 +68,5 @@ strip = true
 lto = true
 codegen-units = 1
 
-# MIGRATION SPIKE: the vendored p2panda-sync leak-fix fork is GONE — the
-# #1612 rewrite deletes the manager/ module it patched, so no [patch] remains.
+# The vendored p2panda-sync leak-fix fork is GONE — the #1612 rewrite deletes
+# the manager/ module it patched, so no [patch] remains.
