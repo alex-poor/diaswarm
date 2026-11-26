@@ -128,7 +128,15 @@ async fn time_tail(store: &SqliteStore, author: &p2panda_core::VerifyingKey, k: 
     fastest
 }
 
+// IGNORED IN PR CI, RUN NIGHTLY. This is a CPU-cost *profile*, not a
+// correctness gate: it seals a ~20k-op history and times the Ed25519 header
+// verification of the tail fetch (see the header). On a hosted runner that is
+// ~13 min — by itself ~60% of the whole `crates` test job — so it is marked
+// `#[ignore]` and runs in `crates-nightly.yml` (`cargo test -- --ignored`)
+// instead of blocking every PR. Nothing here asserts a property another test
+// does not; it measures. Run it locally with `cargo test -- --ignored`.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "benchmark: ~13min Ed25519 tail-cost profile; runs in crates-nightly.yml, not PR CI"]
 async fn what_the_tail_fetch_costs_and_what_each_fix_would_save() {
     let (all, source) = records();
 

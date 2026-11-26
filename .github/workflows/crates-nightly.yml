@@ -1,0 +1,71 @@
+# Run the slow, ignored crate tests that PR CI skips — once a day, on main.
+#
+# WHY THIS EXISTS. `crates.yml` runs the fast, correctness-gating tests on every
+# PR. A few tests are not gates but *profiles* — e.g. `tailcost.rs` seals a
+# ~20k-op history and times Ed25519 tail verification, ~13 min on a hosted
+# runner, by itself ~60% of the whole PR test job. Those are marked `#[ignore]`
+# so a PR does not wait 13 min on a measurement. But "ignored" must not mean
+# "dead": this job runs exactly them (`-- --ignored`) nightly so a regression in
+# that measured cost still surfaces, just off the PR critical path. This is the
+# "made explicit, not quietly dropped" half of that trade — see crates.yml.
+
+name: crates nightly
+
+on:
+  schedule:
+    # 14:00 UTC daily (~03:00 NZDT) — a quiet hour; nothing waits on it.
+    - cron: "0 14 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: crates-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ignored:
+    runs-on: ubuntu-latest
+    # The ignored suite is the slow one by definition; this is a hang ceiling.
+    timeout-minutes: 60
+
+    env:
+      # Same single target dir as crates.yml — compile the shared dep tree once.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-ci
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustc --version
+
+      # Same cache key as crates.yml, so the nightly run reuses the compiled
+      # dependency tree the PR jobs already built.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target-ci
+          key: crates-${{ runner.os }}-${{ hashFiles('crates/*/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: crates-${{ runner.os }}-
+
+      # `-- --ignored` runs ONLY the ignored tests. A crate with none runs zero
+      # and costs just its link pass. Named per crate so a failure says which.
+      - name: diaswarm-keys (ignored)
+        working-directory: crates/diaswarm-keys
+        run: cargo test --no-fail-fast -- --ignored
+
+      - name: diaswarm-net (ignored)
+        working-directory: crates/diaswarm-net
+        run: cargo test --no-fail-fast -- --ignored
+
+      - name: diaswarm-core (ignored)
+        working-directory: crates/diaswarm-core
+        run: cargo test --no-fail-fast -- --ignored
+
+      - name: diaswarm-peer (ignored)
+        working-directory: crates/diaswarm-peer
+        run: cargo test --no-fail-fast -- --ignored
