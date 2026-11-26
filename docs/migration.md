@@ -1,9 +1,13 @@
 # Moving onto p2panda: what is proven, and what a cutover still needs
 
 The vault, the grant model and replication have been rebuilt on p2panda's own
-layers — [D20](decisions.md) and [D21](decisions.md). None of it ships. The old
-implementation is still what runs on a phone, and this is the account of what
-would have to be true before that changes.
+layers — [D20](decisions.md) and [D21](decisions.md). **This has since SHIPPED as
+the keys-only cutover ([D34](decisions.md)): a phone's publisher now seals and
+grants on the keys (p2panda) vault alone, and the hand-rolled core data-vault
+write path is gone.** What follows is the account of what was proven on the way
+there. The follower still *reads* the core vault as a migration safety net (D34),
+and where the prose below still frames a cutover as pending, read it as the
+historical record it is — not current state.
 
 It exists because "it works" is not a decision. The evidence below is specific
 about what was measured, on what, and what each measurement does *not* cover.
