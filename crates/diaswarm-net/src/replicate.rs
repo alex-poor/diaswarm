@@ -75,6 +75,7 @@ use futures_util::StreamExt;
 use p2panda_core::{Hash, Topic, VerifyingKey};
 use p2panda_net::sync::SyncHandle;
 use p2panda_net::{Endpoint, Gossip, LogSync};
+use crate::window::WindowedStore;
 use p2panda_store::operations::OperationStore;
 use p2panda_store::topics::TopicStore;
 use p2panda_store::{SqliteStore, tx};
@@ -108,8 +109,21 @@ pub type KeysReplicator = Replicator<KeysArgs>;
 
 /// Replication for one peer: its store, and the topics it is carrying.
 pub struct Replicator<A: Extensions + Send + 'static> {
+    /// The real store. Writes — associating topics, storing received operations —
+    /// go here directly; its transaction futures are known-`Send`, which a generic
+    /// store's are not, so keeping it concrete keeps the carrier's spawned task
+    /// `Send` without return-type-notation gymnastics.
     store: SqliteStore,
-    sync: LogSync<SqliteStore, u32, A>,
+    /// The SAME database the sync READS through, via a per-subject windowing view.
+    /// The sync's whole job is the `Have` it builds from `get_log_heights`; routing
+    /// that read through [`WindowedStore`] lets a follower advertise a floored
+    /// height for a subject it only wants a window of, while every other subject
+    /// (and every publisher) sees the real height because the floor map is empty.
+    sync: LogSync<WindowedStore, u32, A>,
+    /// The floor map behind `sync`'s view, so [`Replicator::window`] can set a
+    /// subject's floor after its control log — and therefore its epoch index — has
+    /// synced. Empty by default: no window, nothing changes.
+    window: WindowedStore,
     /// Every log a subject publishes to. Associated together, because a
     /// follower that gets segments and not grants cannot open them, and one
     /// that gets grants and not segments has nothing to open.
@@ -200,6 +214,7 @@ impl<A: Extensions + Send + 'static> Clone for Replicator<A> {
         Replicator {
             store: self.store.clone(),
             sync: self.sync.clone(),
+            window: self.window.clone(),
             logs: self.logs.clone(),
             log_of: self.log_of,
             streaming: Arc::clone(&self.streaming),
@@ -240,13 +255,17 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         logs: &[u32],
         log_of: fn(&A) -> u32,
     ) -> Result<Self> {
-        let sync = LogSync::<SqliteStore, u32, A>::builder(store.clone(), endpoint, gossip)
+        // The sync reads the SAME database, through a windowing view whose floor
+        // map starts empty (pure passthrough until a follower sets a window).
+        let window = WindowedStore::passthrough(store.clone());
+        let sync = LogSync::<WindowedStore, u32, A>::builder(window.clone(), endpoint, gossip)
             .spawn()
             .await
             .context("spawning log sync")?;
         Ok(Replicator {
             store,
             sync,
+            window,
             logs: logs.to_vec(),
             log_of,
             streaming: Arc::new(Mutex::new(HashSet::new())),
@@ -332,6 +351,25 @@ impl<A: Extensions + Send + Sync + 'static> Replicator<A> {
         out.sort();
         out.dedup();
         out
+    }
+
+    /// Window a subject's SEGMENT log at `floor` for this peer's sync.
+    ///
+    /// From the next sync session on, this peer advertises `max(real, floor)` for
+    /// that subject and so pulls only operations ABOVE `floor` — the follower-side
+    /// window. Every other subject it carries is untouched (the control log is
+    /// never windowed either). Set it AFTER the subject's control log has synced,
+    /// so its epoch index is present to compute the floor from
+    /// `diaswarm_keys::wire::floor_for_epochs`, and BEFORE the segment log is
+    /// carried (lowering the floor does not un-pull what a prior session already
+    /// fetched). `floor` 0 is passthrough (`max(real, 0) == real`).
+    pub fn window(&self, subject: &VerifyingKey, floor: u32) {
+        self.window.set_floor(*subject, floor);
+    }
+
+    /// Stop windowing `subject` — advertise its real height again.
+    pub fn unwindow(&self, subject: &VerifyingKey) {
+        self.window.clear(subject);
     }
 
     /// Subscribe to a topic, once, and keep collecting from it.

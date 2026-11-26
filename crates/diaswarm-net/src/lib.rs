@@ -47,6 +47,7 @@ pub mod replicate;
 pub mod pool;
 pub mod share;
 pub mod swarm;
+pub mod window;
 pub mod wire;
 
 use std::path::{Path, PathBuf};
