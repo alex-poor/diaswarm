@@ -779,8 +779,6 @@ object SwarmNative {
 
     external fun keysSyncEvents(handle: Long, limit: Long): String
 
-    external fun keysRestream(handle: Long): Long
-
     external fun keysVerifyControl(handle: Long, subjectKeys: String): String
 
     external fun netTempTarget(
