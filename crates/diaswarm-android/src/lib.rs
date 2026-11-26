@@ -1869,6 +1869,34 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRotate(
     rotate_and_publish(v)
 }
 
+/// Prune the segment log to its most recent `keep` operations (D35).
+///
+/// A fresh follower syncs every operation a subject holds; against a real history
+/// that reached ~3.4 GB and OOM-crashed the app (native SIGABRT). Called at each
+/// rotation (`rotateIfDue`), this deletes older segments from the SHARED vault so
+/// a fresh follower mirrors only a recent window — the subject's own records live
+/// in AAPS, not here, so nothing of theirs is lost. Only the segment log is
+/// touched, never the control log a follower needs to open anything.
+///
+/// Returns the number of operations pruned, or a negative code.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysPruneSegments(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    keep: jlong,
+) -> jlong {
+    let Some(v) = keys_vault(handle) else { return -1 };
+    match v.handle.block_on(diaswarm_keys::wire::prune_segments(
+        &v.store,
+        &v.signing.verifying_key(),
+        keep.max(0) as u64,
+    )) {
+        Ok(pruned) => pruned as jlong,
+        Err(_) => -2,
+    }
+}
+
 /// Rotate the group secret and tell the group about it.
 ///
 /// **SPLIT OUT OF THE JNI SO IT CAN BE TESTED WITHOUT A PHONE.** The bug this

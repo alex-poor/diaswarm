@@ -642,7 +642,24 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         }
         preferences.put(SwarmLongKey.KeysLastRotated, now)
         aapsLogger.info(LTag.CORE, "swarm: rotated the group secret — holding $held")
+
+        // **D35: PRUNE THE SEGMENT LOG SO A NEW FOLLOWER DOES NOT MIRROR A WHOLE
+        // HISTORY.** A fresh follower syncs every operation a subject holds; against
+        // a real history that reached ~3.4 GB and OOM-crashed the follower. p2panda
+        // is built assuming apps prune; we never did. Pruning at the rotation — the
+        // daily boundary — deletes older segments from the SHARED vault so a fresh
+        // follower mirrors only a recent window. Nothing of the subject's is lost:
+        // their own records live in AAPS, not this vault. Only the segment log is
+        // touched, never the control log a follower needs for keys. The keep count
+        // is generous (covers well over a day at any sealing cadence) and bounds a
+        // fresh follower's sync; a later refinement can make it epoch-exact.
+        val pruned = SwarmNative.keysPruneSegments(shadow, SEGMENT_KEEP)
+        if (pruned >= 0) aapsLogger.info(LTag.CORE, "swarm: pruned $pruned old segment(s), keeping the last $SEGMENT_KEEP")
+        else aapsLogger.warn(LTag.CORE, "swarm: segment prune failed ($pruned) — a fresh follower may still over-sync")
     }
+
+    /** How many recent segment operations to keep when pruning at a rotation (D35). */
+    private val SEGMENT_KEEP = 2_000L
 
     private fun sealPending() {
         val shadow = openShadow()

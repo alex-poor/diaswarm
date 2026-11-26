@@ -235,6 +235,16 @@ object SwarmNative {
     external fun keysRotate(handle: Long): Long
 
     /**
+     * Prune the segment log to its most recent [keep] operations (D35), so a
+     * fresh follower mirrors only a recent window instead of the whole history
+     * (which OOM-crashed the follower against a real-history subject). Deletes
+     * from the shared vault only; the subject's own records live in AAPS. Only
+     * the segment log is pruned, never the control log. Returns the number of
+     * operations pruned, or a negative code.
+     */
+    external fun keysPruneSegments(handle: Long, keep: Long): Long
+
+    /**
      * Grant a reader only the days sealed in the last [days]. 0 means everything.
      *
      * **D11's PARENT NEEDS 24 HOURS**, and an unscoped grant hands over every
