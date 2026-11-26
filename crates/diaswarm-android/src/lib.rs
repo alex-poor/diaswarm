@@ -1897,6 +1897,53 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysPruneSegments(
     }
 }
 
+/// Record where this epoch begins in the segment log, for a windowing follower.
+///
+/// **CALLED AT ROTATION — THE EPOCH BOUNDARY.** `rotateIfDue` fires once per epoch
+/// and the same `sealPending` pass seals this epoch's first segment immediately
+/// after, so the next segment seq (segment tip + 1, computed exactly as
+/// [`diaswarm_keys::wire::publish`] computes its own) is where this epoch begins.
+/// The anchor is a control-log op (never windowed), so a follower holding none of
+/// the segment log can still read it (see `wire::floor_for_epochs`). One per epoch,
+/// because rotation is one per epoch.
+///
+/// Returns the anchored segment seq, or a negative code.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysAnchorEpoch(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    epoch: jlong,
+) -> jlong {
+    let Some(v) = keys_vault(handle) else { return -1 };
+    anchor_epoch(v, epoch)
+}
+
+/// **SPLIT OUT OF THE JNI SO IT CAN BE TESTED WITHOUT A PHONE**, the same reason
+/// [`rotate_and_publish`] is — the seq this anchors must equal the seq the next
+/// segment actually takes, and that is exactly the kind of off-by-one a `JNIEnv`
+/// test cannot reach. Reads the segment tip the way `wire::publish` does (a fresh
+/// log's first op is seq 0, not 1) and publishes the anchor, pushing it live so a
+/// following peer gets the index entry without waiting for a sync pass.
+fn anchor_epoch(v: &KeysVault, epoch: jlong) -> jlong {
+    let author = v.signing.verifying_key();
+    let next = match v.handle.block_on(diaswarm_keys::wire::next_segment_seq(&v.store, &author)) {
+        Ok(seq) => seq,
+        Err(_) => return -2,
+    };
+    match v.handle.block_on(diaswarm_keys::wire::publish_anchor(
+        &v.store,
+        &v.signing,
+        &diaswarm_keys::wire::Anchor { epoch, seq: next },
+    )) {
+        Ok(op) => {
+            push_live(v.push.as_ref(), &v.signing, op);
+            next as jlong
+        }
+        Err(_) => -3,
+    }
+}
+
 /// Rotate the group secret and tell the group about it.
 ///
 /// **SPLIT OUT OF THE JNI SO IT CAN BE TESTED WITHOUT A PHONE.** The bug this
@@ -3640,6 +3687,62 @@ mod shadow_tests {
         assert!(held2 >= 0);
         let after2 = rt.block_on(wire::control_from(&store, &author, None)).unwrap().len();
         assert_eq!(after2, before + 2, "the second rotation was not announced");
+    }
+
+    /// `anchor_epoch` must record the seq the NEXT segment actually takes — the
+    /// off-by-one a `JNIEnv` test cannot reach, and the whole value of the index:
+    /// a wrong anchor windows the follower to the wrong day.
+    #[test]
+    fn an_anchor_marks_where_the_next_segment_lands() {
+        use diaswarm_core::{Record, EPOCH_MS};
+        use diaswarm_keys::{wire, Vault};
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store = rt.block_on(async {
+            diaswarm_keys::SqliteStoreBuilder::memory().build().await.unwrap()
+        });
+        let rng = diaswarm_keys::Rng::default();
+        let signing = p2panda_core::SigningKey::generate();
+        let author = signing.verifying_key();
+        let root = dir("anchor");
+        let mut vault = Vault::open(&root, 12 * 3_600_000, &signing).unwrap();
+        let (mgr, _bundle) = Vault::key_bundle(&rng).unwrap();
+        let create = vault.create(mgr).unwrap();
+        rt.block_on(wire::publish_control(&store, &signing, &create)).unwrap();
+
+        // Seal three segments for epoch 500 (seqs 0,1,2).
+        let epoch = 500i64;
+        for i in 0..3i64 {
+            let batch =
+                vec![Record::new(epoch * EPOCH_MS + i * 60_000, "cgm").set("mgdl", Some(100.0.into()))];
+            let seg = vault.seal_delta(epoch, &batch).unwrap();
+            rt.block_on(wire::publish(&store, &signing, &seg)).unwrap();
+        }
+
+        let v = super::KeysVault {
+            tag: super::KEYS_TAG,
+            handle: rt.handle().clone(),
+            store: store.clone(),
+            signing: signing.clone(),
+            vault,
+            push: None,
+            read_memo: std::sync::Mutex::new(None),
+        };
+
+        // Anchoring epoch 501 now predicts the NEXT segment seq = 3.
+        let next_epoch = 501i64;
+        let anchored = super::anchor_epoch(&v, next_epoch);
+        assert_eq!(anchored, 3, "the anchor must point at the next segment seq, not {anchored}");
+
+        let anchors = rt.block_on(wire::anchors_from(&store, &author)).unwrap();
+        assert_eq!(anchors, vec![wire::Anchor { epoch: next_epoch, seq: 3 }], "one anchor at the predicted seq");
+
+        // And the next segment sealed does land exactly there — the prediction held.
+        let mut vault = v.vault; // take the vault back out
+        let batch = vec![Record::new(next_epoch * EPOCH_MS, "cgm").set("mgdl", Some(100.0.into()))];
+        let seg = vault.seal_delta(next_epoch, &batch).unwrap();
+        let op = rt.block_on(wire::publish(&store, &signing, &seg)).unwrap();
+        assert_eq!(op.header.seq_num, 3, "the anchored seq is where the segment actually landed");
     }
 
     #[test]

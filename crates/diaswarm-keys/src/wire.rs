@@ -84,6 +84,33 @@ pub struct ControlArgs {
     pub v: u8,
 }
 
+/// A control operation that is NOT a group message: it records where an epoch
+/// begins in the SEGMENT log, the index a windowing follower reads.
+///
+/// **IT IS A `v`, NOT A NEW FIELD, SO THE HEADER WIRE FORMAT DOES NOT CHANGE.**
+/// `ControlArgs` stays `{ v: u8 }`; an anchor is just a control op whose `v` says
+/// "this body is an [`Anchor`], not a [`Message`]". A reader that does not know
+/// this kind skips it (see [`control_from`]) instead of failing to decode it as a
+/// message — which is why the skip must ship to followers BEFORE a publisher ever
+/// emits one.
+pub const ANCHOR_V1: u8 = 2;
+
+/// One entry of the epoch→segment-seq index that lets a follower window.
+///
+/// **THE WHOLE POINT: WINDOW WITHOUT THE SEGMENT LOG.** A follower that wants only
+/// "the last N epochs" needs the segment sequence number each epoch begins at — but
+/// that lives in the segment headers, which is exactly what it is trying NOT to
+/// mirror. So the publisher copies the boundary into the CONTROL log (tiny, never
+/// windowed, always fully synced) as one `Anchor` per epoch: the first segment of
+/// `epoch` sits at segment-log sequence `seq`. The follower reads these
+/// ([`anchors_from`]), picks the floor for its window ([`floor_for_epochs`]) and
+/// advertises that height — see `WindowedStore` in `ingestprobe`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Anchor {
+    pub epoch: i64,
+    pub seq: SeqNum,
+}
+
 /// **ONE EXTENSION TYPE FOR BOTH LOGS, BECAUSE ONE `LogSync` CARRIES ONE.**
 ///
 /// `p2panda_net::LogSync<S, L, E>` is generic over a single extension type, and
@@ -675,6 +702,73 @@ pub async fn publish_control(
     Ok(operation)
 }
 
+/// The sequence number the next segment will take — a fresh log's first op is seq
+/// 0, not 1, which is the distinction a plain tip height (`log_tips`) loses.
+///
+/// This is what an epoch anchor records: at rotation, before the epoch's first
+/// segment is sealed, this is the seq that segment will land at. Computed exactly
+/// as [`publish`] computes its own seq, so the two cannot disagree.
+pub async fn next_segment_seq(
+    store: &SqliteStore,
+    author: &VerifyingKey,
+) -> Result<SeqNum, Error> {
+    // A plain read (like `log_tips`), NOT `get_latest_entry_tx` — that one must run
+    // inside a transaction, and this is a standalone read. `get_log_heights`
+    // returns None for an empty log (→ next seq 0) and the tip otherwise (→ tip+1),
+    // which is exactly the empty-vs-seq-0 distinction a tip height alone would lose.
+    let heights = <SqliteStore as LogStore<
+        AnyOperation,
+        VerifyingKey,
+        LogId,
+        SeqNum,
+        Hash,
+    >>::get_log_heights(store, author, &[LOG_ID])
+    .await?;
+    Ok(match heights.and_then(|h| h.get(&LOG_ID).copied()) {
+        Some(tip) => tip + 1,
+        None => 0,
+    })
+}
+
+/// Append an epoch [`Anchor`] to the control log, signed (the window index).
+///
+/// Like [`publish_control`] but the body is an `Anchor`, not a [`Message`], and the
+/// header is tagged [`ANCHOR_V1`] so the message reader ([`control_from`]) skips it.
+/// There is no `sender` check — an anchor is not a group message; its authenticity
+/// is the signed header, the same thing that authenticates any control op.
+pub async fn publish_anchor(
+    store: &SqliteStore,
+    signing_key: &SigningKey,
+    anchor: &Anchor,
+) -> Result<KeysOperation, Error> {
+    let payload =
+        p2panda_core::cbor::encode_cbor(anchor).map_err(|e| Error::Encode(e.to_string()))?;
+
+    // ONE TRANSACTION, for the reason `publish` gives: read-then-append.
+    let operation = tx!(store, {
+        let (seq_num, backlink) = <SqliteStore as LogStore<
+            AnyOperation,
+            VerifyingKey,
+            LogId,
+            SeqNum,
+            Hash,
+        >>::get_latest_entry_tx(store, &signing_key.verifying_key(), &CONTROL_LOG_ID)
+        .await?
+        .map(|op| (op.header.seq_num + 1, Some(op.hash)))
+        .unwrap_or((0, None));
+
+        let header = Header::builder()
+            .seq_num(seq_num)
+            .backlink(backlink)
+            .body(&payload)
+            .build(signing_key, KeysArgs::Control(ControlArgs { v: ANCHOR_V1 }));
+        let operation = KeysOperation::from_parts(header, Some(Body::from_bytes(payload)));
+        store.insert_operation_tx(&operation.hash, &operation, &CONTROL_LOG_ID).await?;
+        operation
+    });
+    Ok(operation)
+}
+
 /// Check a control operation and, if it holds up, vouch for its message.
 ///
 /// **THE ONLY CONSTRUCTOR OF [`Authentic`]**, which is what makes
@@ -776,7 +870,92 @@ pub async fn control_from(
                 operation.header.seq_num
             )));
         }
+        // **SKIP CONTROL OPS THAT ARE NOT MESSAGES.** The chain is still checked
+        // above, so a non-message in the log cannot hide a break — but an
+        // [`ANCHOR_V1`] index entry (or any future kind) is not something the group
+        // applies, and decoding its body as a `Message` would fail the whole read.
+        // This skip is the forward-compatibility that has to reach followers before
+        // a publisher emits the first anchor.
+        if let KeysArgs::Control(c) = &operation.header.extensions {
+            if c.v != CONTROL_V1 {
+                continue;
+            }
+        }
         out.push(open_control(operation.clone(), subject)?);
     }
     Ok(out)
+}
+
+/// Every epoch [`Anchor`] in `subject`'s control log, authenticated and sorted by
+/// epoch.
+///
+/// The control log is always fully synced, so this is complete even for a follower
+/// that holds none of the segment log — which is the whole reason the index lives
+/// here. Each anchor is a signed control op; its authenticity is checked the same
+/// way [`open_control`] checks a message, minus the `sender` field a message has
+/// and an anchor does not.
+pub async fn anchors_from(
+    store: &SqliteStore,
+    subject: &VerifyingKey,
+) -> Result<Vec<Anchor>, Error> {
+    let operations = read_ops(store, subject, &CONTROL_LOG_ID, None, None).await?;
+
+    let mut out = Vec::new();
+    for operation in &operations {
+        match &operation.header.extensions {
+            KeysArgs::Control(c) if c.v == ANCHOR_V1 => {}
+            _ => continue,
+        }
+        if operation.header.verifying_key != *subject {
+            return Err(Error::Forged(format!(
+                "an anchor at seq {} is signed by the wrong key",
+                operation.header.seq_num
+            )));
+        }
+        let body = operation
+            .body
+            .as_ref()
+            .ok_or_else(|| Error::Forged("an anchor arrived with no body".to_string()))?
+            .to_bytes();
+        p2panda_core::validate_operation(operation).map_err(|e| Error::Forged(e.to_string()))?;
+        let anchor: Anchor = p2panda_core::cbor::decode_cbor(&body[..])
+            .map_err(|e| Error::Encode(format!("anchor will not decode: {e}")))?;
+        out.push(anchor);
+    }
+    out.sort_by_key(|a| a.epoch);
+    Ok(out)
+}
+
+/// The segment-log height a follower advertises to sync only the last
+/// `keep_epochs` epochs — or `None` to sync the whole log.
+///
+/// Reads the index ([`anchors_from`]) and returns `Some(seq - 1)` for the first
+/// segment of the earliest epoch inside the window, so a `Have` at that height
+/// makes a peer send that segment and everything after it and nothing before.
+///
+/// **BY EPOCH VALUE, NOT ANCHOR COUNT**, because "the last N days" is a span of
+/// time: a day with no readings seals no segment and writes no anchor, and it must
+/// still count against the window. So the cutoff is `latest_epoch - (keep - 1)` and
+/// the floor is the first anchor at or after it. Returns `None` when the window
+/// already covers everything the index knows (keep spans the whole history, or the
+/// earliest kept segment is seq 0) — there is nothing to trim.
+pub async fn floor_for_epochs(
+    store: &SqliteStore,
+    subject: &VerifyingKey,
+    keep_epochs: u32,
+) -> Result<Option<SeqNum>, Error> {
+    if keep_epochs == 0 {
+        return Ok(None);
+    }
+    let anchors = anchors_from(store, subject).await?;
+    let (Some(earliest), Some(latest)) = (anchors.first(), anchors.last()) else {
+        return Ok(None);
+    };
+    let cutoff = latest.epoch - (keep_epochs as i64 - 1);
+    if cutoff <= earliest.epoch {
+        return Ok(None); // the window reaches the start of the index: keep it all
+    }
+    // `latest` itself satisfies `epoch >= cutoff`, so this always finds one.
+    let start = anchors.iter().find(|a| a.epoch >= cutoff).expect("latest qualifies");
+    Ok(if start.seq == 0 { None } else { Some(start.seq - 1) })
 }
