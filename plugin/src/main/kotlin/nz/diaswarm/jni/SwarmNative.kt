@@ -245,6 +245,16 @@ object SwarmNative {
     external fun keysPruneSegments(handle: Long, keep: Long): Long
 
     /**
+     * Record where [epoch] begins in the segment log — a control-log anchor a
+     * windowing follower reads to window "the last N days" WITHOUT mirroring the
+     * segment log (whose whole history OOM-crashed the follower). Called at
+     * rotation, the epoch boundary; the anchored seq is where this epoch's first
+     * segment will land (segment tip + 1). The control log is never windowed, so
+     * the anchor always reaches a follower. Returns the anchored seq, or negative.
+     */
+    external fun keysAnchorEpoch(handle: Long, epoch: Long): Long
+
+    /**
      * Grant a reader only the days sealed in the last [days]. 0 means everything.
      *
      * **D11's PARENT NEEDS 24 HOURS**, and an unscoped grant hands over every

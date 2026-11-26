@@ -656,6 +656,20 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
         val pruned = SwarmNative.keysPruneSegments(shadow, SEGMENT_KEEP)
         if (pruned >= 0) aapsLogger.info(LTag.CORE, "swarm: pruned $pruned old segment(s), keeping the last $SEGMENT_KEEP")
         else aapsLogger.warn(LTag.CORE, "swarm: segment prune failed ($pruned) — a fresh follower may still over-sync")
+
+        // **ANCHOR THE NEW EPOCH so a follower can window "the last N days".** The
+        // control log carries one anchor per epoch — "epoch E begins at segment seq
+        // S" — which a windowing follower reads to pick its sync floor WITHOUT
+        // mirroring the segment log (the thing it is trying to avoid; a whole
+        // history OOM-crashed it). Rotation is the epoch boundary and this same pass
+        // seals the epoch's first segment next, so the seq the anchor predicts
+        // (segment tip + 1) is exactly where that segment lands. Pruning above does
+        // not move the tip, so the order is fine. Additive: nothing reads the
+        // anchors yet, so this is safe to ship before the follower window does.
+        val epoch = SwarmNative.epochOf(now, offsetMs)
+        val anchoredAt = SwarmNative.keysAnchorEpoch(shadow, epoch)
+        if (anchoredAt >= 0) aapsLogger.info(LTag.CORE, "swarm: anchored epoch $epoch at segment seq $anchoredAt")
+        else aapsLogger.warn(LTag.CORE, "swarm: epoch anchor failed ($anchoredAt) — a windowing follower may over-sync")
     }
 
     /** How many recent segment operations to keep when pruning at a rotation (D35). */

@@ -702,6 +702,34 @@ pub async fn publish_control(
     Ok(operation)
 }
 
+/// The sequence number the next segment will take — a fresh log's first op is seq
+/// 0, not 1, which is the distinction a plain tip height (`log_tips`) loses.
+///
+/// This is what an epoch anchor records: at rotation, before the epoch's first
+/// segment is sealed, this is the seq that segment will land at. Computed exactly
+/// as [`publish`] computes its own seq, so the two cannot disagree.
+pub async fn next_segment_seq(
+    store: &SqliteStore,
+    author: &VerifyingKey,
+) -> Result<SeqNum, Error> {
+    // A plain read (like `log_tips`), NOT `get_latest_entry_tx` — that one must run
+    // inside a transaction, and this is a standalone read. `get_log_heights`
+    // returns None for an empty log (→ next seq 0) and the tip otherwise (→ tip+1),
+    // which is exactly the empty-vs-seq-0 distinction a tip height alone would lose.
+    let heights = <SqliteStore as LogStore<
+        AnyOperation,
+        VerifyingKey,
+        LogId,
+        SeqNum,
+        Hash,
+    >>::get_log_heights(store, author, &[LOG_ID])
+    .await?;
+    Ok(match heights.and_then(|h| h.get(&LOG_ID).copied()) {
+        Some(tip) => tip + 1,
+        None => 0,
+    })
+}
+
 /// Append an epoch [`Anchor`] to the control log, signed (the window index).
 ///
 /// Like [`publish_control`] but the body is an `Anchor`, not a [`Message`], and the
