@@ -26,7 +26,7 @@ const OFFSET: i64 = 12 * 3_600_000;
 /// Bytes the subject's segment log holds for this author.
 async fn log_bytes(store: &SqliteStore, author: &VerifyingKey) -> u64 {
     let size = <SqliteStore as LogStore<
-        wire::KeysOperation,
+        p2panda_core::AnyOperation,
         VerifyingKey,
         u32,
         u32,

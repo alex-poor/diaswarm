@@ -24,12 +24,12 @@
 use std::time::Duration;
 
 use diaswarm_core::{EPOCH_MS, Record};
-use diaswarm_keys::wire::{self, KeysOperation, CONTROL_LOG_ID, LOG_ID};
+use diaswarm_keys::wire::{self, CONTROL_LOG_ID, LOG_ID};
 use diaswarm_keys::{auth, Vault};
 use diaswarm_net::pool;
 use diaswarm_net::replicate::KeysReplicator;
 use diaswarm_net::swarm::{network_id, Swarm};
-use p2panda_core::{Hash, SigningKey, VerifyingKey};
+use p2panda_core::{AnyOperation, Hash, SigningKey, VerifyingKey};
 use p2panda_encryption::Rng;
 use p2panda_store::logs::LogStore;
 use p2panda_store::{SqliteStore, SqliteStoreBuilder};
@@ -56,7 +56,7 @@ fn day(epoch: i64, mgdl: f64) -> Vec<Record> {
 
 /// How many operations of one of this author's logs a store holds.
 async fn held(store: &SqliteStore, author: &VerifyingKey, log_id: u32) -> u32 {
-    let size = <SqliteStore as LogStore<KeysOperation, VerifyingKey, u32, u32, Hash>>::get_log_size(
+    let size = <SqliteStore as LogStore<AnyOperation, VerifyingKey, u32, u32, Hash>>::get_log_size(
         store, author, &log_id, None, None,
     )
     .await
@@ -220,7 +220,7 @@ async fn a_follower_gets_its_grant_and_its_days_from_a_stranger() {
         .await
         .unwrap();
     for table in ["groups_v1", "key_secrets_v1", "key_registry_v1", "spaces_v1"] {
-        let rows: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        let rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
             .fetch_one(&probe)
             .await
             .unwrap();

@@ -592,19 +592,38 @@ private fun WaitingCard(subject: Follower.Subject, lastSyncAt: Long) {
     val context = LocalContext.current
     Card(colors = CardDefaults.cardColors(containerColor = Card), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("Waiting on ${subject.label}", color = Text1, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            // Persisted by [SyncWorker] every pass: how many holders are heard
+            // serving this subject's keys vault. It is the one signal that tells
+            // a working first-follow (a holder IS feeding us history, just not
+            // caught up yet) apart from a stuck one (nobody is serving them).
+            val holders = Prefs.keysHolders(context, subject.key)
+            val catchingUp = subject.reached && holders > 0
             Text(
-                if (!subject.reached)
-                    "You've asked to follow them. Now they share with you from their own phone — " +
-                        "until they do, there is nothing here to read. Following costs them nothing."
-                else
-                    "This phone is holding their records, but no glucose is readable yet — they may not " +
-                        "be sharing readings, or it is still catching up.",
+                if (catchingUp) "Catching up with ${subject.label}" else "Waiting on ${subject.label}",
+                color = Text1, fontSize = 17.sp, fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                when {
+                    !subject.reached ->
+                        "You've asked to follow them. Now they share with you from their own phone — " +
+                            "until they do, there is nothing here to read. Following costs them nothing."
+                    holders > 0 ->
+                        "A holder is serving ${subject.label}'s records and this phone is downloading " +
+                            "their history. On a first follow this can take a few minutes; readings appear " +
+                            "once it reaches today, then stay current."
+                    else ->
+                        "This phone is holding their records, but no one is serving ${subject.label}'s " +
+                            "readings right now — they may be offline. It keeps trying, and readings appear " +
+                            "as soon as a holder is reachable."
+                },
                 color = Text2, fontSize = 14.sp
             )
             StatusBanner(
                 BannerTone.Wait,
-                "Checking every ${SyncWorker.EVERY_SECONDS / 60} min · last tried ${Follower.ageWords(lastSyncAt)}"
+                if (catchingUp)
+                    "Syncing from $holders holder${if (holders == 1) "" else "s"} · last check ${Follower.ageWords(lastSyncAt)}"
+                else
+                    "Checking every ${SyncWorker.EVERY_SECONDS / 60} min · last tried ${Follower.ageWords(lastSyncAt)}"
             )
             if (!subject.reached) {
                 Text(

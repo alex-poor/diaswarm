@@ -2480,6 +2480,57 @@ the foundation the keys vault is built on. "Core" the crate is permanent; only
 `vaultSeal`/`vaultGrant`/`vaultRevoke` JNI and the Rust write path behind them.
 Not the read path, not the transport, not the crate.
 
+### D35 · Logs are pruned; a follower mirrors only a recent window
+
+**Decided 2026-11-26.** A fresh follower of a real-history publisher OOM-crashed:
+30 MB → 3.4 GB → native SIGABRT, because it synced the subject's ENTIRE segment
+log from genesis (~100 KB retained per op × all of history). The cause was not a
+buffer to patch — it was that diaswarm never pruned, while p2panda is *designed*
+assuming applications do ("applications usually prune their logs … we haven't
+observed long-growing logs", p2panda-sync api.rs).
+
+**Decision: adopt p2panda pruning. A follower holds and carries only a recent
+window of a subject's data, not its whole history.**
+
+**Why this is correct, not just expedient.**
+* **Following "from now" never needed the backlog.** The grant window is a
+  *decrypt* scope; the carry pulled *every* operation regardless. The key use
+  case is a family member's recent readings (~24h), not a mirror of their life.
+* **Reciprocity ([D30](decisions.md)) must not block the goal.** "If you read it
+  you carry it" is right, but carrying a *bounded recent* window still
+  contributes availability for what is live — whereas mirroring complete
+  histories made the reciprocity tax crash a follower before it saw anyone.
+* **Nothing of the subject's is lost.** The subject's own full history lives in
+  AAPS's database; the keys vault is the *sharing* layer. Pruning the shared log
+  bounds what *followers* mirror, not what the subject keeps.
+
+**Mechanism (native; no upstream change; smaller than expected).**
+* Two logs, two policies. The **segment log** (`LOG_ID=0`, the glucose data, the
+  OOM) is pruned to a recent window; the **control log** (`CONTROL_LOG_ID=1`,
+  group/grants/epoch-keys, ~1 op/day) is kept intact — the follower needs it to
+  decrypt and it is not a memory problem.
+* **The whole lever is one call: the publisher runs `prune_entries_tx` on the
+  segment log** (deleting older entries from the shared vault) at each daily
+  epoch rotation. p2panda-net serves only what it holds, so a fresh carrier then
+  syncs just the recent window.
+* **No `PruneFlag` or follower change is required** in this stack — proven by
+  `ingestprobe 25 1 500` (branch fix/ingest-oom): a publisher that sealed 36 000
+  ops then pruned to the last 500 is synced by a fresh carrier to exactly 500 ops
+  at a flat 50 MB, vs 411 MB-and-climbing unpruned. p2panda-net does not enforce
+  backlink validation, so the carrier accepts ops starting mid-log (seq 35 500)
+  with no chain to genesis. We may still SET the `PruneFlag` as belt-and-suspenders
+  (it would matter only if a backlink-validating consumer, e.g. p2panda-stream,
+  is ever added), but it is optional, not load-bearing.
+
+**Still to build / decide (tracked):** wire the publisher prune into the plugin
+at `rotateIfDue` (one `prune_entries_tx` per rotation); the retention window
+(current epoch ~24h vs two ~48h); confirm the follower's windowed READ
+(`follow::read`/`wire::segments`) walks a log that starts mid-seq correctly (ops
+are present, but untested); and the interaction with revocation and re-admit
+([D13](decisions.md) — a removed reader must stay locked out, a re-admitted one
+must recover), which is control-log territory, kept intact here, but must be
+checked before shipping.
+
 ### D33 · Nightscout compatibility is a data-model claim, not a connection
 
 **Settled 2026-09-16.** Asked directly — *"this is meant to be decentralised, so

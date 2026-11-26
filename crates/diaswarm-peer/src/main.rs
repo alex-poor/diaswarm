@@ -322,7 +322,7 @@ async fn held(store: &SqliteStore, subjects: &[String]) -> u64 {
         let Some(key) = decode_key(hex) else { continue };
         for log_id in diaswarm_keys::wire::LOG_IDS {
             let size = <SqliteStore as LogStore<
-                diaswarm_keys::wire::KeysOperation,
+                p2panda_core::AnyOperation,
                 VerifyingKey,
                 u32,
                 u32,

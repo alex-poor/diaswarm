@@ -235,6 +235,13 @@ object SwarmNative {
     external fun keysRotate(handle: Long): Long
 
     /**
+     * Prune the segment log to its most recent [keep] operations (D35). The
+     * publisher calls this; kept here so the two JNI declarations do not drift.
+     * Returns the number of operations pruned, or a negative code.
+     */
+    external fun keysPruneSegments(handle: Long, keep: Long): Long
+
+    /**
      * Grant a reader only the days sealed in the last [days]. 0 means everything.
      *
      * **D11's PARENT NEEDS 24 HOURS**, and an unscoped grant hands over every
@@ -726,8 +733,6 @@ object SwarmNative {
     external fun keysHoldersHeard(handle: Long, keysIdentity: String): String
 
     external fun keysSyncEvents(handle: Long, limit: Long): String
-
-    external fun keysRestream(handle: Long): Long
 
     external fun keysVerifyControl(handle: Long, subjectKeys: String): String
 

@@ -261,16 +261,23 @@ async fn nobody_but_the_subject_writes_the_subjects_log() {
 
 /// Every operation in a subject's control log, in sequence order.
 async fn control_log(store: &SqliteStore, subject: &p2panda_core::VerifyingKey) -> Vec<KeysOperation> {
+    // MIGRATION (#1612): log_entries is a lazy AnyOperation stream now.
+    use futures_util::StreamExt;
     use p2panda_store::logs::LogStore;
-    <SqliteStore as LogStore<KeysOperation, p2panda_core::VerifyingKey, u32, u32, p2panda_core::Hash>>::get_log_entries(
-        store, subject, &CONTROL_LOG_ID, None, None,
-    )
-    .await
-    .expect("read the control log")
-    .into_iter()
-    .flatten()
-    .map(|(op, _encoded_header)| op)
-    .collect()
+    let mut stream = <SqliteStore as LogStore<
+        p2panda_core::AnyOperation,
+        p2panda_core::VerifyingKey,
+        u32,
+        u32,
+        p2panda_core::Hash,
+    >>::log_entries(store, subject, &CONTROL_LOG_ID, None, None)
+    .expect("read the control log");
+    let mut ops = Vec::new();
+    while let Some(item) = stream.next().await {
+        let item = item.expect("read the control log");
+        ops.push(item.entry.try_into().expect("decode a stored header"));
+    }
+    ops
 }
 
 /// Put an operation into a store's control log.
@@ -280,7 +287,7 @@ async fn control_log(store: &SqliteStore, subject: &p2panda_core::VerifyingKey) 
 /// reads like a corrupt store rather than a macro left off.
 async fn put(store: &SqliteStore, operation: &KeysOperation) {
     let out: Result<(), p2panda_store::SqliteError> = async {
-        tx!(store, { store.insert_operation(&operation.hash, operation, &CONTROL_LOG_ID).await? });
+        tx!(store, { store.insert_operation_tx(&operation.hash, operation, &CONTROL_LOG_ID).await? });
         Ok(())
     }
     .await;

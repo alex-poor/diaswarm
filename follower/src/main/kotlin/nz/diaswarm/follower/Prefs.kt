@@ -84,6 +84,18 @@ object Prefs {
     fun carryingAt(c: Context): Long = p(c).getLong("carrying_at", 0L)
 
     /**
+     * How many holders are currently heard serving a subject's keys vault,
+     * persisted each sync pass so the UI can tell "catching up — a holder is
+     * downloading their history" from "no source yet — they may be offline"
+     * during the wait before the first reading opens. -1 = not measured yet
+     * (no pass has run with a live endpoint). See [SyncWorker] and WaitingCard.
+     */
+    fun keysHolders(c: Context, subject: String): Int = p(c).getInt("keys_holders_$subject", -1)
+
+    fun setKeysHolders(c: Context, subject: String, n: Int) =
+        p(c).edit().putInt("keys_holders_$subject", n).apply()
+
+    /**
      * What to call a subject, as learned from their invite at pairing.
      *
      * **LOCAL, AND EDITABLE.** The handle arrives in the invite, which anyone
@@ -178,27 +190,6 @@ object Prefs {
 
     fun setLastUnreadable(c: Context, subject: String, n: Int) =
         p(c).edit().putInt("unreadable_$subject", n).apply()
-
-    /**
-     * How far stall recovery has climbed for the CURRENT stall: 0 before
-     * anything is tried, 1 after a re-subscribe, 2 after an endpoint rebuild.
-     * Reset to 0 the moment a pass sees fresh data again.
-     *
-     * **BECAUSE RE-SUBSCRIBING REPORTS A SUCCESS IT CANNOT PROMISE.**
-     * `keysRestream` returns the number of topics it re-subscribed — which says
-     * the call ran, not that bytes resumed. A topic re-subscribed on an endpoint
-     * whose relay session or peer address went stale with the subject's network
-     * change is still a dead topic. On 2026-10-25 a follower sat two hours behind
-     * while the old ladder logged "re-subscribed 2 topic(s)" and stopped there;
-     * only a manual force-stop — a fresh endpoint — recovered it. This counter is
-     * what lets the ladder notice the re-subscribe did not take and climb to the
-     * endpoint rebuild that does. Persisted for the same reason as
-     * [lastEndpointRestart]: a ladder that forgets itself on every restart is no
-     * ladder.
-     */
-    fun reconnectStage(c: Context): Int = p(c).getInt("reconnect_stage", 0)
-    fun setReconnectStage(c: Context, stage: Int) =
-        p(c).edit().putInt("reconnect_stage", stage).apply()
 
     /**
      * Whether this follower keeps a keys vault — and it now defaults to ON.

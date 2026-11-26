@@ -1869,6 +1869,34 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRotate(
     rotate_and_publish(v)
 }
 
+/// Prune the segment log to its most recent `keep` operations (D35).
+///
+/// A fresh follower syncs every operation a subject holds; against a real history
+/// that reached ~3.4 GB and OOM-crashed the app (native SIGABRT). Called at each
+/// rotation (`rotateIfDue`), this deletes older segments from the SHARED vault so
+/// a fresh follower mirrors only a recent window — the subject's own records live
+/// in AAPS, not here, so nothing of theirs is lost. Only the segment log is
+/// touched, never the control log a follower needs to open anything.
+///
+/// Returns the number of operations pruned, or a negative code.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysPruneSegments(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    keep: jlong,
+) -> jlong {
+    let Some(v) = keys_vault(handle) else { return -1 };
+    match v.handle.block_on(diaswarm_keys::wire::prune_segments(
+        &v.store,
+        &v.signing.verifying_key(),
+        keep.max(0) as u64,
+    )) {
+        Ok(pruned) => pruned as jlong,
+        Err(_) => -2,
+    }
+}
+
 /// Rotate the group secret and tell the group about it.
 ///
 /// **SPLIT OUT OF THE JNI SO IT CAN BE TESTED WITHOUT A PHONE.** The bug this
@@ -2447,40 +2475,6 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysSyncEvents<'a>(
         out.push_str(line);
     }
     to_jstring(env, out)
-}
-
-/// Re-subscribe every keys topic, now.
-///
-/// **THE TARGETED REMEDY FOR A ONE-SHOT SUBSCRIPTION.** `stream` catches up once
-/// and then waits for gossip; when that link dies the follower goes quiet and
-/// nothing re-establishes it, while `keysCarryAll` keeps returning the cached
-/// count. Restarting the whole endpoint also fixes it and is a sledgehammer —
-/// it drops every connection this phone has, including the ones that are
-/// working.
-///
-/// **THE CALLER DECIDES WHEN.** This used to take a quiet period and compare it
-/// against the last operation received — which on a phone meant it never fired,
-/// because catch-up syncs kept delivering operations while the newest *record*
-/// aged past a thousand seconds. The app knows how stale the data is; this does
-/// not and cannot.
-///
-/// Returns the number of topics re-streamed. -3 if the pool has no keys
-/// replicator, matching every other keys call.
-#[no_mangle]
-pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysRestream<'a>(
-    _env: JNIEnv<'a>,
-    _class: JClass<'a>,
-    handle: jlong,
-) -> jlong {
-    if handle == 0 {
-        return -1;
-    }
-    let pooled = unsafe { &*(handle as *const Pooled) };
-    let Some(replicator) = pooled.keys_replicator.as_ref() else { return -3 };
-    match pooled.runtime.block_on(replicator.restream()) {
-        Ok(n) => n as jlong,
-        Err(_) => -4,
-    }
 }
 
 /// Check a followed subject's CORE grant log holds together.

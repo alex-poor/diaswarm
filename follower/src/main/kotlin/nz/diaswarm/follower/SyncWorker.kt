@@ -129,6 +129,26 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                 Log.i(TAG, if (carried < 0) "keys carry unavailable ($carried)" else "keys carrying $carried log(s)")
                 // ON SCREEN, NOT ONLY IN THE LOG. See [Prefs.carrying].
                 if (carried >= 0) Prefs.setCarrying(applicationContext, carried.toInt())
+
+                // **SAY WHETHER ANYONE IS SERVING EACH SUBJECT, EVERY PASS —
+                // NOT ONLY ONCE A READING EXISTS.** watchForAStall computes
+                // holders, but it bails before it gets there when there is no
+                // reading yet ([Follower.keysNewestAgeMs] is null), which is
+                // exactly the fresh-follow wait a person stares at. Persist the
+                // keys-holder count here so WaitingCard can distinguish "a
+                // holder is serving them, this is catching up" from "no source
+                // yet, they may be offline" instead of one vague line.
+                for (subject in Follower.following(applicationContext)) {
+                    if (subject.keys.isEmpty()) continue
+                    val heard = try {
+                        SwarmNative.keysHoldersHeard(Endpoint.handle, subject.keys)
+                            .lines().count { it.isNotBlank() }
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "holders heard threw: $e"); -1
+                    }
+                    if (heard >= 0) Prefs.setKeysHolders(applicationContext, subject.key, heard)
+                }
+
                 verifyChains(applicationContext, keysToo = carried > 0)
                 if (carried > 0) watchForAStall(applicationContext)
 
@@ -293,14 +313,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
         }
         val worst = stale.maxOf { it.second }
         if (worst < STALE_AFTER) {
-            // Fresh data is flowing again — whatever rung the ladder reached did
-            // its job. Reset so the NEXT independent stall starts at the cheap
-            // re-subscribe rather than the endpoint rebuild. See
-            // [Prefs.reconnectStage].
-            if (Prefs.reconnectStage(context) != 0) {
-                Log.i(TAG, "keys caught up (newest ${worst / 1000}s old) — reconnect ladder reset")
-                Prefs.setReconnectStage(context, 0)
-            }
+            // Fresh data is flowing again — nothing to do.
             return
         }
 
@@ -340,32 +353,26 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
             // even a force-stop could not recover it, because the fresh process
             // hit this same early return before it could re-subscribe.
             //
-            // So we DO re-subscribe — but ONLY the keys topic, never the whole
-            // endpoint. `delivering` has already established the transport is
-            // fine, so a QUIC rebuild is both wrong and heavy. And it shares the
-            // [MIN_BETWEEN_RESTARTS] gate with the transport ladder below, so the
-            // genuinely hopeless rotation (a wrap that will never exist) costs
-            // one cheap keys re-subscribe a quarter-hour — not the every-pass
-            // leak the original guard was right to kill.
+            // Recovery is the gated endpoint rebuild below. `delivering` says the
+            // transport is fine, so a rebuild is heavier than ideal — but the
+            // targeted "restream" that used to do this leaked a p2panda session
+            // per call (leakprobe 2026-11-26: ~173 KB, never reclaimed), and this
+            // path is an EXPERIMENT (feat/drop-restream-stall-remedy): the phone-B
+            // soak drives a real epoch rotation to confirm #1612 forwarding + the
+            // rebuild recover the wrap. Shares the [MIN_BETWEEN_RESTARTS] gate, so
+            // a hopeless rotation costs one rebuild a quarter-hour, not a leak.
             val since = System.currentTimeMillis() - Prefs.lastEndpointRestart(context)
             if (since < MIN_BETWEEN_RESTARTS) {
                 Log.w(TAG, "keys stalled (${worst / 1000}s) — key missing, re-synced ${since / 1000}s ago, waiting")
                 return
             }
             Prefs.setLastEndpointRestart(context, System.currentTimeMillis())
-            val handle = SwarmKeys.open(context)
-            val restreamed = if (handle == 0L) -1L else try {
-                SwarmNative.keysRestream(Endpoint.handle)
-            } catch (e: Throwable) {
-                Log.w(TAG, "restream threw: $e"); -1L
-            } finally {
-                SwarmNative.keysClose(handle)
-            }
             Log.w(
                 TAG,
                 "keys stalled (${worst / 1000}s) — segments arriving but not opening; the wrap may be " +
-                    "upstream, re-subscribed $restreamed keys topic(s) to fetch it (transport left intact)"
+                    "upstream, rebuilding the endpoint to re-sync the keys log"
             )
+            Endpoint.restart(context)
             return
         }
 
@@ -374,22 +381,11 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
             Log.w(TAG, "keys stalled (${worst / 1000}s) — waiting, last reconnect ${since / 1000}s ago")
             return
         }
-        // **A LADDER CLIMBED ACROSS PASSES — NOT A ONE-SHOT THAT TRUSTS ITS OWN
-        // RETURN VALUE.** The root cause of a stall is a one-shot subscription:
-        // the stream catches up once, waits for gossip, and when that link dies
-        // nothing re-establishes it. Re-streaming the topic is the cheap fix and
-        // keeps every other connection — so it is the first rung.
-        //
-        // But `keysRestream` returns how many topics it re-subscribed, which says
-        // the CALL ran, not that data RESUMED: a topic re-subscribed on an
-        // endpoint whose relay session or peer address went stale with the
-        // subject's network change is still dead. The old code logged that count
-        // as success and stopped — and on 2026-10-25 a follower sat two hours
-        // behind while it did; a manual force-stop (a fresh endpoint) was what
-        // recovered it. So if the next qualifying pass is STILL stale, the
-        // re-subscribe did not take and the ladder climbs to the rung that
-        // rebuilds the endpoint from scratch — exactly what the force-stop did,
-        // the only difference being it drops this phone's other connections too.
+        // The root cause of a stall is a one-shot subscription: the stream catches
+        // up once, waits for gossip, and when that link dies nothing re-establishes
+        // it. The old fix re-subscribed the topic ("restream") as a cheap first
+        // rung before rebuilding the endpoint; that rung leaked and is removed (see
+        // below), so a single gated rebuild is the whole recovery now.
         //
         // **NOT A STORM, AND NOT A JUDGEMENT ABOUT WHOSE FAULT THE QUIET IS.**
         // Capped at one action per [MIN_BETWEEN_RESTARTS] by the gate above, so a
@@ -400,35 +396,17 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
         // then the follower cannot know the cause, so it rebuilds its own side —
         // which is harmless when the quiet is theirs and decisive when it is ours.
         Prefs.setLastEndpointRestart(context, System.currentTimeMillis())
-        if (Prefs.reconnectStage(context) == 0) {
-            // Rung 1: re-subscribe the topics. Cheapest, keeps other connections.
-            val handle = SwarmKeys.open(context)
-            val restreamed = if (handle == 0L) -1L else try {
-                SwarmNative.keysRestream(Endpoint.handle)
-            } catch (e: Throwable) {
-                Log.w(TAG, "restream threw: $e"); -1L
-            } finally {
-                SwarmNative.keysClose(handle)
-            }
-            if (restreamed > 0) {
-                Prefs.setReconnectStage(context, 1)
-                Log.e(TAG, "keys stalled for ${worst / 1000}s — re-subscribed $restreamed topic(s); " +
-                    "will rebuild the endpoint next pass if that did not take")
-            } else {
-                // Could not even re-subscribe — skip straight to the endpoint.
-                Prefs.setReconnectStage(context, 2)
-                Log.e(TAG, "keys stalled for ${worst / 1000}s and re-subscribing gave $restreamed — rebuilding the endpoint")
-                Endpoint.restart(context)
-            }
-        } else {
-            // Rung 2: the re-subscribe (stage 1) did not restore flow, or a prior
-            // rebuild (stage 2) did not either and the subject is likely away.
-            // Rebuild the endpoint — a fresh QUIC endpoint re-resolves the moved
-            // subject through the relay, which is what the force-stop did by hand.
-            Prefs.setReconnectStage(context, 2)
-            Log.e(TAG, "keys STILL stalled for ${worst / 1000}s after re-subscribing — rebuilding the endpoint")
-            Endpoint.restart(context)
-        }
+        // SINGLE RECOVERY RUNG: rebuild the endpoint. The old cheap first rung
+        // ("restream" — tear every topic handle down and re-subscribe) was
+        // removed: leakprobe (2026-11-26) showed it leaks ~173 KB per call — a
+        // torn-down p2panda session that is never reclaimed — and under p2panda
+        // 0.8.2 (#1612) its job is done by cross-session forwarding + broadcast()
+        // live-push without it. A wedged transport or a moved subject still needs
+        // a fresh QUIC endpoint to re-resolve through the relay (what a manual
+        // force-stop did by hand), so that remains, gated to one rebuild per
+        // MIN_BETWEEN_RESTARTS.
+        Log.e(TAG, "keys stalled for ${worst / 1000}s — rebuilding the endpoint")
+        Endpoint.restart(context)
     }
 
     private fun verifyChains(context: Context, keysToo: Boolean) {
