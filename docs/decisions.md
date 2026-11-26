@@ -2448,6 +2448,51 @@ seven and renumbered them**, which is how an open question stops being tracked.
 | — | **Is "nothing new will be sent" recognisable as *withdrawal*?** D4's question, reshaped: granularity is solved, semantics are not. Nobody has asked a person whether a withdrawal that recalls nothing counts as one | Not in §12; rights.md §12 has a route |
 | — | **Who operates the commons**, and does being a named, revocable peer actually change what an ethics committee thinks? That is the claim this design makes to that audience and it has never been tested on one | Not in §12; the gate on D5 |
 
+### D35 · Logs are pruned; a follower mirrors only a recent window
+
+**Decided 2026-11-26.** A fresh follower of a real-history publisher OOM-crashed:
+30 MB → 3.4 GB → native SIGABRT, because it synced the subject's ENTIRE segment
+log from genesis (~100 KB retained per op × all of history). The cause was not a
+buffer to patch — it was that diaswarm never pruned, while p2panda is *designed*
+assuming applications do ("applications usually prune their logs … we haven't
+observed long-growing logs", p2panda-sync api.rs).
+
+**Decision: adopt p2panda pruning. A follower holds and carries only a recent
+window of a subject's data, not its whole history.**
+
+**Why this is correct, not just expedient.**
+* **Following "from now" never needed the backlog.** The grant window is a
+  *decrypt* scope; the carry pulled *every* operation regardless. The key use
+  case is a family member's recent readings (~24h), not a mirror of their life.
+* **Reciprocity ([D30](decisions.md)) must not block the goal.** "If you read it
+  you carry it" is right, but carrying a *bounded recent* window still
+  contributes availability for what is live — whereas mirroring complete
+  histories made the reciprocity tax crash a follower before it saw anyone.
+* **Nothing of the subject's is lost.** The subject's own full history lives in
+  AAPS's database; the keys vault is the *sharing* layer. Pruning the shared log
+  bounds what *followers* mirror, not what the subject keeps.
+
+**Mechanism (native; no upstream change).**
+* Two logs, two policies. The **segment log** (`LOG_ID=0`, the glucose data, the
+  OOM) is pruned to a recent window; the **control log** (`CONTROL_LOG_ID=1`,
+  group/grants/epoch-keys, ~1 op/day) is kept intact — the follower needs it to
+  decrypt and it is not a memory problem.
+* The publisher sets a `PruneFlag` header extension on the first segment of each
+  new epoch (aligned with the existing daily `rotateIfDue`) and calls
+  `prune_entries_tx` to DELETE older segments from the shared vault. The flag
+  lets a follower validate the first kept op without its backlink
+  (`validate_prunable_backlink`); the deletion is what bounds the served range.
+* Verified from source: p2panda-sync sends `compare_logs(local, remote)` bounded
+  by what the sender holds, so a fresh carrier syncing a pruned publisher
+  receives only `N..tip`, not `0..tip`.
+
+**Still to build / decide (tracked):** the `KeysArgs` extension must carry the
+prune flag (it does not today); confirm the follower's net ingest takes the
+prunable-validation path; the retention window (current epoch ~24h vs two ~48h);
+and the interaction with revocation and re-admit ([D13](decisions.md) — a removed
+reader must stay locked out, and a re-admitted one must recover) — control-log
+territory, kept intact here, but must be checked before shipping.
+
 ### D33 · Nightscout compatibility is a data-model claim, not a connection
 
 **Settled 2026-09-16.** Asked directly — *"this is meant to be decentralised, so
