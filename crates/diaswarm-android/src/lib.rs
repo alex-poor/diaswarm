@@ -558,6 +558,42 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarry<'a>(
     }
 }
 
+/// Follow a subject holding only the last `keep_days` days of its segment log.
+///
+/// The follower-side window: it carries the control log now (keys + the epoch
+/// index) and, once that index has synced, windows the subject and carries only
+/// the recent slice of its segment log — so onboarding a long history does not
+/// OOM and the device stays lean. `keep_days` 0 carries everything, like
+/// [`Java_nz_diaswarm_jni_SwarmNative_keysCarry`]. Degrades to a full follow if the
+/// publisher emits no anchors. Returns 0, or negative. See
+/// `diaswarm_net::replicate::KeysReplicator::carry_windowed`.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarryWindowed<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    subject_hex: JString<'a>,
+    keep_days: jlong,
+) -> jlong {
+    if handle == 0 {
+        return -1;
+    }
+    let Ok(subject) = env.get_string(&subject_hex) else { return -2 };
+    let subject = String::from(subject).to_ascii_lowercase();
+    if verifying_key(&subject).is_none() {
+        return -2;
+    }
+    let pooled = unsafe { &*(handle as *const Pooled) };
+    let Some(replicator) = pooled.keys_replicator.as_ref() else { return -3 };
+    let keep = keep_days.clamp(0, u32::MAX as jlong) as u32;
+    // `carry_windowed` carries control now and spawns the window+segment carry onto
+    // this runtime; block_on returns once control is associated.
+    match pooled.runtime.block_on(replicator.carry_windowed(&subject, keep)) {
+        Ok(()) => 0,
+        Err(_) => -4,
+    }
+}
+
 
 /// This phone's id in the pool. Empty on a bad handle.
 #[no_mangle]

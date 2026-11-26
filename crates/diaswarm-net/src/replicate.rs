@@ -242,6 +242,82 @@ impl KeysReplicator {
         )
         .await
     }
+
+    /// Follow `subject` holding only the last `keep_days` days of its segment log.
+    ///
+    /// The orchestration the follower window needs, in one call. Carries the
+    /// CONTROL log now — keys, and the epoch index, which is never windowed — then,
+    /// in the BACKGROUND once that index has arrived, reads the floor with
+    /// [`wire::floor_for_epochs`](diaswarm_keys::wire::floor_for_epochs), windows
+    /// the subject ([`Replicator::window`]), and carries the SEGMENT log, so its
+    /// first sync session advertises the floored `Have` and pulls only the window.
+    ///
+    /// The background step is because the carry is fire-and-forget and the floor
+    /// cannot be known until the control log syncs: control first, segments after.
+    ///
+    /// `keep_days` 0 carries the segments in full (a windowed follow of "everything"
+    /// is just a follow). **SAFE AGAINST A PUBLISHER THAT EMITS NO ANCHORS:** if the
+    /// index never arrives within a short wait, the segment log is carried in full —
+    /// a windowed follow degrades to a normal follow rather than going dark.
+    pub async fn carry_windowed(&self, subject: &str, keep_days: u32) -> Result<()> {
+        let author = subject_key(subject)?;
+
+        // Control first: keys + the index, never windowed.
+        self.carry_logs(
+            crate::pool::control_topic(subject),
+            subject,
+            &[diaswarm_keys::wire::CONTROL_LOG_ID],
+        )
+        .await?;
+
+        if keep_days == 0 {
+            // No window — carry the segments now, in full.
+            return self
+                .carry_logs(
+                    crate::pool::subject_topic(subject),
+                    subject,
+                    &[diaswarm_keys::wire::LOG_ID],
+                )
+                .await;
+        }
+
+        // Windowed: wait for the index in the background, set the floor, then carry
+        // segments. Cloning the replicator shares the same sync, store and window.
+        let me = self.clone();
+        let subject = subject.to_string();
+        tokio::spawn(async move {
+            let mut prev = 0usize;
+            let mut floor = None;
+            // ~30s of patience for the control log to bring the index.
+            for _ in 0..60 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let anchors =
+                    diaswarm_keys::wire::anchors_from(&me.store, &author).await.unwrap_or_default();
+                // Settled: the index stopped growing, so the latest epoch is in.
+                if !anchors.is_empty() && anchors.len() == prev {
+                    floor = diaswarm_keys::wire::floor_for_epochs(&me.store, &author, keep_days)
+                        .await
+                        .ok()
+                        .flatten();
+                    break;
+                }
+                prev = anchors.len();
+            }
+            // Some(floor) → window the subject; None (no index arrived, or the
+            // window already spans the whole history) → carry in full.
+            if let Some(floor) = floor {
+                me.window(&author, floor);
+            }
+            let _ = me
+                .carry_logs(
+                    crate::pool::subject_topic(&subject),
+                    &subject,
+                    &[diaswarm_keys::wire::LOG_ID],
+                )
+                .await;
+        });
+        Ok(())
+    }
 }
 
 impl<A: Extensions + Send + Sync + 'static> Replicator<A> {

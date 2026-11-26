@@ -91,13 +91,13 @@ async fn a_follower_holds_only_its_windowed_days() {
     let (fe, fg) = follower.parts();
     let following = KeysReplicator::keys(follower_store.clone(), fe, fg).await.unwrap();
 
-    // 1) CONTROL first — brings the index (and keys), never windowed.
-    following
-        .carry_logs(pool::control_topic(&subject_hex), &subject_hex, &[CONTROL_LOG_ID])
-        .await
-        .unwrap();
+    // One call does the whole orchestration: control first (brings the index),
+    // then — in the background, once the index settles — read the floor, window
+    // the subject, and carry the segment log. This is what the app invokes.
+    following.carry_windowed(&subject_hex, KEEP_DAYS).await.unwrap();
 
-    // 2) Wait for the index, then read the floor from it.
+    // The index arrives on the control log and yields the expected floor (last
+    // KEEP_DAYS days start after seq 3; epochs sit at seqs 4,5).
     let mut anchors = Vec::new();
     for _ in 0..60 {
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -107,23 +107,13 @@ async fn a_follower_holds_only_its_windowed_days() {
         }
     }
     assert_eq!(anchors.len() as i64, DAYS, "the follower synced {} of {DAYS} anchors", anchors.len());
-    let floor = wire::floor_for_epochs(&follower_store, &author, KEEP_DAYS)
-        .await
-        .unwrap()
-        .expect("a window smaller than the history has a floor");
-    assert_eq!(floor, 3, "last {KEEP_DAYS} days start after seq 3 (epochs at seqs 4,5)");
+    assert_eq!(
+        wire::floor_for_epochs(&follower_store, &author, KEEP_DAYS).await.unwrap(),
+        Some(3),
+        "the index yields the floor the window carry will use"
+    );
 
-    // 3) Set the window BEFORE carrying segments, so the first segment session
-    //    advertises the floored Have.
-    following.window(&author, floor);
-
-    // 4) Carry the segment log, windowed.
-    following
-        .carry_logs(pool::subject_topic(&subject_hex), &subject_hex, &[LOG_ID])
-        .await
-        .unwrap();
-
-    // 5) The follower holds ONLY the window — not the whole six-day history.
+    // The follower holds ONLY the window — not the whole six-day history.
     let mut segments = 0u32;
     for _ in 0..60 {
         tokio::time::sleep(Duration::from_secs(1)).await;

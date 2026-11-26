@@ -504,6 +504,17 @@ object SwarmNative {
     external fun keysCarry(poolHandle: Long, subjectHex: String): Long
 
     /**
+     * Follow a subject holding only the last [keepDays] days of its segment log —
+     * the follower-side window. Carries the control log now (keys + the epoch
+     * index) and, once that index has synced, windows the subject and carries only
+     * the recent slice, so onboarding a long history does not OOM and the device
+     * stays lean. [keepDays] 0 carries everything, like [keysCarry]; degrades to a
+     * full follow if the publisher emits no anchors. 0 on success, negative on
+     * error.
+     */
+    external fun keysCarryWindowed(poolHandle: Long, subjectHex: String, keepDays: Long): Long
+
+    /**
      * Carry every keys log this phone should hold: its own, and each it
      * follows. Returns how many, or negative.
      *
