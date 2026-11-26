@@ -84,6 +84,18 @@ object Prefs {
     fun carryingAt(c: Context): Long = p(c).getLong("carrying_at", 0L)
 
     /**
+     * How many holders are currently heard serving a subject's keys vault,
+     * persisted each sync pass so the UI can tell "catching up — a holder is
+     * downloading their history" from "no source yet — they may be offline"
+     * during the wait before the first reading opens. -1 = not measured yet
+     * (no pass has run with a live endpoint). See [SyncWorker] and WaitingCard.
+     */
+    fun keysHolders(c: Context, subject: String): Int = p(c).getInt("keys_holders_$subject", -1)
+
+    fun setKeysHolders(c: Context, subject: String, n: Int) =
+        p(c).edit().putInt("keys_holders_$subject", n).apply()
+
+    /**
      * What to call a subject, as learned from their invite at pairing.
      *
      * **LOCAL, AND EDITABLE.** The handle arrives in the invite, which anyone

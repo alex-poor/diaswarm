@@ -129,6 +129,26 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                 Log.i(TAG, if (carried < 0) "keys carry unavailable ($carried)" else "keys carrying $carried log(s)")
                 // ON SCREEN, NOT ONLY IN THE LOG. See [Prefs.carrying].
                 if (carried >= 0) Prefs.setCarrying(applicationContext, carried.toInt())
+
+                // **SAY WHETHER ANYONE IS SERVING EACH SUBJECT, EVERY PASS —
+                // NOT ONLY ONCE A READING EXISTS.** watchForAStall computes
+                // holders, but it bails before it gets there when there is no
+                // reading yet ([Follower.keysNewestAgeMs] is null), which is
+                // exactly the fresh-follow wait a person stares at. Persist the
+                // keys-holder count here so WaitingCard can distinguish "a
+                // holder is serving them, this is catching up" from "no source
+                // yet, they may be offline" instead of one vague line.
+                for (subject in Follower.following(applicationContext)) {
+                    if (subject.keys.isEmpty()) continue
+                    val heard = try {
+                        SwarmNative.keysHoldersHeard(Endpoint.handle, subject.keys)
+                            .lines().count { it.isNotBlank() }
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "holders heard threw: $e"); -1
+                    }
+                    if (heard >= 0) Prefs.setKeysHolders(applicationContext, subject.key, heard)
+                }
+
                 verifyChains(applicationContext, keysToo = carried > 0)
                 if (carried > 0) watchForAStall(applicationContext)
 
