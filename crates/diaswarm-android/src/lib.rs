@@ -558,6 +558,14 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarry<'a>(
     }
 }
 
+// **THE FOLLOWER WINDOW RIDES `keysCarryAll`, NOT A PER-SUBJECT CALL.** An
+// earlier draft exposed a `keysCarryWindowed(handle, subject, keepDays)` here,
+// one subject at a time. But a follower OOMs onboarding the STRANGERS it carries
+// for reciprocity as readily as the people it follows — and those strangers come
+// in through `keysCarryAll`/`carry_share`, never named one by one. So the window
+// is a `keep_days` argument to `keysCarryAll`, applied uniformly to every subject
+// a pass carries (own, follows, adopted strangers). One lever, one mechanism; the
+// net-side `carry_windowed` it calls per subject stays, exercised by `keys_window`.
 
 /// This phone's id in the pool. Empty on a bad handle.
 #[no_mangle]
@@ -2782,6 +2790,7 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarryAll<'a>(
     store_path: JString<'a>,
     identity_path: JString<'a>,
     max_adopt: jint,
+    keep_days: jint,
 ) -> jlong {
     if pool == 0 {
         return -1;
@@ -2814,6 +2823,11 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysCarryAll<'a>(
         max_adopt.max(0) as usize,
         // A phone is told whom to carry by pairing, not by a flag.
         &[],
+        // "Hold last N days", the follower-side window (D35). 0 = full carry,
+        // the behaviour before the pref existed; a positive value bounds every
+        // carried subject to that many days. The decision of HOW MANY is the
+        // user's and lives in the app's settings — this side only forwards it.
+        keep_days.max(0) as u32,
     )) {
         Ok(share) => share.carrying as jlong,
         Err(_) => -4,

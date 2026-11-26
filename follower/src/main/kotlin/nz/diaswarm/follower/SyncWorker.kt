@@ -124,7 +124,11 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                     // The same budget this pass gives `swarmTick`, and for the
                     // reason recorded there: carrying other people's sealed
                     // records is what this app is named after.
-                    2
+                    2,
+                    // The follower window: hold only the last N days of every
+                    // subject (0 = everything). Set in Settings; this bounds the
+                    // ingest so onboarding a long history cannot swamp the phone.
+                    Prefs.keepDays(applicationContext)
                 )
                 Log.i(TAG, if (carried < 0) "keys carry unavailable ($carried)" else "keys carrying $carried log(s)")
                 // ON SCREEN, NOT ONLY IN THE LOG. See [Prefs.carrying].

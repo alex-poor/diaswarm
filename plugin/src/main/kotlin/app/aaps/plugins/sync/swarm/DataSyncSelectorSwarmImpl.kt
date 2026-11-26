@@ -1053,7 +1053,11 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
             SwarmPaths.store(context).absolutePath,
             SwarmPaths.identity(context).absolutePath,
             // The same budget this pass gives the pool above.
-            2
+            2,
+            // keepDays = 0: the publisher is the SOURCE of its own segment log and
+            // holds it whole (rotation/prune governs its length, not a window). The
+            // follower window is Ayni's lever, set in that app; AAPS never windows.
+            0
         )
         // **SAY WHAT IT DID, NOT ONLY WHEN IT FAILED.** The first version of
         // this logged nothing on success, so a pass that carried nothing and a

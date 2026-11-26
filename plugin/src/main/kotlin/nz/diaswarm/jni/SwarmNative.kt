@@ -535,8 +535,21 @@ object SwarmNative {
      * that arrives with an update. A phone that adopts nothing still announces
      * and serves what it does hold, so passing 0 does not take it out of the
      * pool.
+     *
+     * **[keepDays] IS THE FOLLOWER WINDOW — "hold the last N days".** 0 is a
+     * full carrier (every subject's whole history); a positive value bounds
+     * every carried subject to that many days. The publisher passes 0: it is
+     * the SOURCE of its own segment log and holds it whole (its length is
+     * governed by rotation/prune, not by this). The window is a follower's
+     * lever for not OOMing on somebody else's long history.
      */
-    external fun keysCarryAll(poolHandle: Long, storePath: String, identityPath: String, maxAdopt: Int): Long
+    external fun keysCarryAll(
+        poolHandle: Long,
+        storePath: String,
+        identityPath: String,
+        maxAdopt: Int,
+        keepDays: Int
+    ): Long
 
     /**
      * Take the handover queue, keep what verifies, and say what may be granted.

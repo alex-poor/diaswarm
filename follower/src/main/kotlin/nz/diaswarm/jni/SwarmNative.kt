@@ -504,15 +504,6 @@ object SwarmNative {
     external fun keysCarry(poolHandle: Long, subjectHex: String): Long
 
     /**
-     * Carry every keys log this phone should hold: its own, and each it
-     * follows. Returns how many, or negative.
-     *
-     * **OUR OWN IS THE PUBLISHING HALF** — a subject that does not announce its
-     * own bucket is one nobody can replicate from. A follow with no keys
-     * identity is skipped rather than failed: somebody paired before the field
-     * existed, or a subject with no keys vault, and neither is an error.
-     */
-    /**
      * Carry every keys log this phone should hold: its own, each it follows,
      * and up to [maxAdopt] strangers heard in this phone's share of the pool.
      *
@@ -522,8 +513,23 @@ object SwarmNative {
      * that arrives with an update. A phone that adopts nothing still announces
      * and serves what it does hold, so passing 0 does not take it out of the
      * pool.
+     *
+     * **[keepDays] IS THE FOLLOWER WINDOW — "hold the last N days".** 0 is a
+     * full carrier (every subject's whole history, the behaviour before the
+     * pref existed); a positive value bounds EVERY carried subject — own,
+     * follows, and adopted strangers — to that many days, so onboarding a long
+     * history does not OOM. The window applies to the strangers carried for
+     * reciprocity too, which is where a fresh phone's ingest actually blows up.
+     * How many days is the person's choice, from [Prefs]; this call only passes
+     * it down.
      */
-    external fun keysCarryAll(poolHandle: Long, storePath: String, identityPath: String, maxAdopt: Int): Long
+    external fun keysCarryAll(
+        poolHandle: Long,
+        storePath: String,
+        identityPath: String,
+        maxAdopt: Int,
+        keepDays: Int
+    ): Long
 
     /**
      * Take the handover queue, keep what verifies, and say what may be granted.
