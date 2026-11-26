@@ -2472,26 +2472,32 @@ window of a subject's data, not its whole history.**
   AAPS's database; the keys vault is the *sharing* layer. Pruning the shared log
   bounds what *followers* mirror, not what the subject keeps.
 
-**Mechanism (native; no upstream change).**
+**Mechanism (native; no upstream change; smaller than expected).**
 * Two logs, two policies. The **segment log** (`LOG_ID=0`, the glucose data, the
   OOM) is pruned to a recent window; the **control log** (`CONTROL_LOG_ID=1`,
   group/grants/epoch-keys, ~1 op/day) is kept intact — the follower needs it to
   decrypt and it is not a memory problem.
-* The publisher sets a `PruneFlag` header extension on the first segment of each
-  new epoch (aligned with the existing daily `rotateIfDue`) and calls
-  `prune_entries_tx` to DELETE older segments from the shared vault. The flag
-  lets a follower validate the first kept op without its backlink
-  (`validate_prunable_backlink`); the deletion is what bounds the served range.
-* Verified from source: p2panda-sync sends `compare_logs(local, remote)` bounded
-  by what the sender holds, so a fresh carrier syncing a pruned publisher
-  receives only `N..tip`, not `0..tip`.
+* **The whole lever is one call: the publisher runs `prune_entries_tx` on the
+  segment log** (deleting older entries from the shared vault) at each daily
+  epoch rotation. p2panda-net serves only what it holds, so a fresh carrier then
+  syncs just the recent window.
+* **No `PruneFlag` or follower change is required** in this stack — proven by
+  `ingestprobe 25 1 500` (branch fix/ingest-oom): a publisher that sealed 36 000
+  ops then pruned to the last 500 is synced by a fresh carrier to exactly 500 ops
+  at a flat 50 MB, vs 411 MB-and-climbing unpruned. p2panda-net does not enforce
+  backlink validation, so the carrier accepts ops starting mid-log (seq 35 500)
+  with no chain to genesis. We may still SET the `PruneFlag` as belt-and-suspenders
+  (it would matter only if a backlink-validating consumer, e.g. p2panda-stream,
+  is ever added), but it is optional, not load-bearing.
 
-**Still to build / decide (tracked):** the `KeysArgs` extension must carry the
-prune flag (it does not today); confirm the follower's net ingest takes the
-prunable-validation path; the retention window (current epoch ~24h vs two ~48h);
-and the interaction with revocation and re-admit ([D13](decisions.md) — a removed
-reader must stay locked out, and a re-admitted one must recover) — control-log
-territory, kept intact here, but must be checked before shipping.
+**Still to build / decide (tracked):** wire the publisher prune into the plugin
+at `rotateIfDue` (one `prune_entries_tx` per rotation); the retention window
+(current epoch ~24h vs two ~48h); confirm the follower's windowed READ
+(`follow::read`/`wire::segments`) walks a log that starts mid-seq correctly (ops
+are present, but untested); and the interaction with revocation and re-admit
+([D13](decisions.md) — a removed reader must stay locked out, a re-admitted one
+must recover), which is control-log territory, kept intact here, but must be
+checked before shipping.
 
 ### D33 · Nightscout compatibility is a data-model claim, not a connection
 

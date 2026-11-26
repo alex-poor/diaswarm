@@ -23,7 +23,7 @@ use diaswarm_net::replicate::KeysReplicator;
 use diaswarm_net::swarm::{network_id, Swarm};
 use p2panda_core::{Hash, SigningKey, VerifyingKey};
 use p2panda_store::logs::LogStore;
-use p2panda_store::SqliteStore;
+use p2panda_store::{tx, SqliteStore};
 
 const OFFSET: i64 = 12 * 3_600_000;
 const RSS_CAP_KB: u64 = 8 * 1024 * 1024; // 8 GiB — stop before the host OOMs.
@@ -80,6 +80,9 @@ async fn main() -> Result<()> {
     // readings packed per segment/op. Lower = more OPERATIONS for the same data,
     // which is what the carrier's sync count scales on. 1 = one op per reading.
     let per_flush: usize = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(70);
+    // keep: if >0, the publisher PRUNES its segment log to the last `keep` ops
+    // before the carrier syncs — the D35 fix, minimal form (delete old, no flag).
+    let keep: u32 = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(0);
     let net = network_id("ingestprobe-inproc");
     let rng = Rng::default();
 
@@ -103,8 +106,22 @@ async fn main() -> Result<()> {
             segs += 1;
         }
     }
-    let total = held(&subject_store, &author).await;
+    let mut total = held(&subject_store, &author).await;
     eprintln!("sealed {segs} segments; subject log holds {total} ops; rss={} MB", rss_kb() / 1024);
+
+    // D35 PRUNE: delete everything but the last `keep` ops from the publisher's
+    // shared segment log, so the sync has only a recent window to serve.
+    if keep > 0 && total > keep {
+        let until: u32 = total - keep;
+        let pruned: u64 = tx!(subject_store, {
+            <SqliteStore as LogStore<p2panda_core::AnyOperation, VerifyingKey, u32, u32, Hash>>::prune_entries_tx(
+                &subject_store, &author, &LOG_ID, &until,
+            )
+            .await?
+        });
+        total = held(&subject_store, &author).await;
+        eprintln!("pruned {pruned} ops (until seq {until}); publisher now serves {total} ops; rss={} MB", rss_kb() / 1024);
+    }
 
     // The carrier under test: a fresh phone/Ayni joining and syncing the lot.
     let carrier_store = disk_store("carrierdb").await;
