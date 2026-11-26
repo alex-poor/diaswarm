@@ -140,11 +140,73 @@ pub async fn open_bounded_store(url: &str) -> Result<SqliteStore, p2panda_store:
     // connections at 2 MiB each is 32 MiB per store, which is a number rather
     // than a slope.
     let pool = sqlx::sqlite::SqlitePoolOptions::new().connect_with(options).await?;
+    // **ADOPT UPSTREAM'S CHECKSUM FOR A FORK-ERA MIGRATION, BEFORE MIGRATING.**
+    // A vault first opened by the vendored-fork build (p2panda 0.7.x) must still
+    // open here; one migration's bytes changed on the way upstream and sqlx would
+    // otherwise refuse the whole vault. Must run before the migrator below.
+    reconcile_fork_migration_checksums(&pool).await?;
     // **`from_pool` DOES NOT MIGRATE.** The builder ran migrations for us;
     // taking the pool back means taking that job too, and a store without its
     // tables fails later and less clearly.
     p2panda_store::sqlite::run_pending_migrations(&pool).await?;
     Ok(SqliteStore::from_pool(pool))
+}
+
+/// **A VAULT FROM THE FORK-ERA BUILD MUST STILL OPEN UNDER 0.8.2.** A keys vault
+/// first migrated by the vendored-fork p2panda (0.7.x) recorded `create ordering`
+/// (version 20250928132846) with a checksum upstream 0.8.2 later changed:
+/// `orderer_ready`'s uniqueness went from a `UNIQUE` table constraint to a named
+/// index, so the *bytes* of the migration differ while the resulting schema is
+/// equivalent. sqlx's migrator checksums every already-applied migration and
+/// rejects the entire open with `VersionMismatch` on any difference — so without
+/// this the live publisher cannot open its own vault after the 0.8.2 upgrade
+/// (confirmed against the loop vault, 2026-11-26: `Migrate(VersionMismatch(
+/// 20250928132846))`, and the open succeeding once the checksum is reconciled).
+///
+/// Rewrite that one recorded checksum to the value the embedded (`=0.8.2`)
+/// migrator expects, but **only** when the row still carries the exact fork-era
+/// value. So it is a no-op on a fresh vault (no table yet) and on an
+/// already-migrated one, and it never masks a checksum we did not foresee: any
+/// other mismatch still surfaces as `VersionMismatch`.
+async fn reconcile_fork_migration_checksums(
+    pool: &sqlx::SqlitePool,
+) -> Result<(), sqlx::Error> {
+    /// The fork-era build's recorded checksum for `create ordering`, uppercase
+    /// hex as SQLite's `hex()` renders it.
+    const FORK_CREATE_ORDERING: &str = "39B1B06179F49D6424EDB6A21DC02B32C2850F3C6908D5EF5F9700702FB16DD146BFA04808B6AC62F9B45DFDC745DEE1";
+    const VERSION: i64 = 20250928132846;
+
+    // A fresh vault has no `_sqlx_migrations` table yet; nothing to reconcile.
+    let has_table: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master \
+         WHERE type = 'table' AND name = '_sqlx_migrations')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if has_table == 0 {
+        return Ok(());
+    }
+
+    // The checksum the embedded 0.8.2 migrator expects for this version — derived,
+    // not hard-coded, so a future p2panda bump re-derives rather than lies.
+    let Some(expected) = p2panda_store::sqlite::migrations()
+        .iter()
+        .find(|m| m.version == VERSION)
+        .map(|m| m.checksum.to_vec())
+    else {
+        return Ok(());
+    };
+
+    sqlx::query(
+        "UPDATE _sqlx_migrations SET checksum = ?1 \
+         WHERE version = ?2 AND upper(hex(checksum)) = ?3",
+    )
+    .bind(expected)
+    .bind(VERSION)
+    .bind(FORK_CREATE_ORDERING)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// The reader's half of a pairing, as it travels in an invite.
