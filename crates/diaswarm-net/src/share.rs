@@ -72,6 +72,17 @@ pub struct Share {
 /// Bounded per pass because the first caller was a phone in a worker with a
 /// deadline: a peer joining a large pool catches up over passes rather than
 /// pulling its whole share at once.
+///
+/// **`keep_days` BOUNDS WHAT EACH SUBJECT COSTS TO HOLD, NOT WHOM.** Zero is a
+/// full carrier — the desktop peer and anyone who wants durable availability
+/// pass it, and it is the behaviour this function has always had. A positive
+/// value routes every carried subject — own, follows, and adopted strangers
+/// alike — through [`KeysReplicator::carry_windowed`], so the peer holds only
+/// the last `keep_days` days of each. That is the lever the on-device OOM
+/// proved publisher-pruning cannot be: a retained-history carrier still serves
+/// the whole log, so the fix is to bound what the *follower* requests — and it
+/// applies to the strangers carried for reciprocity too, which is where a
+/// fresh phone's ingest actually blows up.
 pub async fn carry_share(
     swarm: &Swarm,
     replicator: &KeysReplicator,
@@ -79,6 +90,7 @@ pub async fn carry_share(
     own_subject: &str,
     max_adopt: usize,
     also: &[String],
+    keep_days: u32,
 ) -> Result<Share> {
     // `depth`/`members` are gone with the legacy bucket topic below — the new
     // `subject_topic` rendezvous takes no depth (D31), which was the point.
@@ -110,6 +122,19 @@ pub async fn carry_share(
 
     let before = replicator.carried().len();
     for subject in &wanted {
+        // **A WINDOWED PEER TAKES THE SAME SUBJECTS, HOLDING LESS OF EACH.**
+        // `carry_windowed` does its own control-first/segments-after ordering
+        // (control brings the epoch index, which the floor is read from, so the
+        // segment log must not be carried before the floor is set), and it
+        // degrades to a full carry when the publisher emits no index — so a
+        // positive `keep_days` replaces BOTH carries below rather than adding to
+        // them. Carrying the segments here as well would hand the follower the
+        // whole history on the subject topic before the window ever took effect.
+        if keep_days > 0 {
+            let _ = replicator.carry_windowed(subject, keep_days).await;
+            continue;
+        }
+
         // **THE RENDEZVOUS, AND IT HAS NO PARAMETERS.** A subject you were
         // granted is known by key; finding it is not a sharding problem. See
         // [D31](../../docs/decisions.md) and `pool::subject_topic`.

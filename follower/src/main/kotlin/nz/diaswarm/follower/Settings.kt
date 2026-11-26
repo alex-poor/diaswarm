@@ -47,6 +47,8 @@ fun SettingsScreen(
     onFixDoze: () -> Unit,
     onBand: () -> Unit,
     bandLabel: String,
+    onKeepDays: () -> Unit,
+    keepDaysLabel: String,
     mmol: Boolean,
     alertOn: (Alerts.Level) -> Boolean,
     alertSubtitle: (Alerts.Level) -> String,
@@ -179,6 +181,17 @@ fun SettingsScreen(
                     RowDivider()
                     ValueRow("Colour readings against", "Your lines, not theirs", bandLabel,
                         leading = Icons.Outlined.Palette) { onBand() }
+                    RowDivider()
+                    // "Hold history": the follower window. Everything by default;
+                    // a shorter window bounds the ingest so onboarding a subject
+                    // with months of history cannot swamp the phone. The subtitle
+                    // says what it trades, because dropping old days is not free.
+                    ValueRow(
+                        "Hold history",
+                        "Older days are dropped to keep this phone lean; raise it to re-fetch them.",
+                        keepDaysLabel,
+                        leading = Icons.Outlined.History
+                    ) { onKeepDays() }
                 }
 
                 // The experimental vault options, folded away. A phone reading

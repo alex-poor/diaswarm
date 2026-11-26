@@ -300,6 +300,11 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
             onFixDoze = { StayAwake.ask(context) },
             onBand = { Prefs.cycleBand(context); tick++ },
             bandLabel = Prefs.bandLabel(context),
+            // Applied on the next sync pass, which reads the pref — no restart.
+            // Raising the window re-fetches dropped days; lowering it lets the
+            // next carry advertise a higher floor so old ops fall out of the window.
+            onKeepDays = { Prefs.cycleKeepDays(context); Sync.now(context); tick++ },
+            keepDaysLabel = Prefs.keepDaysLabel(context),
             mmol = Prefs.mmol(context),
             alertOn = { Alerts.enabled(context, it) },
             // Unit-correct, so the thresholds read in whatever the units toggle

@@ -23,6 +23,7 @@ object Prefs {
     private const val KEYS_ONLY = "keys_only"
     private const val STAY_REACHABLE = "stay_reachable"
     private const val LAST_RESTART = "last_endpoint_restart"
+    private const val KEEP_DAYS = "keep_days"
 
     private fun p(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -226,6 +227,50 @@ object Prefs {
 
     fun mmol(c: Context): Boolean = p(c).getBoolean(UNITS_MMOL, true)
     fun setMmol(c: Context, v: Boolean) = p(c).edit().putBoolean(UNITS_MMOL, v).apply()
+
+    /**
+     * How many days of each subject's history this phone holds — the follower
+     * window.
+     *
+     * **IT BOUNDS WHAT THIS PHONE *REQUESTS*, WHICH IS THE ONLY LEVER THAT
+     * WORKS.** Onboarding a subject who has looped for months pulls their whole
+     * segment log at once, and a long enough log OOMs the ingest before steady
+     * state — the crash is a *follower* resource problem, and a publisher that
+     * prunes cannot fix it while any other carrier still serves the full history.
+     * A window tells sync to advertise a floored head and fetch only the recent
+     * slice, so the ingest is bounded by choice. It applies to the strangers this
+     * phone carries for reciprocity too, which is where the ingest actually blows
+     * up — a stranger's history is unbounded and unchosen.
+     *
+     * **0 = EVERYTHING, AND IT IS THE DEFAULT**, so an existing follower that
+     * updates keeps every day it already holds and drops nothing without being
+     * asked. Turning on a window is a deliberate choice to trade old history for
+     * a phone that cannot be swamped by it; the data is still on the publisher
+     * and other carriers, and raising the window later re-fetches it.
+     *
+     * Needs a publisher emitting the epoch index (anchors) to map days to a
+     * floor; against one that does not, the carry degrades to a full follow
+     * rather than going dark. See `KeysReplicator::carry_windowed`.
+     */
+    fun keepDays(c: Context): Int = p(c).getInt(KEEP_DAYS, 0).coerceAtLeast(0)
+    fun setKeepDays(c: Context, v: Int) = p(c).edit().putInt(KEEP_DAYS, v.coerceAtLeast(0)).apply()
+
+    /** The windows offered, in days. 0 is "everything" and leads, as the default. */
+    val KEEP_DAYS_OPTIONS: List<Int> = listOf(0, 1, 3, 7, 14, 30, 90)
+
+    /** Move to the next window, wrapping. The only way this is set. */
+    fun cycleKeepDays(c: Context) {
+        val now = keepDays(c)
+        val i = KEEP_DAYS_OPTIONS.indexOfFirst { it == now }.let { if (it < 0) 0 else it }
+        setKeepDays(c, KEEP_DAYS_OPTIONS[(i + 1).mod(KEEP_DAYS_OPTIONS.size)])
+    }
+
+    /** How the current window reads on screen. */
+    fun keepDaysLabel(c: Context): String = when (val d = keepDays(c)) {
+        0 -> "Everything"
+        1 -> "1 day"
+        else -> "$d days"
+    }
 
     /**
      * The last alert level raised for a subject, and when — the dedup that keeps

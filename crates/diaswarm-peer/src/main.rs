@@ -873,7 +873,10 @@ async fn cmd_demo(
     // eventually, on the next pass — but "the reviewer's first grant is the one
     // that takes a minute to land" is exactly the impression this command
     // exists to avoid.
-    let _ = diaswarm_net::share::carry_share(swarm, replicator, dir, &keys_subject, adopt, carry)
+    // 0: a desktop peer is the durable carrier — it holds full history on
+    // purpose (it is exactly the retained-history carrier a windowed follower
+    // leans on), so it never windows.
+    let _ = diaswarm_net::share::carry_share(swarm, replicator, dir, &keys_subject, adopt, carry, 0)
         .await;
 
     for invite in grants {
@@ -985,7 +988,7 @@ async fn cmd_demo(
 
         let _ = swarm.tick().await;
         let _ =
-            diaswarm_net::share::carry_share(swarm, replicator, dir, &keys_subject, adopt, carry)
+            diaswarm_net::share::carry_share(swarm, replicator, dir, &keys_subject, adopt, carry, 0)
                 .await;
         tokio::time::sleep(Duration::from_secs(every.max(5))).await;
     }
@@ -1148,7 +1151,7 @@ async fn main() -> Result<()> {
     loop {
         let tick = swarm.tick().await;
         let share =
-            diaswarm_net::share::carry_share(&swarm, &replicator, &dir, &own, args.adopt, &args.carry)
+            diaswarm_net::share::carry_share(&swarm, &replicator, &dir, &own, args.adopt, &args.carry, 0)
                 .await;
         let bytes = disk_bytes(&dir);
         let stored = held(&store, &replicator.carried()).await;
