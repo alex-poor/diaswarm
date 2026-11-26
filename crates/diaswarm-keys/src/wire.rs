@@ -202,6 +202,54 @@ pub async fn segments_tail(
     collect(entries)
 }
 
+/// Prune the segment log down to its most recent `keep` operations (D35).
+///
+/// **THIS IS HOW A NEW FOLLOWER STOPS HAVING TO MIRROR A WHOLE HISTORY.** A fresh
+/// follower syncs every operation a subject holds; against a real-history subject
+/// that reached ~3.4 GB and crashed the app with a native OOM. p2panda is built
+/// assuming applications prune, and we never did. Deleting older segments here —
+/// from the SHARED vault, which is not where the subject's own records live (those
+/// are in AAPS) — bounds what any fresh follower syncs to a recent window, because
+/// a peer only serves what it still holds.
+///
+/// By count, because the store prunes by sequence number and segments are
+/// contiguous from zero; the caller picks `keep` to cover the retention window it
+/// wants. Only [`LOG_ID`] (segments) is touched — never [`CONTROL_LOG_ID`], whose
+/// grants and epoch keys a follower needs to open anything and which is tiny.
+/// Returns how many operations were pruned.
+pub async fn prune_segments(
+    store: &SqliteStore,
+    author: &VerifyingKey,
+    keep: u64,
+) -> Result<u64, Error> {
+    let size = <SqliteStore as LogStore<
+        AnyOperation,
+        VerifyingKey,
+        LogId,
+        SeqNum,
+        Hash,
+    >>::get_log_size(store, author, &LOG_ID, None, None)
+    .await?;
+    let count = size.map(|(ops, _bytes)| ops as u64).unwrap_or(0);
+    if count <= keep {
+        return Ok(0);
+    }
+    // Segments are seq 0..count-1, so keeping the last `keep` means pruning
+    // everything before seq (count - keep) — proven by `ingestprobe`.
+    let until = (count - keep) as SeqNum;
+    let pruned = tx!(store, {
+        <SqliteStore as LogStore<
+            AnyOperation,
+            VerifyingKey,
+            LogId,
+            SeqNum,
+            Hash,
+        >>::prune_entries_tx(store, author, &LOG_ID, &until)
+        .await?
+    });
+    Ok(pruned)
+}
+
 /// What [`segments_covering`] was last asked, so the readers that ask it four
 /// times a refresh pay once.
 #[derive(PartialEq, Eq)]
