@@ -24,12 +24,12 @@
 use std::time::Duration;
 
 use diaswarm_core::{EPOCH_MS, Record};
-use diaswarm_keys::wire::{self, KeysOperation, LOG_ID};
+use diaswarm_keys::wire::{self, LOG_ID};
 use diaswarm_keys::Vault;
 use diaswarm_net::pool;
 use diaswarm_net::replicate::KeysReplicator;
 use diaswarm_net::swarm::{network_id, Swarm};
-use p2panda_core::{Hash, SigningKey, VerifyingKey};
+use p2panda_core::{AnyOperation, Hash, SigningKey, VerifyingKey};
 use p2panda_encryption::Rng;
 use p2panda_store::logs::LogStore;
 use p2panda_store::{SqliteStore, SqliteStoreBuilder};
@@ -55,7 +55,7 @@ fn day(epoch: i64, mgdl: f64) -> Vec<Record> {
 }
 
 async fn segments_held(store: &SqliteStore, author: &VerifyingKey) -> u32 {
-    let size = <SqliteStore as LogStore<KeysOperation, VerifyingKey, u32, u32, Hash>>::get_log_size(
+    let size = <SqliteStore as LogStore<AnyOperation, VerifyingKey, u32, u32, Hash>>::get_log_size(
         store, author, &LOG_ID, None, None,
     )
     .await
