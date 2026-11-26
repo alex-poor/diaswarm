@@ -37,9 +37,10 @@ diaswarm-net = { path = "../diaswarm-net" }
 diaswarm-keys = { path = "../diaswarm-keys" }
 # For `Record`, which is what a read hands back and an export writes out.
 diaswarm-core = { path = "../diaswarm-core" }
-p2panda-core = "=0.7.1"
+# p2panda 0.8.2 (#1612 rewrite), matching diaswarm-{net,keys}.
+p2panda-core = "=0.8.2"
 # For asking the store what it actually holds, rather than trusting a counter.
-p2panda-store = { version = "=0.7.1", features = ["macros"] }
+p2panda-store = { version = "=0.8.2", features = ["macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 anyhow = "1"
 # ARGUMENT PARSING IS NOT A THING TO HAND-ROLL. The first version of this had
@@ -67,7 +68,5 @@ strip = true
 lto = true
 codegen-units = 1
 
-# Leak-fix fork of p2panda-sync 0.7.1 (session-channel reaping). Only this one
-# dep is patched so a carrier RSS run isolates the fix vs the stock-deps baseline.
-[patch.crates-io]
-p2panda-sync = { path = "../../vendor/p2panda-sync" }
+# The vendored p2panda-sync leak-fix fork is GONE — the #1612 rewrite deletes
+# the manager/ module it patched, so no [patch] remains.

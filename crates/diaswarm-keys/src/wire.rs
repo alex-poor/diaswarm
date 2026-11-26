@@ -20,7 +20,8 @@
 //! least 4 MB. What was missing was whether the envelope itself costs anything
 //! once a vault holds a lot of them, and that is what this module lets us ask.
 
-use p2panda_core::{Body, Hash, Header, SigningKey, VerifyingKey};
+use futures_util::StreamExt;
+use p2panda_core::{AnyOperation, Body, Hash, Header, SigningKey, VerifyingKey};
 use p2panda_encryption::crypto::xchacha20::XAeadNonce;
 use p2panda_encryption::data_scheme::GroupSecretId;
 use p2panda_store::logs::LogStore;
@@ -137,7 +138,7 @@ pub async fn publish(
     // a forked log, which is not a recoverable state.
     let operation = tx!(store, {
         let (seq_num, backlink) = <SqliteStore as LogStore<
-            KeysOperation,
+            AnyOperation,
             VerifyingKey,
             LogId,
             SeqNum,
@@ -153,7 +154,10 @@ pub async fn publish(
             .body(&payload)
             .build(signing_key, KeysArgs::Segment(args));
         let operation = KeysOperation::from_parts(header, Some(Body::from_bytes(payload)));
-        store.insert_operation(&operation.hash, &operation, &LOG_ID).await?;
+        // MIGRATION (#1612): `insert_operation` -> `insert_operation_tx`. The
+        // write side still takes a TYPED `Operation<E>` (only the read side went
+        // untyped to `AnyOperation`), so the operation is passed as-is.
+        store.insert_operation_tx(&operation.hash, &operation, &LOG_ID).await?;
         operation
     });
     Ok(operation)
@@ -183,7 +187,7 @@ pub async fn segments_tail(
     count: u64,
 ) -> Result<Vec<Segment>, Error> {
     let heights = <SqliteStore as LogStore<
-        KeysOperation,
+        AnyOperation,
         VerifyingKey,
         LogId,
         SeqNum,
@@ -194,14 +198,7 @@ pub async fn segments_tail(
     let after = (tip as u64).saturating_sub(count.saturating_sub(1));
     let after = if after == 0 { None } else { Some((after - 1) as SeqNum) };
 
-    let entries = <SqliteStore as LogStore<
-        KeysOperation,
-        VerifyingKey,
-        LogId,
-        SeqNum,
-        Hash,
-    >>::get_log_entries(store, author, &LOG_ID, after, None)
-    .await?;
+    let entries = read_ops(store, author, &LOG_ID, after, None).await?;
     collect(entries)
 }
 
@@ -339,7 +336,7 @@ pub async fn segments_covering(
     let chunk = chunk.max(1);
 
     let heights = <SqliteStore as LogStore<
-        KeysOperation,
+        AnyOperation,
         VerifyingKey,
         LogId,
         SeqNum,
@@ -387,14 +384,7 @@ pub async fn segments_covering(
     loop {
         let lo = hi.saturating_sub(chunk.saturating_sub(1));
         let after = if lo == 0 { None } else { Some((lo - 1) as SeqNum) };
-        let entries = <SqliteStore as LogStore<
-            KeysOperation,
-            VerifyingKey,
-            LogId,
-            SeqNum,
-            Hash,
-        >>::get_log_entries(store, author, &LOG_ID, after, Some(hi as SeqNum))
-        .await?;
+        let entries = read_ops(store, author, &LOG_ID, after, Some(hi as SeqNum)).await?;
         let mut batch = collect(entries)?;
         batch.append(&mut collected);
         collected = batch;
@@ -441,14 +431,7 @@ pub async fn segments_from(
     // for read-then-append; wrapping a plain read in one exhausts the pool and
     // the symptom is `PoolTimedOut`, which reads like a hung database rather
     // than a macro used where it does not belong.
-    let entries = <SqliteStore as LogStore<
-        KeysOperation,
-        VerifyingKey,
-        LogId,
-        SeqNum,
-        Hash,
-    >>::get_log_entries(store, author, &LOG_ID, None, None)
-    .await?;
+    let entries = read_ops(store, author, &LOG_ID, None, None).await?;
     Ok(collect(entries)?.into_iter().filter(|s| s.epoch >= from_epoch).collect())
 }
 
@@ -466,7 +449,7 @@ pub async fn segments_from(
 /// heights come from one indexed query.
 pub async fn log_tips(store: &SqliteStore, author: &VerifyingKey) -> Result<(SeqNum, SeqNum), Error> {
     let heights = <SqliteStore as LogStore<
-        KeysOperation,
+        AnyOperation,
         VerifyingKey,
         LogId,
         SeqNum,
@@ -506,7 +489,7 @@ pub async fn segments_after(
     after: Option<SeqNum>,
 ) -> Result<(Vec<Segment>, SeqNum), Error> {
     let heights = <SqliteStore as LogStore<
-        KeysOperation,
+        AnyOperation,
         VerifyingKey,
         LogId,
         SeqNum,
@@ -516,33 +499,54 @@ pub async fn segments_after(
     let tip = heights.and_then(|h| h.get(&LOG_ID).copied()).unwrap_or(0);
 
     // No `tx!` — this is a plain read; see the note on `segments_from`.
-    let entries = <SqliteStore as LogStore<
-        KeysOperation,
+    let entries = read_ops(store, author, &LOG_ID, after, None).await?;
+    Ok((collect(entries)?, tip))
+}
+
+/// Read a log's entries and decode each back into a typed [`KeysOperation`].
+///
+/// **MIGRATION (#1612 p2panda-store rewrite).** `LogStore` no longer knows the
+/// extension type: `get_log_entries` (async, `Vec<(Operation<E>, _)>`) became
+/// `log_entries` (a lazy `futures` stream of `LogEntry<AnyOperation, _>`). The
+/// header's `KeysArgs` are decoded here, at the store boundary, with
+/// `AnyOperation::try_into`, so the rest of this module stays typed exactly as
+/// before. This conversion is a CBOR decode of the extensions only — it does
+/// NOT re-verify the signature; that stays [`p2panda_core::validate_operation`]
+/// where it was, so the Ed25519 cost profiled in `segments_covering` is
+/// unchanged by the migration.
+pub(crate) async fn read_ops(
+    store: &SqliteStore,
+    author: &VerifyingKey,
+    log_id: &LogId,
+    after: Option<SeqNum>,
+    until: Option<SeqNum>,
+) -> Result<Vec<KeysOperation>, Error> {
+    let mut stream = <SqliteStore as LogStore<
+        AnyOperation,
         VerifyingKey,
         LogId,
         SeqNum,
         Hash,
-    >>::get_log_entries(store, author, &LOG_ID, after, None)
-    .await?;
-    Ok((collect(entries)?, tip))
+    >>::log_entries(store, author, log_id, after, until)?;
+    let mut ops = Vec::new();
+    while let Some(item) = stream.next().await {
+        let item = item?;
+        let op: KeysOperation = item.entry.try_into().map_err(|e| {
+            Error::Forged(format!("a stored header will not decode: {e}"))
+        })?;
+        ops.push(op);
+    }
+    Ok(ops)
 }
 
-/// **THE SECOND HALF OF A `LogEntries` TUPLE IS THE HEADER, NOT THE BODY.**
+/// Turn a log's operations into the segments they carry.
 ///
-/// `p2panda_store`'s type is `Vec<(T, Vec<u8>)>` and its SQL selects `hash,
-/// header, body` — and then pushes `(operation, header)`. The body is not
-/// dropped; it is on the operation, as `op.body`. But the tuple reads exactly
-/// like `(op, body)` and this function took it as one, so every `Segment` this
-/// returned carried an encoded header where its ciphertext should have been.
-///
-/// Nothing caught it because nothing decrypted what came back out of the log:
-/// `tests/wire.rs` counted segments and timed the read. The control path found
-/// it immediately, because verifying a signature against the payload is a
-/// comparison and counting is not — which is the argument for doing the
-/// verification at all, quite apart from forgery.
-fn collect(entries: Option<Vec<(KeysOperation, Vec<u8>)>>) -> Result<Vec<Segment>, Error> {
+/// Each operation's ciphertext is its **body**; the header names the epoch,
+/// secret and nonce ([`SegmentArgs`]). A control operation sitting in the
+/// segment log is a forgery signal, not a segment with odd fields.
+fn collect(ops: Vec<KeysOperation>) -> Result<Vec<Segment>, Error> {
     let mut out = Vec::new();
-    for (op, _encoded_header) in entries.into_iter().flatten() {
+    for op in ops {
         let body = op.body.ok_or_else(|| {
             Error::Forged(format!(
                 "segment operation at seq {} has no body",
@@ -601,7 +605,7 @@ pub async fn publish_control(
     // ONE TRANSACTION, for the reason `publish` gives: read-then-append.
     let operation = tx!(store, {
         let (seq_num, backlink) = <SqliteStore as LogStore<
-            KeysOperation,
+            AnyOperation,
             VerifyingKey,
             LogId,
             SeqNum,
@@ -617,7 +621,7 @@ pub async fn publish_control(
             .body(&payload)
             .build(signing_key, KeysArgs::Control(ControlArgs { v: CONTROL_V1 }));
         let operation = KeysOperation::from_parts(header, Some(Body::from_bytes(payload)));
-        store.insert_operation(&operation.hash, &operation, &CONTROL_LOG_ID).await?;
+        store.insert_operation_tx(&operation.hash, &operation, &CONTROL_LOG_ID).await?;
         operation
     });
     Ok(operation)
@@ -703,17 +707,7 @@ pub async fn control_from(
 ) -> Result<Vec<Authentic>, Error> {
     // NO `tx!`: a plain read, and wrapping one exhausts the pool — see the note
     // in `segments_from`.
-    let entries = <SqliteStore as LogStore<
-        KeysOperation,
-        VerifyingKey,
-        LogId,
-        SeqNum,
-        Hash,
-    >>::get_log_entries(store, subject, &CONTROL_LOG_ID, after, None)
-    .await?;
-
-    let operations: Vec<KeysOperation> =
-        entries.into_iter().flatten().map(|(op, _encoded_header)| op).collect();
+    let operations = read_ops(store, subject, &CONTROL_LOG_ID, after, None).await?;
 
     let mut out = Vec::with_capacity(operations.len());
     for (i, operation) in operations.iter().enumerate() {

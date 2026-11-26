@@ -94,7 +94,8 @@ impl GrantTag {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Dgm;
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize)]
+// MIGRATION (#1612): upstream `GroupMembership::State` now requires `Eq`.
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DgmState {
     pub members: HashSet<MemberId>,
     /// Everybody who has been removed from this group, kept after they go.

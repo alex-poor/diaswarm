@@ -34,7 +34,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use diaswarm_keys::wire::{KeysOperation, CONTROL_LOG_ID, LOG_ID};
+use diaswarm_keys::wire::{CONTROL_LOG_ID, LOG_ID};
 use diaswarm_net::pool;
 use diaswarm_net::replicate::KeysReplicator;
 use diaswarm_net::swarm::{default_network, network_id, Swarm};
@@ -43,7 +43,7 @@ use p2panda_store::logs::LogStore;
 use p2panda_store::{SqliteStore, SqliteStoreBuilder};
 
 async fn held(store: &SqliteStore, author: &VerifyingKey, log_id: u32) -> u32 {
-    let size = <SqliteStore as LogStore<KeysOperation, VerifyingKey, u32, u32, Hash>>::get_log_size(
+    let size = <SqliteStore as LogStore<p2panda_core::AnyOperation, VerifyingKey, u32, u32, Hash>>::get_log_size(
         store, author, &log_id, None, None,
     )
     .await
