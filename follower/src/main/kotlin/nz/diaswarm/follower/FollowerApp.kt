@@ -90,25 +90,49 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     // worked — they stand there with an invite on screen, guessing. This is
     // their tick.
     //
-    // There is no push event to listen for. Showing the invite opened the offer
-    // window ([Endpoint.expectOffer], called wherever `showInvite` is set); the
-    // scanner then hands their own invite back and this phone starts following
-    // them. So "it completed" is observed as the followed set gaining a subject
-    // it did not hold when the dialog opened. Read off-thread like every other
-    // vault read; the loop ends the instant the dialog closes.
+    // There is no push event to listen for, and TWO different things can end the
+    // wait — whoever is holding the invite out should see EITHER land, not stand
+    // there guessing.
+    //
+    //   (1) They show it to someone new, who scans it, and this phone starts
+    //       following them: the followed set gains a key. (Showing the invite
+    //       opened that offer window — [Endpoint.expectOffer], set wherever
+    //       `showInvite` is.)
+    //   (2) They ALREADY follow the subject and are showing the invite to be
+    //       GRANTED as a reader. Nothing new is followed — so (1) never fires —
+    //       but a subject that could not be read before starts decrypting once
+    //       the welcome replicates. That is the case a re-shown invite is for,
+    //       and the dialog used to sit open through it forever.
+    //
+    // Both are read off-thread like every other vault read; the loop ends the
+    // instant the dialog closes.
     LaunchedEffect(showInvite) {
         if (!showInvite) return@LaunchedEffect
+        val probeHours = 6   // enough to see a live publisher's grant land
         val before = withContext(Dispatchers.IO) { Follower.following(context).map { it.key }.toSet() }
+        val readBefore = withContext(Dispatchers.IO) {
+            Follower.following(context)
+                .filter { Follower.readings(context, it, probeHours).isNotEmpty() }
+                .map { it.key }.toSet()
+        }
         while (showInvite) {
             delay(1500)
             // Nudge a pass so their first readings are already on the way by the
             // time the graph opens. KEEP-deduped, so repeating it costs nothing.
             Sync.now(context)
-            val fresh = withContext(Dispatchers.IO) { Follower.following(context) }
-                .firstOrNull { it.key !in before }
-            if (fresh != null) {
-                Prefs.setGraphSubject(context, fresh.key)   // land on their line
-                scanTick = ScanOutcome(name = fresh.handle.ifBlank { null })
+            val done = withContext(Dispatchers.IO) {
+                val now = Follower.following(context)
+                // (1) a new subject to follow appeared, or
+                now.firstOrNull { it.key !in before }
+                    // (2) one already followed just became readable — a grant landed.
+                    ?: now.firstOrNull {
+                        it.key in before && it.key !in readBefore &&
+                            Follower.readings(context, it, probeHours).isNotEmpty()
+                    }
+            }
+            if (done != null) {
+                Prefs.setGraphSubject(context, done.key)   // land on their line
+                scanTick = ScanOutcome(name = done.handle.ifBlank { null })
                 showInvite = false
                 tick++
             }
