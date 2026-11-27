@@ -31,6 +31,6 @@ this is not the place for them.
 ## Enforcement
 
 Reports go to the maintainer through
-[private vulnerability reporting](https://github.com/alex-poor/diaswarm/security/advisories/new)
+[private vulnerability reporting](https://github.com/forkable-co/diaswarm/security/advisories/new)
 or a direct message on GitHub. There is no committee. Responses range from
 "please stop" to a block, and the maintainer will say which and why.

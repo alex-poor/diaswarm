@@ -36,7 +36,7 @@ and still tested, and findings against it are welcome, but it is not what ships
 ## Reporting something
 
 **Please report privately first.** Use GitHub's
-[private vulnerability reporting](https://github.com/alex-poor/diaswarm/security/advisories/new)
+[private vulnerability reporting](https://github.com/forkable-co/diaswarm/security/advisories/new)
 on this repository. If that is not available to you, open an issue saying only
 that you have found something and asking for a contact — no details in the
 issue.

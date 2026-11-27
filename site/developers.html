@@ -164,7 +164,7 @@ footer a:hover{color:#3ad68e}
     <h1>The data commons that can't be bought, captured, or switched off</h1>
     <p>Every diabetes data platform so far has had a middle — a server, a company, a foundation, a grant — and the data has only ever been as safe, as private, and as permanent as that middle. diaswarm removes the middle entirely. Your loop's data lives as sealed ciphertext spread across the community's own devices. Who can read it is decided by who holds a key. There is no host to trust, no operator to capture, and nothing anyone can switch off.</p>
     <p class="lead-sub">It already runs — on a live closed loop, phone to phone, across networks, with nobody in the middle. This is what comes after the server.</p>
-    <p class="small">Honest scope, because this page is for people who will check: the custody and transport layers run today on Android/AAPS and the Ayni follower. An iOS follower does not exist yet (<a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md">D12</a>), and the research-export gateway is designed but <strong>not built</strong> — every claim below carries a tag for what actually ships. The cryptography is standard primitives in a composition that has had no third-party review (<a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md">SECURITY.md</a>).</p>
+    <p class="small">Honest scope, because this page is for people who will check: the custody and transport layers run today on Android/AAPS and the Ayni follower. An iOS follower does not exist yet (<a href="https://github.com/forkable-co/diaswarm/blob/main/docs/decisions.md">D12</a>), and the research-export gateway is designed but <strong>not built</strong> — every claim below carries a tag for what actually ships. The cryptography is standard primitives in a composition that has had no third-party review (<a href="https://github.com/forkable-co/diaswarm/blob/main/SECURITY.md">SECURITY.md</a>).</p>
   </div>
   <div class="wrap viewtabs" role="tablist" aria-label="Choose a view">
     <button type="button" class="vtab active" role="tab" aria-selected="true" data-view="scale">The idea at scale</button>
@@ -235,7 +235,7 @@ footer a:hover{color:#3ad68e}
       <div class="case"><h4>Privacy by design, in the strongest form</h4><p>The people holding your data <em>cannot read it</em> — structurally, not as a policy they could quietly change.</p></div>
       <div class="case"><h4>Access with no vendor in the chain</h4><p>Sensor to open source to your chosen reader. Nobody's cloud in the middle.</p></div>
     </div>
-    <div class="note"><span class="note-label">the honest part — because it's the project's style</span><p>The project keeps a public, unflinching self-assessment against all eight principles, including where it still falls short and what would close each gap. That document is itself the kind of transparency the Charter is asking industry to adopt. → <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/rights.md">docs/rights.md</a></p></div>
+    <div class="note"><span class="note-label">the honest part — because it's the project's style</span><p>The project keeps a public, unflinching self-assessment against all eight principles, including where it still falls short and what would close each gap. That document is itself the kind of transparency the Charter is asking industry to adopt. → <a href="https://github.com/forkable-co/diaswarm/blob/main/docs/rights.md">docs/rights.md</a></p></div>
   </div>
 </section>
 
@@ -371,7 +371,7 @@ footer a:hover{color:#3ad68e}
             <dt>format</dt><dd>NDJSON, sorted keys, no nulls</dd>
             <dt>order</dt><dd><code>(t, k)</code>, ties by the canonical line</dd>
             <dt>epoch</dt><dd>one day, cut at the subject's fixed UTC offset</dd>
-            <dt>spec</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/spec/records.md">spec/records.md</a></dd>
+            <dt>spec</dt><dd><a href="https://github.com/forkable-co/diaswarm/blob/main/spec/records.md">spec/records.md</a></dd>
           </dl>
         </li>
         <li>
@@ -383,7 +383,7 @@ footer a:hover{color:#3ad68e}
             <dt>segment</dt><dd><code>{epoch, secret_id, nonce, ciphertext}</code></dd>
             <dt>compression</dt><dd>none</dd>
             <dt>cadence</dt><dd>every 60 s, or sooner at 32 KB of backfill</dd>
-            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-keys/src/lib.rs">crates/diaswarm-keys/src/lib.rs</a></dd>
+            <dt>code</dt><dd><a href="https://github.com/forkable-co/diaswarm/blob/main/crates/diaswarm-keys/src/lib.rs">crates/diaswarm-keys/src/lib.rs</a></dd>
           </dl>
         </li>
         <li>
@@ -394,7 +394,7 @@ footer a:hover{color:#3ad68e}
             <dt>header</dt><dd><code>SegmentArgs{epoch, secret_id, nonce}</code></dd>
             <dt>body</dt><dd>ciphertext</dd>
             <dt>integrity</dt><dd>Ed25519 signature, backlink, <code>seq_num</code></dd>
-            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-keys/src/wire.rs">crates/diaswarm-keys/src/wire.rs</a></dd>
+            <dt>code</dt><dd><a href="https://github.com/forkable-co/diaswarm/blob/main/crates/diaswarm-keys/src/wire.rs">crates/diaswarm-keys/src/wire.rs</a></dd>
           </dl>
         </li>
         <li>
@@ -405,7 +405,7 @@ footer a:hover{color:#3ad68e}
             <dt>gossip</dt><dd>iroh-gossip (HyParView) via p2panda-net</dd>
             <dt>discovery</dt><dd>mDNS on the LAN; relay URL carried in the invite</dd>
             <dt>presence</dt><dd><code>SHA-256("diaswarm-presence-v1")</code></dd>
-            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-net/src/swarm.rs">crates/diaswarm-net/src/swarm.rs</a></dd>
+            <dt>code</dt><dd><a href="https://github.com/forkable-co/diaswarm/blob/main/crates/diaswarm-net/src/swarm.rs">crates/diaswarm-net/src/swarm.rs</a></dd>
           </dl>
         </li>
         <li>
@@ -416,7 +416,7 @@ footer a:hover{color:#3ad68e}
             <dt>reader key</dt><dd>p2panda <code>LongTermKeyBundle</code> (X25519)</dd>
             <dt>member tag</dt><dd><code>HKDF-SHA256(ECDH(subject, reader), "diaswarm-grant-tag-v1" ‖ purpose)</code></dd>
             <dt>access</dt><dd>holding the secret; the log is for accountability</dd>
-            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-keys/src/group.rs">crates/diaswarm-keys/src/group.rs</a></dd>
+            <dt>code</dt><dd><a href="https://github.com/forkable-co/diaswarm/blob/main/crates/diaswarm-keys/src/group.rs">crates/diaswarm-keys/src/group.rs</a></dd>
           </dl>
         </li>
         <li>
@@ -427,7 +427,7 @@ footer a:hover{color:#3ad68e}
             <dt>bucket</dt><dd>top <code>depth</code> bits of <code>SHA-256(subject)</code></dd>
             <dt>holders</dt><dd>top 3 by <code>SHA-256(peer ‖ "\0bucket\0" ‖ bucket)</code></dd>
             <dt>topic</dt><dd><code>SHA-256("diaswarm-bucket-v1" ‖ depth ‖ bucket)</code></dd>
-            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-net/src/pool.rs">crates/diaswarm-net/src/pool.rs</a></dd>
+            <dt>code</dt><dd><a href="https://github.com/forkable-co/diaswarm/blob/main/crates/diaswarm-net/src/pool.rs">crates/diaswarm-net/src/pool.rs</a></dd>
           </dl>
         </li>
         <li>
@@ -438,7 +438,7 @@ footer a:hover{color:#3ad68e}
             <dt>live</dt><dd>gossip on the subject's topic, pushed as each entry is appended</dd>
             <dt>store</dt><dd>operations in SQLite (<code>keys.sqlite</code> on the desktop peer)</dd>
             <dt>size</dt><dd>~13 MB/yr per subject at 5-min CGM; ~55 MB/yr at 1-min</dd>
-            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-net/src/replicate.rs">crates/diaswarm-net/src/replicate.rs</a></dd>
+            <dt>code</dt><dd><a href="https://github.com/forkable-co/diaswarm/blob/main/crates/diaswarm-net/src/replicate.rs">crates/diaswarm-net/src/replicate.rs</a></dd>
           </dl>
         </li>
         <li>
@@ -448,7 +448,7 @@ footer a:hover{color:#3ad68e}
             <dt>interval</dt><dd>120 s (<code>SyncWorker.EVERY_SECONDS</code>); measured 105 s and 123 s</dd>
             <dt>age on screen</dt><dd>63 s, measured across CGNAT and home wifi</dd>
             <dt>source</dt><dd>any peer holding the subject's logs</dd>
-            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/follower/src/main/kotlin/nz/diaswarm/follower/SyncWorker.kt">follower/…/SyncWorker.kt</a></dd>
+            <dt>code</dt><dd><a href="https://github.com/forkable-co/diaswarm/blob/main/follower/src/main/kotlin/nz/diaswarm/follower/SyncWorker.kt">follower/…/SyncWorker.kt</a></dd>
           </dl>
         </li>
         <li>
@@ -459,7 +459,7 @@ footer a:hover{color:#3ad68e}
             <dt>read</dt><dd>walk back from the log tip until the days asked for are covered</dd>
             <dt>errors</dt><dd><code>not_ours</code> and <code>lost</code> reported separately</dd>
             <dt>stale</dt><dd>≥ 15 min; stale readings never alert</dd>
-            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-keys/src/follow.rs">crates/diaswarm-keys/src/follow.rs</a></dd>
+            <dt>code</dt><dd><a href="https://github.com/forkable-co/diaswarm/blob/main/crates/diaswarm-keys/src/follow.rs">crates/diaswarm-keys/src/follow.rs</a></dd>
           </dl>
         </li>
         <li>
@@ -470,7 +470,7 @@ footer a:hover{color:#3ad68e}
             <dt>control</dt><dd>a <code>remove</code> message in log 1</dd>
             <dt>schedule</dt><dd>the plugin also rotates every 24 h, so grants can be scoped by day</dd>
             <dt>not recalled</dt><dd>anything under secrets the reader already holds</dd>
-            <dt>code</dt><dd><a href="https://github.com/alex-poor/diaswarm/blob/main/crates/diaswarm-keys/src/lib.rs">Vault::revoke in diaswarm-keys</a></dd>
+            <dt>code</dt><dd><a href="https://github.com/forkable-co/diaswarm/blob/main/crates/diaswarm-keys/src/lib.rs">Vault::revoke in diaswarm-keys</a></dd>
           </dl>
         </li>
         <li>
@@ -481,7 +481,7 @@ footer a:hover{color:#3ad68e}
             <dt>forward secrecy</dt><dd>none</dd>
             <dt>reads</dt><dd>not observable by anyone</dd>
             <dt>review</dt><dd>custody layer not yet independently reviewed</dd>
-            <dt>more</dt><dd><a href="https://github.com/alex-poor/diaswarm#the-trade">README: The trade</a> · <a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md">SECURITY.md</a></dd>
+            <dt>more</dt><dd><a href="https://github.com/forkable-co/diaswarm#the-trade">README: The trade</a> · <a href="https://github.com/forkable-co/diaswarm/blob/main/SECURITY.md">SECURITY.md</a></dd>
           </dl>
         </li>
       </ol>
@@ -517,7 +517,7 @@ footer a:hover{color:#3ad68e}
         <div><dt>Measured</dt><dd>2026-09-11: subject on mobile data behind CGNAT, reader on home wifi. Each refresh showed the newest reading as <code>0m old</code>, and the screen read 9.4 mmol/L, 63 seconds old.</dd></div>
       </dl>
       <div class="bud-caveat">
-        <p><strong>The reader isn't pushed to, by design.</strong> The subject doesn't know who follows them: the grant log names nobody, and a fetch doesn't say who is fetching. So the reader has to ask (<a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md">D17</a>).</p>
+        <p><strong>The reader isn't pushed to, by design.</strong> The subject doesn't know who follows them: the grant log names nobody, and a fetch doesn't say who is fetching. So the reader has to ask (<a href="https://github.com/forkable-co/diaswarm/blob/main/docs/decisions.md">D17</a>).</p>
         <p><strong>In a pocket, Android sets the interval.</strong> Doze batches background work, so a reader phone that isn't excused from battery optimisation refreshes much less often. A held-open subscription would help while the app is open, but Doze closes sockets in the background either way. That's why every reading is drawn with its age, and counts as stale at 15 minutes.</p>
       </div>
     </div>
@@ -578,14 +578,14 @@ footer a:hover{color:#3ad68e}
       <p>Where to start, depending on what you want to check.</p>
     </div>
     <div class="read">
-      <div><h3>Record format</h3><p>The frozen contract every later stage encodes against, with the mistakes that shaped it.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/spec/records.md">spec/records.md</a></div>
-      <div><h3>Keys vault</h3><p>Segments, group secrets, grants, rotation and the follower's read path.</p><a href="https://github.com/alex-poor/diaswarm/tree/main/crates/diaswarm-keys">crates/diaswarm-keys</a></div>
-      <div><h3>Networking</h3><p>Swarm setup, topics, bucket assignment and replication on p2panda-net and iroh.</p><a href="https://github.com/alex-poor/diaswarm/tree/main/crates/diaswarm-net">crates/diaswarm-net</a></div>
-      <div><h3>Decisions</h3><p>Why each piece is the way it is, including the ones that were reversed.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md">docs/decisions.md</a></div>
-      <div><h3>What we won't claim</h3><p>The sentences this project may never say, and the true version of each.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/docs/feasibility.md">docs/feasibility.md §11</a></div>
-      <div><h3>Security</h3><p>Scope, known limits, and how to report a problem.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md">SECURITY.md</a></div>
-      <div><h3>Roles</h3><p>Who each layer is, what they may truthfully be told, and the honest limit on each.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/docs/roles.md">docs/roles.md</a></div>
-      <div><h3>Data rights</h3><p>The full per-principle assessment against the Charter, with the evidence that would change each verdict.</p><a href="https://github.com/alex-poor/diaswarm/blob/main/docs/rights.md">docs/rights.md</a></div>
+      <div><h3>Record format</h3><p>The frozen contract every later stage encodes against, with the mistakes that shaped it.</p><a href="https://github.com/forkable-co/diaswarm/blob/main/spec/records.md">spec/records.md</a></div>
+      <div><h3>Keys vault</h3><p>Segments, group secrets, grants, rotation and the follower's read path.</p><a href="https://github.com/forkable-co/diaswarm/tree/main/crates/diaswarm-keys">crates/diaswarm-keys</a></div>
+      <div><h3>Networking</h3><p>Swarm setup, topics, bucket assignment and replication on p2panda-net and iroh.</p><a href="https://github.com/forkable-co/diaswarm/tree/main/crates/diaswarm-net">crates/diaswarm-net</a></div>
+      <div><h3>Decisions</h3><p>Why each piece is the way it is, including the ones that were reversed.</p><a href="https://github.com/forkable-co/diaswarm/blob/main/docs/decisions.md">docs/decisions.md</a></div>
+      <div><h3>What we won't claim</h3><p>The sentences this project may never say, and the true version of each.</p><a href="https://github.com/forkable-co/diaswarm/blob/main/docs/feasibility.md">docs/feasibility.md §11</a></div>
+      <div><h3>Security</h3><p>Scope, known limits, and how to report a problem.</p><a href="https://github.com/forkable-co/diaswarm/blob/main/SECURITY.md">SECURITY.md</a></div>
+      <div><h3>Roles</h3><p>Who each layer is, what they may truthfully be told, and the honest limit on each.</p><a href="https://github.com/forkable-co/diaswarm/blob/main/docs/roles.md">docs/roles.md</a></div>
+      <div><h3>Data rights</h3><p>The full per-principle assessment against the Charter, with the evidence that would change each verdict.</p><a href="https://github.com/forkable-co/diaswarm/blob/main/docs/rights.md">docs/rights.md</a></div>
     </div>
   </div>
 </section>
@@ -594,7 +594,7 @@ footer a:hover{color:#3ad68e}
 <footer>
   <div class="wrap">
     <p>part of the diaswarm project · AGPL-3.0 · Not affiliated with, endorsed by, or part of the AndroidAPS project.</p>
-    <p><a href="index.html">Main site</a> · <a href="https://github.com/alex-poor/diaswarm">GitHub</a></p>
+    <p><a href="index.html">Main site</a> · <a href="https://github.com/forkable-co/diaswarm">GitHub</a></p>
   </div>
 </footer>
 <script src="assets/explainer.js" defer></script>

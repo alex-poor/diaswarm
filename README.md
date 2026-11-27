@@ -2,11 +2,11 @@
 
 <a href="https://f-droid.org/packages/nz.diaswarm.ayni/"><img src="site/assets/fdroid-badge.png" alt="Get it on F-Droid" height="60"></a>
 
-**[🌐 Website &amp; setup guide](https://alex-poor.github.io/diaswarm/)** &nbsp;·&nbsp;
-[💻 Desktop peer releases](https://github.com/alex-poor/diaswarm/releases)
+**[🌐 Website &amp; setup guide](https://forkable-co.github.io/diaswarm/)** &nbsp;·&nbsp;
+[💻 Desktop peer releases](https://github.com/forkable-co/diaswarm/releases)
 
 > The customer-facing splash page — features, pairing, desktop apps, and how to send
-> your own data — lives at **alex-poor.github.io/diaswarm**. This README is the
+> your own data — lives at **forkable-co.github.io/diaswarm**. This README is the
 > engineering record behind it. Source for the site is in [`site/`](site).
 
 Share the data your insulin pump loop is already writing — with your partner, your
@@ -54,7 +54,7 @@ Not reviewed cryptography. See [Limits](#limits) before trusting it with anythin
 > **Not affiliated with, endorsed by, or part of the AndroidAPS project.** This is
 > an independent add-on that compiles against AAPS's plugin interfaces. It contains
 > no AAPS source. AndroidAPS is the work of its own maintainers, and problems with
-> this add-on are not theirs — report them [here](https://github.com/alex-poor/diaswarm/issues).
+> this add-on are not theirs — report them [here](https://github.com/forkable-co/diaswarm/issues).
 >
 > **No loop APK is distributed here, and none ever will be.** Running a loop is
 > running a medical device you assembled; you build it yourself, from source you

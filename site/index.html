@@ -71,7 +71,7 @@ h1,h2,h3,p{margin:0}
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px 28px;padding-top:6px">
         <a href="https://f-droid.org/packages/nz.diaswarm.ayni/" style="display:block;line-height:0"><img src="assets/fdroid-badge.png" alt="Get it on F-Droid" style="height:58px;display:block"></a>
         <a href="#desktop" style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:15px;color:#e9ebe6" class="hv9">desktop peer →</a>
-        <a href="https://github.com/alex-poor/diaswarm" style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:15px;color:#e9ebe6" class="hv10">view on github →</a>
+        <a href="https://github.com/forkable-co/diaswarm" style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:15px;color:#e9ebe6" class="hv10">view on github →</a>
       </div>
     </div>
 
@@ -338,7 +338,7 @@ h1,h2,h3,p{margin:0}
           <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:22px;font-weight:600">peer-v0.1.8</span>
           <span style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:15px;color:#3ad68e">↔ Ayni 0.1.7</span>
         </div>
-        <p style="flex:1 1 360px;min-width:0;padding:22px 26px;color:#3d4146;text-wrap:pretty">The desktop peer and the Ayni app speak one wire protocol, and a mismatched build simply won't carry for a newer phone. Download the <strong style="color:#1a1d20">peer release that matches your Ayni version</strong> from <a href="https://github.com/alex-poor/diaswarm/releases">the releases page</a>. There's a native build for each platform, so running one is downloading a file, not installing a toolchain.</p>
+        <p style="flex:1 1 360px;min-width:0;padding:22px 26px;color:#3d4146;text-wrap:pretty">The desktop peer and the Ayni app speak one wire protocol, and a mismatched build simply won't carry for a newer phone. Download the <strong style="color:#1a1d20">peer release that matches your Ayni version</strong> from <a href="https://github.com/forkable-co/diaswarm/releases">the releases page</a>. There's a native build for each platform, so running one is downloading a file, not installing a toolchain.</p>
       </div>
 
       <div style="overflow-x:auto">
@@ -407,8 +407,8 @@ h1,h2,h3,p{margin:0}
         <p style="color:#3d4146;text-wrap:pretty"><strong style="color:#1a1d20">Building AndroidAPS from source is normal — that part isn't new.</strong> The one thing that is specific to diaswarm: you must build from <strong style="color:#1a1d20">the diaswarm fork of AndroidAPS</strong> (the <code style="font-family:'Atkinson Hyperlegible Mono',monospace;font-size:16px">diaswarm-addon</code> branch, which wires the module in), <strong style="color:#1a1d20">not upstream AndroidAPS</strong>. Upstream has no diaswarm module and cannot send.</p>
         <p style="color:#3d4146;text-wrap:pretty">The module ships <strong style="color:#1a1d20">disabled</strong> in the fork and is structurally incapable of dosing: it holds no pump reference and has no path into the loop. It only drains your own sealed records outward, and only once you've chosen to share. Build instructions and the full safety rationale are in the project repository.</p>
         <div style="display:flex;flex-wrap:wrap;gap:12px;padding-top:6px">
-          <a href="https://github.com/alex-poor/diaswarm#building-the-aaps-add-on" style="text-decoration:none;background:#1a1d20;color:#f2efe7;padding:14px 22px;font-weight:700;font-size:16px" class="hv11">Build instructions →</a>
-          <a href="https://github.com/alex-poor/diaswarm" style="text-decoration:none;border:2px solid #1a1d20;color:#1a1d20;padding:12px 20px;font-weight:700;font-size:16px" class="hv12">The diaswarm repository</a>
+          <a href="https://github.com/forkable-co/diaswarm#building-the-aaps-add-on" style="text-decoration:none;background:#1a1d20;color:#f2efe7;padding:14px 22px;font-weight:700;font-size:16px" class="hv11">Build instructions →</a>
+          <a href="https://github.com/forkable-co/diaswarm" style="text-decoration:none;border:2px solid #1a1d20;color:#1a1d20;padding:12px 20px;font-weight:700;font-size:16px" class="hv12">The diaswarm repository</a>
         </div>
       </div>
       <div style="flex:0 1 320px;min-width:0;border:3px solid #c03d16;padding:24px;display:flex;flex-direction:column;gap:12px">
@@ -444,7 +444,7 @@ h1,h2,h3,p{margin:0}
           <p style="padding:14px 0;color:#3d4146;text-wrap:pretty"><strong style="color:#1a1d20">Early days:</strong> no iOS yet, and storage grows over time — there's no pruning.</p>
         </div>
       </div>
-      <p style="color:#4d5157;max-width:44em;text-wrap:pretty">The full technical assessment lives in the repository's <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/feasibility.md">feasibility notes</a> and <a href="https://github.com/alex-poor/diaswarm/blob/main/docs/decisions.md">decision log</a>.</p>
+      <p style="color:#4d5157;max-width:44em;text-wrap:pretty">The full technical assessment lives in the repository's <a href="https://github.com/forkable-co/diaswarm/blob/main/docs/feasibility.md">feasibility notes</a> and <a href="https://github.com/forkable-co/diaswarm/blob/main/docs/decisions.md">decision log</a>.</p>
     </div>
   </div>
 </section>
@@ -461,10 +461,10 @@ h1,h2,h3,p{margin:0}
     </div>
     <nav style="display:flex;flex-wrap:wrap;gap:8px 24px;font-family:'Atkinson Hyperlegible Mono',monospace;font-size:14px">
       <a href="https://f-droid.org/packages/nz.diaswarm.ayni/" style="color:#e9ebe6" class="hv13">F-Droid</a>
-      <a href="https://github.com/alex-poor/diaswarm" style="color:#e9ebe6" class="hv14">GitHub</a>
-      <a href="https://github.com/alex-poor/diaswarm/releases" style="color:#e9ebe6" class="hv15">Desktop releases</a>
-      <a href="https://github.com/alex-poor/diaswarm/blob/main/SECURITY.md" style="color:#e9ebe6" class="hv16">Security</a>
-      <a href="https://github.com/alex-poor/diaswarm/issues" style="color:#e9ebe6" class="hv17">Report an issue</a>
+      <a href="https://github.com/forkable-co/diaswarm" style="color:#e9ebe6" class="hv14">GitHub</a>
+      <a href="https://github.com/forkable-co/diaswarm/releases" style="color:#e9ebe6" class="hv15">Desktop releases</a>
+      <a href="https://github.com/forkable-co/diaswarm/blob/main/SECURITY.md" style="color:#e9ebe6" class="hv16">Security</a>
+      <a href="https://github.com/forkable-co/diaswarm/issues" style="color:#e9ebe6" class="hv17">Report an issue</a>
     </nav>
   </div>
 </footer>

@@ -6,7 +6,7 @@
 # committed.
 #
 # The site is plain static HTML/CSS with no build step — `site/` is uploaded as
-# it stands. It is served under /<repo>/ (https://alex-poor.github.io/diaswarm/),
+# it stands. It is served under /<repo>/ (https://forkable-co.github.io/diaswarm/),
 # which is why every asset path in site/index.html is relative, never rooted at /.
 
 name: pages
