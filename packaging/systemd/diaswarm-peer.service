@@ -16,7 +16,7 @@
 
 [Unit]
 Description=diaswarm pool peer — carries sealed records it cannot read
-Documentation=https://github.com/alex-poor/diaswarm
+Documentation=https://github.com/forkable-co/diaswarm
 # Do not race the network on boot; the peer retries anyway, but a first pass
 # that fails for want of a route is a confusing first log line.
 After=network-online.target
