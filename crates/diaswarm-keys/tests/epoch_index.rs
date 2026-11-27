@@ -123,6 +123,80 @@ async fn window_is_by_epoch_value_so_a_quiet_day_still_counts() {
     assert_eq!(wire::floor_for_epochs(&store, &author, 2).await.unwrap(), Some(0), "cutoff 202 lands on the 202 anchor, not 200");
     // keep=3 → cutoff = 201; earliest anchor is 200 < 201, first >= 201 is {202,1} → Some(0).
     assert_eq!(wire::floor_for_epochs(&store, &author, 3).await.unwrap(), Some(0), "cutoff 201 still trims epoch 200");
-    // keep=4 → cutoff = 200 = earliest → keep everything.
-    assert_eq!(wire::floor_for_epochs(&store, &author, 4).await.unwrap(), None, "cutoff reaches the start → no trim");
+    // keep=4 → cutoff = 200 = earliest, and earliest sits at seq 0 (the index starts
+    // at the head of the log) → nothing to trim.
+    assert_eq!(wire::floor_for_epochs(&store, &author, 4).await.unwrap(), None, "cutoff reaches a seq-0 start → no trim");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recently_anchoring_publisher_windows_to_its_oldest_anchor_not_the_whole_log() {
+    // The real transition: a publisher that sealed history BEFORE it learned to
+    // anchor. Its oldest anchor sits mid-log (seq > 0) with un-anchored segments
+    // beneath it. A windowing follower must bound to that oldest anchor — NOT fall
+    // back to syncing the whole log, which is the unbounded ingest the window exists
+    // to stop (the on-device OOM). Without this, a window does not engage until the
+    // index has accrued more epochs than the window spans — days, for a week-long
+    // window — and the follower OOMs in the meantime.
+    let rng = diaswarm_keys::Rng::default();
+    let key = SigningKey::generate();
+    let author = key.verifying_key();
+    let root = std::env::temp_dir().join(format!("diaswarm-epoch-accrual-{}", nanos()));
+    std::fs::create_dir_all(&root).unwrap();
+
+    let mut vault = Vault::open(&root, OFFSET, &key).unwrap();
+    let (manager, _b) = Vault::key_bundle(&rng).unwrap();
+    let create = vault.create(manager).unwrap();
+    let store = SqliteStoreBuilder::memory().build().await.unwrap();
+    wire::publish_control(&store, &key, &create).await.unwrap();
+
+    // Three pre-anchor segments (epochs 400, 400, 401) — no anchors, as the old
+    // build produced. They land at seq 0, 1, 2.
+    for (i, &(epoch, t)) in [(400_i64, 0_i64), (400, 60_000), (401, 0)].iter().enumerate() {
+        let batch = vec![Record::new(epoch * EPOCH_MS + t, "cgm").set("mgdl", Some(100.0.into()))];
+        let seq = wire::publish(&store, &key, &vault.seal_delta(epoch, &batch).unwrap())
+            .await
+            .unwrap()
+            .header
+            .seq_num;
+        assert_eq!(seq, i as u32, "pre-anchor segment lands in sequence");
+    }
+
+    // The publisher upgrades: epoch 402 is the first it anchors. Its first segment
+    // lands at seq 3, above the pre-anchor history, and the anchor records that.
+    let batch = vec![Record::new(402 * EPOCH_MS, "cgm").set("mgdl", Some(100.0.into()))];
+    let seq = wire::publish(&store, &key, &vault.seal_delta(402, &batch).unwrap())
+        .await
+        .unwrap()
+        .header
+        .seq_num;
+    assert_eq!(seq, 3, "first anchored segment lands above the pre-anchor history");
+    wire::publish_anchor(&store, &key, &wire::Anchor { epoch: 402, seq }).await.unwrap();
+    // A second epoch-402 segment, no anchor.
+    let batch = vec![Record::new(402 * EPOCH_MS + 60_000, "cgm").set("mgdl", Some(101.0.into()))];
+    wire::publish(&store, &key, &vault.seal_delta(402, &batch).unwrap()).await.unwrap();
+
+    // Exactly one anchor, sitting at seq 3 (NOT seq 0).
+    assert_eq!(
+        wire::anchors_from(&store, &author).await.unwrap(),
+        vec![wire::Anchor { epoch: 402, seq: 3 }],
+        "one anchor, mid-log",
+    );
+
+    // keep=1: the whole index is a single epoch, so the cutoff reaches the oldest
+    // anchor. It must STILL bound to that anchor (floor = seq 3 - 1 = 2), so the
+    // follower pulls only epoch 402 (seq 3, 4) and none of the pre-anchor history at
+    // seq 0..2. The pre-fix code returned None here and full-followed the lot.
+    assert_eq!(
+        wire::floor_for_epochs(&store, &author, 1).await.unwrap(),
+        Some(2),
+        "single mid-log anchor → bound to it, do not full-follow the pre-anchor log",
+    );
+    // Asking for MORE days than are anchored still bounds to the oldest anchor, never
+    // None: it under-delivers history that has no anchor yet, but never re-opens the
+    // unbounded ingest. As anchors accrue the window widens on its own.
+    assert_eq!(
+        wire::floor_for_epochs(&store, &author, 30).await.unwrap(),
+        Some(2),
+        "window wider than the index → still bounded to the oldest anchor",
+    );
 }

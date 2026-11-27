@@ -936,9 +936,16 @@ pub async fn anchors_from(
 /// **BY EPOCH VALUE, NOT ANCHOR COUNT**, because "the last N days" is a span of
 /// time: a day with no readings seals no segment and writes no anchor, and it must
 /// still count against the window. So the cutoff is `latest_epoch - (keep - 1)` and
-/// the floor is the first anchor at or after it. Returns `None` when the window
-/// already covers everything the index knows (keep spans the whole history, or the
-/// earliest kept segment is seq 0) — there is nothing to trim.
+/// the floor is the first anchor at or after it.
+///
+/// When the window reaches past the oldest anchor the index holds — the publisher
+/// began anchoring recently and the index does not yet span the whole window — the
+/// floor is the **oldest anchor** (`earliest.seq - 1`), not `None`. `None` means
+/// "sync the whole log", which during that accrual re-opens the unbounded ingest a
+/// window exists to prevent; windowing to the oldest anchor stays bounded and
+/// extends on its own as anchors accrue. `None` is returned only for an empty index
+/// (no anchors yet) or an oldest anchor at seq 0 (the index already starts at the
+/// head of the log — nothing to trim).
 pub async fn floor_for_epochs(
     store: &SqliteStore,
     subject: &VerifyingKey,
@@ -948,14 +955,15 @@ pub async fn floor_for_epochs(
         return Ok(None);
     }
     let anchors = anchors_from(store, subject).await?;
-    let (Some(earliest), Some(latest)) = (anchors.first(), anchors.last()) else {
+    let Some(latest) = anchors.last() else {
         return Ok(None);
     };
     let cutoff = latest.epoch - (keep_epochs as i64 - 1);
-    if cutoff <= earliest.epoch {
-        return Ok(None); // the window reaches the start of the index: keep it all
-    }
-    // `latest` itself satisfies `epoch >= cutoff`, so this always finds one.
+    // The first anchor at or after the cutoff. When the cutoff falls at or before
+    // the oldest anchor — the window reaches past what the index covers — that is
+    // the oldest anchor itself, so the follower is bounded to the anchored history
+    // rather than falling back to the whole unbounded log. `latest` always satisfies
+    // the cutoff, so this never fails to find one.
     let start = anchors.iter().find(|a| a.epoch >= cutoff).expect("latest qualifies");
     Ok(if start.seq == 0 { None } else { Some(start.seq - 1) })
 }
