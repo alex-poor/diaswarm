@@ -256,9 +256,13 @@ impl KeysReplicator {
     /// cannot be known until the control log syncs: control first, segments after.
     ///
     /// `keep_days` 0 carries the segments in full (a windowed follow of "everything"
-    /// is just a follow). **SAFE AGAINST A PUBLISHER THAT EMITS NO ANCHORS:** if the
-    /// index never arrives within a short wait, the segment log is carried in full —
-    /// a windowed follow degrades to a normal follow rather than going dark.
+    /// is just a follow). **NO INDEX, NO UNBOUNDED CARRY:** if the epoch index does
+    /// not arrive within the wait, the segment log is HELD BACK and the next share
+    /// pass retries — carrying it in full would be the fresh-onboard OOM this window
+    /// exists to stop. A publisher that emits no anchors therefore syncs on
+    /// keys/control only until it does, rather than crashing a follower on its
+    /// history. (It used to degrade to a full follow; on a real history that is the
+    /// crash, not a graceful fallback.)
     pub async fn carry_windowed(&self, subject: &str, keep_days: u32) -> Result<()> {
         let author = subject_key(subject)?;
 
@@ -287,24 +291,37 @@ impl KeysReplicator {
         let subject = subject.to_string();
         tokio::spawn(async move {
             let mut prev = 0usize;
+            let mut settled = false;
             let mut floor = None;
             // ~30s of patience for the control log to bring the index.
             for _ in 0..60 {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 let anchors =
                     diaswarm_keys::wire::anchors_from(&me.store, &author).await.unwrap_or_default();
-                // Settled: the index stopped growing, so the latest epoch is in.
+                // Settled: the index is present and stopped growing, so the latest
+                // epoch is in and the floor it yields is trustworthy.
                 if !anchors.is_empty() && anchors.len() == prev {
                     floor = diaswarm_keys::wire::floor_for_epochs(&me.store, &author, keep_days)
                         .await
                         .ok()
                         .flatten();
+                    settled = true;
                     break;
                 }
                 prev = anchors.len();
             }
-            // Some(floor) → window the subject; None (no index arrived, or the
-            // window already spans the whole history) → carry in full.
+            // **NO INDEX → HOLD THE SEGMENTS BACK, DO NOT FULL-FOLLOW.** Without a
+            // settled epoch index there is no floor, and carrying the segment log
+            // now would advertise `Have[0]` and pull the WHOLE history at once —
+            // the fresh-onboard OOM. Return instead: the control log keeps syncing
+            // across passes, so a later `carry_windowed` finds the index and windows
+            // cleanly. A brief wait, not a crash.
+            if !settled {
+                return;
+            }
+            // Settled. Some(floor) → window the subject. None → the window spans the
+            // whole index, so the history is no longer than the window and a full
+            // carry is itself bounded.
             if let Some(floor) = floor {
                 me.window(&author, floor);
             }

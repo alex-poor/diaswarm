@@ -125,11 +125,12 @@ pub async fn carry_share(
         // **A WINDOWED PEER TAKES THE SAME SUBJECTS, HOLDING LESS OF EACH.**
         // `carry_windowed` does its own control-first/segments-after ordering
         // (control brings the epoch index, which the floor is read from, so the
-        // segment log must not be carried before the floor is set), and it
-        // degrades to a full carry when the publisher emits no index — so a
-        // positive `keep_days` replaces BOTH carries below rather than adding to
-        // them. Carrying the segments here as well would hand the follower the
-        // whole history on the subject topic before the window ever took effect.
+        // segment log must not be carried before the floor is set), and when the
+        // publisher emits no index it holds the segments back and retries rather
+        // than full-following into an OOM — so a positive `keep_days` replaces BOTH
+        // carries below rather than adding to them. Carrying the segments here as
+        // well would hand the follower the whole history on the subject topic
+        // before the window ever took effect.
         if keep_days > 0 {
             let _ = replicator.carry_windowed(subject, keep_days).await;
             continue;
