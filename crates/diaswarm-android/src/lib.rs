@@ -2340,8 +2340,10 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysProfile<'a>(
     // EVERY EPOCH, unlike the two readers above. A profile is published when it
     // changes, so the newest one may be weeks old — a tail window would answer
     // "no profile" for somebody whose settings are simply stable, which is the
-    // best-run loop there is.
-    let out = follow_read(
+    // best-run loop there is. Folded, not collected: reading the whole log into a
+    // Vec to pick one record is the catch-up OOM (issue #3), so `follow_read_newest`
+    // keeps only the newest match.
+    match follow_read_newest(
         &own_dir,
         Path::new(&joined),
         &v.store,
@@ -2349,14 +2351,10 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysProfile<'a>(
         &v.signing,
         &keys,
         &purpose,
-        0,
+        "profile",
         i64::MIN,
         offset,
-    );
-    let Some(body) = out.strip_prefix("ok ").and_then(|rest| rest.split_once('\n')) else {
-        return to_jstring(env, String::new());
-    };
-    match newest_profile(body.1) {
+    ) {
         Some(json) => to_jstring(env, json),
         None => to_jstring(env, String::new()),
     }
@@ -2425,15 +2423,15 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysLiveness<'a>(
 
 /// The latest record of one kind in an ndjson body, as canonical JSON.
 ///
-/// Latest by the record's own `t`, never by position: segments are opened per
-/// epoch and concatenated, so arrival order says nothing about which record was
-/// the one in force.
+/// Latest by the record's own `t`, never by position: arrival order says nothing
+/// about which record was the one in force.
 ///
-/// Used for the two kinds that are *statements rather than events* — a profile
-/// and a temporary target. Both are replaced by the next one rather than
-/// accumulating, and for both the cancellation is itself a record: AAPS writes
-/// a temporary target of zero duration to call one off, so "newest wins"
-/// handles cancelling without a special case.
+/// **TEST-ONLY NOW.** Production picks the newest profile / temporary target
+/// through [`diaswarm_keys::follow::newest_of_kind`], which folds over segments
+/// instead of parsing a materialised body — the body itself was the catch-up OOM
+/// (issue #3). This retains the pure string-fold semantics those readers rely on,
+/// as a cheap check that "newest wins over a concatenated body" still holds.
+#[cfg(test)]
 fn newest_of_kind(body: &str, kind: &str) -> Option<String> {
     body.lines()
         .filter(|l| !l.trim().is_empty())
@@ -2443,6 +2441,7 @@ fn newest_of_kind(body: &str, kind: &str) -> Option<String> {
         .map(|r| r.to_canonical_json())
 }
 
+#[cfg(test)]
 fn newest_profile(body: &str) -> Option<String> {
     newest_of_kind(body, "profile")
 }
@@ -2796,7 +2795,9 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysTempTarget<'a>(
     let Some(v) = keys_vault(handle) else { return to_jstring(env, String::new()) };
     let offset = v.vault.offset();
     let own_dir = v.vault.root().to_path_buf();
-    let out = follow_read(
+    // Folded, not collected — the whole-log read to pick one record is the
+    // catch-up OOM (issue #3); `follow_read_newest` keeps only the newest match.
+    match follow_read_newest(
         &own_dir,
         Path::new(&joined),
         &v.store,
@@ -2804,14 +2805,10 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysTempTarget<'a>(
         &v.signing,
         &keys,
         &purpose,
-        0,
+        "target",
         i64::MIN,
         offset,
-    );
-    let Some(body) = out.strip_prefix("ok ").and_then(|rest| rest.split_once('\n')) else {
-        return to_jstring(env, String::new());
-    };
-    match newest_of_kind(body.1, "target") {
+    ) {
         Some(json) => to_jstring(env, json),
         None => to_jstring(env, String::new()),
     }
@@ -3556,54 +3553,116 @@ pub fn follow_read(
         return "error identity not-a-keys-identity".to_string();
     };
     let subject = identity.signer;
+    match with_followed_vault(
+        own_dir, joined_dir, store, runtime, signing, keys_hex, purpose, &subject, offset_ms,
+        |vault| read_followed(vault, store, runtime, &subject, tail_days, from_epoch),
+    ) {
+        Ok((ndjson, opened, unreadable)) => format!("ok {opened} {unreadable}\n{ndjson}"),
+        Err(e) => format!("error {e}"),
+    }
+}
 
-    // **ALREADY WELCOMED — THE CHEAP PATH, BUT NOT ALWAYS ENOUGH.** A welcomed
-    // vault is frozen at the epoch of its welcome. A later group *rotation* is a
-    // control message this vault has stored but never applied, so every segment
-    // sealed after it reads as `not_ours` — the silent blackout of 2026-10-26,
-    // where a follower granted at 19:57 went dark when the subject rotated at
-    // 23:16. Replaying the control log with `receive` lands those rotations
-    // without re-running `join` (which would throw away secrets costing a
-    // replication round trip): `receive` is idempotent through the orderer, so
-    // only the new messages take, and the bundle is kept. Tolerant per message —
-    // an add of some other reader is not our failure.
-    //
-    // 🔴 **BUT `receive` CANNOT CONSUME A RE-ADMIT, AND THAT IS THE OTHER HALF
-    // OF THE OUTAGE.** When the subject re-shares with a member whose welcome
-    // never reached them, it re-admits: `remove` (this follower receives its OWN
-    // removal) then a fresh `grant` (a new welcome at the new secret). Replaying
-    // `receive` applies the removal — the follower goes dark — and the new
-    // welcome does NOT bootstrap it back, because `receive` is not the welcome
-    // path and never reloads this device's own key manager (the secret the new
-    // welcome is wrapped towards). Observed live 2026-10-26: the subject
-    // re-shared, the welcome replicated, and `opened` stayed 0. Proven in
-    // `diaswarm-keys/tests/readmit_reaches_a_persisted_follower`.
-    //
-    // The tell is a welcomed vault that opens nothing while segments it cannot
-    // open exist (`not_ours > 0`): it has been revoked out from under itself.
-    // Only a clean `join` reloads our manager and bootstraps from the new
-    // welcome, so fall through to one. Guarded so a follower with simply no days
-    // yet (`not_ours == 0`) does not re-join on every refresh.
+/// The newest record of one `kind` a follower can open, as canonical JSON, found
+/// WITHOUT materialising the subject's history (issue #3).
+///
+/// A temp target or a profile in force may be weeks old, so these readers cannot
+/// window to recent days — they ask from `i64::MIN`. [`follow_read`] answers that
+/// by collecting every record of the whole log into a `Vec` (plus a `seen` set,
+/// plus an ndjson `String`), which is the ~22× catch-up blow-up that SIGABRT-
+/// crashed a follower on launch. This takes the SAME welcome/receive/rejoin path
+/// — so a re-admit still heals — but reads through [`diaswarm_keys::follow::newest_of_kind`],
+/// which folds to a single record and never accumulates the log.
+fn follow_read_newest(
+    own_dir: &Path,
+    joined_dir: &Path,
+    store: &diaswarm_keys::SqliteStore,
+    runtime: &tokio::runtime::Handle,
+    signing: &p2panda_core::SigningKey,
+    keys_hex: &str,
+    purpose: &str,
+    kind: &str,
+    from_epoch: i64,
+    offset_ms: i64,
+) -> Option<String> {
+    let identity = diaswarm_keys::decode_identity(keys_hex).ok()?;
+    let subject = identity.signer;
+    let read = |vault: &diaswarm_keys::Vault| -> Result<(Option<String>, usize, usize), String> {
+        let (best, opened, skipped) = runtime.block_on(diaswarm_keys::follow::newest_of_kind(
+            vault, store, &subject, kind, from_epoch,
+        ))?;
+        let unreadable = skipped.not_ours + skipped.lost();
+        Ok((best.map(|r| r.to_canonical_json()), opened, unreadable))
+    };
+    with_followed_vault(
+        own_dir, joined_dir, store, runtime, signing, keys_hex, purpose, &subject, offset_ms, read,
+    )
+    .ok()
+    .and_then(|(json, _, _)| json)
+}
+
+/// The welcome / receive / rejoin dance every followed read shares, over a
+/// reader that returns `(payload, opened, unreadable)`.
+///
+/// **ALREADY WELCOMED — THE CHEAP PATH, BUT NOT ALWAYS ENOUGH.** A welcomed
+/// vault is frozen at the epoch of its welcome. A later group *rotation* is a
+/// control message this vault has stored but never applied, so every segment
+/// sealed after it reads as `not_ours` — the silent blackout of 2026-10-26,
+/// where a follower granted at 19:57 went dark when the subject rotated at
+/// 23:16. Replaying the control log with `receive` lands those rotations
+/// without re-running `join` (which would throw away secrets costing a
+/// replication round trip): `receive` is idempotent through the orderer, so
+/// only the new messages take, and the bundle is kept. Tolerant per message —
+/// an add of some other reader is not our failure.
+///
+/// 🔴 **BUT `receive` CANNOT CONSUME A RE-ADMIT, AND THAT IS THE OTHER HALF
+/// OF THE OUTAGE.** When the subject re-shares with a member whose welcome
+/// never reached them, it re-admits: `remove` (this follower receives its OWN
+/// removal) then a fresh `grant` (a new welcome at the new secret). Replaying
+/// `receive` applies the removal — the follower goes dark — and the new
+/// welcome does NOT bootstrap it back, because `receive` is not the welcome
+/// path and never reloads this device's own key manager (the secret the new
+/// welcome is wrapped towards). Observed live 2026-10-26: the subject
+/// re-shared, the welcome replicated, and `opened` stayed 0. Proven in
+/// `diaswarm-keys/tests/readmit_reaches_a_persisted_follower`.
+///
+/// The tell is a welcomed vault that opens nothing while segments it cannot
+/// open exist (`not_ours > 0`): it has been revoked out from under itself.
+/// Only a clean `join` reloads our manager and bootstraps from the new
+/// welcome, so fall through to one. Guarded so a follower with simply no days
+/// yet (`not_ours == 0`) does not re-join on every refresh.
+#[allow(clippy::too_many_arguments)]
+fn with_followed_vault<T>(
+    own_dir: &Path,
+    joined_dir: &Path,
+    store: &diaswarm_keys::SqliteStore,
+    runtime: &tokio::runtime::Handle,
+    signing: &p2panda_core::SigningKey,
+    keys_hex: &str,
+    purpose: &str,
+    subject: &p2panda_core::VerifyingKey,
+    offset_ms: i64,
+    read: impl Fn(&diaswarm_keys::Vault) -> Result<(T, usize, usize), String>,
+) -> Result<(T, usize, usize), String> {
     let welcomed = diaswarm_keys::Vault::open(joined_dir, offset_ms, signing)
         .ok()
         .filter(|v| v.is_welcomed());
 
     if let Some(mut v) = welcomed {
         if let Ok(control) =
-            runtime.block_on(diaswarm_keys::wire::control_from(store, &subject, None))
+            runtime.block_on(diaswarm_keys::wire::control_from(store, subject, None))
         {
             for message in &control {
                 let _ = v.receive(message);
             }
         }
-        match read_followed(&v, store, runtime, &subject, tail_days, from_epoch) {
-            Ok((ndjson, opened, unreadable)) => {
+        match read(&v) {
+            Ok((payload, opened, unreadable)) => {
                 if opened > 0 || unreadable == 0 {
-                    return format!("ok {opened} {unreadable}\n{ndjson}");
+                    return Ok((payload, opened, unreadable));
                 }
                 // else: stranded by a re-admit — fall through to a clean re-join.
             }
-            Err(e) => return format!("error read {e}"),
+            Err(e) => return Err(format!("read {e}")),
         }
     }
 
@@ -3627,13 +3686,10 @@ pub fn follow_read(
         offset_ms,
     ) {
         Ok((v, _)) => v,
-        Err(e) => return format!("error join {e}"),
+        Err(e) => return Err(format!("join {e}")),
     };
 
-    match read_followed(&vault, store, runtime, &subject, tail_days, from_epoch) {
-        Ok((ndjson, opened, unreadable)) => format!("ok {opened} {unreadable}\n{ndjson}"),
-        Err(e) => format!("error read {e}"),
-    }
+    read(&vault).map_err(|e| format!("read {e}"))
 }
 
 /// Join a subject and read what they have shared. See [`follow_read`].
