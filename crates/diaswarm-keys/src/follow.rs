@@ -228,6 +228,62 @@ pub async fn read(
     Ok((out, opened, skipped))
 }
 
+/// The single newest record of one `kind`, found WITHOUT materialising the
+/// history.
+///
+/// **WHY THIS EXISTS: THE OTHER HALF OF THE CATCH-UP OOM.** [`read`] collects
+/// every record of a window into a `Vec`, plus a `seen` set holding each one's
+/// canonical JSON, plus — one layer up — an ndjson `String` of all of them. For
+/// the glucose graph that is bounded by the follower window. But a *temp target*
+/// or a *profile* in force can be weeks old, so their readers ask for the whole
+/// history (`from_epoch = i64::MIN`) and pay that three-fold accumulation across
+/// every segment a subject ever sealed — the ~22× blow-up that SIGABRT-crashed a
+/// follower on launch (issue #3).
+///
+/// A caller that wants only the newest record of a kind does not need any of
+/// that. This folds: it opens each segment, keeps the single best record by `t`,
+/// and lets the segment's other records drop at the end of the iteration. Peak
+/// memory is one segment's worth plus one record, not the whole log. No `seen`
+/// set, because a duplicate of the newest record has the same `t` and the fold
+/// is idempotent under it.
+///
+/// Still reads every segment (an old record may be the current one), so it is
+/// O(history) in CPU like `read` — the crash it fixes was memory, not cycles.
+pub async fn newest_of_kind(
+    vault: &Vault,
+    store: &SqliteStore,
+    subject: &VerifyingKey,
+    kind: &str,
+    from_epoch: i64,
+) -> Result<(Option<Record>, usize, crate::Skipped), String> {
+    let segments = wire::segments_from(store, subject, from_epoch)
+        .await
+        .map_err(|e| format!("segments {e}"))?;
+
+    let mut best: Option<Record> = None;
+    let mut opened = 0usize;
+    let mut skipped = crate::Skipped::default();
+    for segment in &segments {
+        match vault.open_segment(segment) {
+            Ok((records, unparseable)) => {
+                opened += 1;
+                skipped.unparseable += unparseable;
+                for record in records {
+                    if record.kind() == kind
+                        && best.as_ref().is_none_or(|b| record.t() > b.t())
+                    {
+                        best = Some(record);
+                    }
+                }
+            }
+            Err(crate::Error::NotGranted) => skipped.not_ours += 1,
+            Err(crate::Error::Undecryptable) => skipped.undecryptable += 1,
+            Err(_) => skipped.unreadable += 1,
+        }
+    }
+    Ok((best, opened, skipped))
+}
+
 /// The incremental read: only the segments appended after `after`, with the new
 /// mark to persist.
 ///
