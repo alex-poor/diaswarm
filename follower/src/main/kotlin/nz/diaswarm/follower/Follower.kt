@@ -28,6 +28,33 @@ object Follower {
     data class Reading(val at: Long, val mgdl: Double, val trend: String)
 
     /**
+     * A publisher liveness heartbeat (issue #8), as the keys vault gave it up.
+     *
+     * Every field is something the loop phone knows positively; a field it could
+     * not determine is `null`/empty, never a placeholder — so the follower can
+     * tell "the loop said nothing about its sensor" from "the sensor is fine".
+     * [at] is when the heartbeat was sealed, so its own age is the proof-of-life.
+     */
+    data class Liveness(
+        val at: Long,
+        val cgmAt: Long?,
+        val loop: String,
+        val sensorAt: Long?,
+        val sensorEv: String
+    )
+
+    /**
+     * Why a subject's data is quiet — as far as anyone can honestly say.
+     *
+     * Only [SENSOR_ENDED], [LOOP_STOPPED] and [CGM_LOST] are the publisher's
+     * positive word. [OFFLINE] is inferred from a heartbeat that stopped.
+     * [UNKNOWN] is the honest shrug when there is no heartbeat at all — an older
+     * publisher that never emitted one, where the generic "still checking" is all
+     * we may claim. [FLOWING] means not stale.
+     */
+    enum class Reason { FLOWING, CGM_LOST, SENSOR_ENDED, LOOP_STOPPED, OFFLINE, UNKNOWN }
+
+    /**
      * One thing that was done, as the vault gave it up.
      *
      * **EVERY FIELD HERE WAS MEASURED AND SENT.** Nothing on this type is
@@ -271,6 +298,86 @@ object Follower {
             val mgdl = f.getOrNull(1)?.toDoubleOrNull() ?: return@mapNotNull null
             if (at <= 0 || mgdl <= 0.0) null else Reading(at, mgdl, f.getOrNull(2).orEmpty())
         }
+
+    /**
+     * A heartbeat older than this has stopped — the subject is offline, not
+     * explaining a gap. Set above the publisher's worst-case cadence: when CGM
+     * is dead the heartbeat rides only the 15-minute periodic worker, so two
+     * missed beats plus slack is ~35 minutes. Tighter than this would read an
+     * online-but-quiet phone (sensor out of range) as offline.
+     */
+    const val LIVENESS_FRESH_MS = 35 * 60_000L
+
+    /** Read wide enough that a merely-slowed heartbeat still returns, to be aged. */
+    private const val LIVENESS_WINDOW_MS = 48 * 3_600_000L
+
+    /**
+     * The publisher's newest liveness heartbeat for [subject] (issue #8), or null.
+     *
+     * `null` means none in ~2 days — which the classifier treats as "no heartbeat
+     * at all" (an older publisher that never emits one, or a very long outage),
+     * NOT as a positive offline. That distinction is the whole point of the
+     * feature: we never claim to know a reason we were not told.
+     */
+    fun liveness(context: Context, subject: Subject): Liveness? {
+        if (!Prefs.keysVault(context) || subject.keys.isEmpty()) return null
+        val handle = SwarmKeys.open(context)
+        if (handle == 0L) return null
+        val raw = try {
+            SwarmNative.keysLiveness(
+                handle,
+                SwarmKeys.joinedDir(context, subject.key).absolutePath,
+                subject.keys,
+                subject.purpose,
+                System.currentTimeMillis() - LIVENESS_WINDOW_MS
+            )
+        } catch (e: Throwable) {
+            android.util.Log.i(SyncWorker.TAG, "keys liveness threw: $e")
+            ""
+        } finally {
+            SwarmNative.keysClose(handle)
+        }
+        return parseLiveness(raw)
+    }
+
+    /** Parse `t \t cgm_at \t loop \t sensor_at \t sensor_ev`, or null. */
+    internal fun parseLiveness(line: String): Liveness? {
+        if (line.isBlank() || line.startsWith("error")) return null
+        val f = line.trim().split('\t')
+        val at = f.getOrNull(0)?.toLongOrNull()?.takeIf { it > 0 } ?: return null
+        fun longField(i: Int) = f.getOrNull(i)?.takeIf { it.isNotEmpty() }?.toLongOrNull()
+        return Liveness(
+            at = at,
+            cgmAt = longField(1),
+            loop = f.getOrNull(2).orEmpty(),
+            sensorAt = longField(3),
+            sensorEv = f.getOrNull(4).orEmpty()
+        )
+    }
+
+    /**
+     * Why a subject's data is quiet, from staleness and the heartbeat. Pure, so
+     * it tests without a vault.
+     *
+     * [stale] is the same staleness the hero card already computes. A reason is
+     * only ever asserted from a FRESH heartbeat: a stale one means the subject
+     * itself went quiet ([Reason.OFFLINE]), and no heartbeat means there is
+     * nothing to claim ([Reason.UNKNOWN] → the generic banner). Sensor-ended
+     * outranks loop-stopped outranks a bare CGM gap, because that is the order a
+     * carer would act on them.
+     */
+    fun classifyReason(
+        stale: Boolean,
+        live: Liveness?,
+        now: Long = System.currentTimeMillis()
+    ): Reason {
+        if (!stale) return Reason.FLOWING
+        if (live == null) return Reason.UNKNOWN
+        if (now - live.at > LIVENESS_FRESH_MS) return Reason.OFFLINE
+        if (live.sensorEv == "stop") return Reason.SENSOR_ENDED
+        if (live.loop == "suspended" || live.loop == "disabled") return Reason.LOOP_STOPPED
+        return Reason.CGM_LOST
+    }
 
     /**
      * What was delivered to this subject over the last [hours].

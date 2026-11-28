@@ -169,6 +169,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
     val scheduled = data?.scheduled
     val basal = data?.basal ?: emptyList()
     val basalUnknown = data?.basalUnknown ?: false
+    val liveness = data?.liveness
 
     MaterialTheme(colorScheme = darkColorScheme(background = Bg, surface = Card)) {
         // NOT A SCROLLER ANY MORE, AND THAT IS WHAT FILLS THE SCREEN. A
@@ -236,7 +237,7 @@ fun FollowerApp(onScan: () -> Unit, scanned: String?, onScanHandled: () -> Unit)
                 subject == null    -> ChooseCard(followed) { Prefs.setGraphSubject(context, it.key); tick++ }
                 readings.isEmpty() -> WaitingCard(subject, lastSyncAt)
                 else               -> {
-                    HeroCard(context, readings, treatments, target, tempTarget, low, high)
+                    HeroCard(context, readings, treatments, target, tempTarget, low, high, liveness)
                     Card(
                         colors = CardDefaults.cardColors(containerColor = Card),
                         modifier = Modifier.fillMaxWidth().weight(1f)
@@ -378,7 +379,8 @@ private data class AppData(
     val high: Double,
     val scheduled: Double?,
     val basal: List<Follower.BasalStep>,
-    val basalUnknown: Boolean
+    val basalUnknown: Boolean,
+    val liveness: Follower.Liveness?
 )
 
 /** Read the whole screen's data. Always called off the main thread — see [FollowerApp]. */
@@ -407,7 +409,10 @@ private fun loadAppData(context: android.content.Context): AppData {
         // the two.
         scheduled = scheduled,
         basal = basal,
-        basalUnknown = scheduled == null && treatments.any { it.kind == "tbr" && !it.absolute }
+        basalUnknown = scheduled == null && treatments.any { it.kind == "tbr" && !it.absolute },
+        // The heartbeat that lets the hero say WHY it is quiet (issue #8), read
+        // on the same IO pass as everything else. Null for an older publisher.
+        liveness = subject?.let { Follower.liveness(context, it) }
     )
 }
 
@@ -419,7 +424,8 @@ private fun HeroCard(
     target: Pair<Double, Double>?,
     tempTarget: Follower.TempTarget?,
     lowLine: Double,
-    highLine: Double
+    highLine: Double,
+    liveness: Follower.Liveness? = null
 ) {
     val last = readings.last()
     val prev = readings.getOrNull(readings.size - 2)
@@ -501,18 +507,29 @@ private fun HeroCard(
             // — a stall that recovers on its own should not look the same as a
             // feed that is simply current.
             //
-            // **IT DOES NOT CLAIM TO KNOW WHY.** "Reconnecting" would blame the
-            // transport, and the follower cannot yet tell a wedged link from the
-            // subject's own sensor dropping or phone sleeping — that is issue #8
-            // (a publisher-emitted liveness record), deliberately not built. So
-            // this states only what is certain: no new reading, how long, and
-            // that it is still checking.
+            // **IT NOW SAYS WHY, BUT ONLY WHEN THE PUBLISHER TOLD US (issue #8).**
+            // A fresh liveness heartbeat carries the one thing the transport
+            // cannot know — the subject's own sensor, loop and last reading — so
+            // the banner names a cause the carer can act on. Absent or stale
+            // heartbeat falls back to the certain-only wording: no new reading,
+            // how long, still checking. We never invent a reason we were not told.
             if (stale) {
-                StatusBanner(
-                    BannerTone.Alert,
-                    "No new reading — last was ${Follower.ageWords(last.at)}. Still checking.",
-                    Modifier.padding(top = 10.dp)
-                )
+                val age = Follower.ageWords(last.at)
+                val (tone, message) = when (Follower.classifyReason(true, liveness)) {
+                    Follower.Reason.SENSOR_ENDED ->
+                        BannerTone.Alert to "Sensor ended — their CGM needs replacing. Last reading $age."
+                    Follower.Reason.CGM_LOST ->
+                        BannerTone.Alert to "CGM signal lost — their sensor is out of range. Last reading $age."
+                    Follower.Reason.LOOP_STOPPED ->
+                        BannerTone.Alert to "Their loop is stopped. Last reading $age."
+                    Follower.Reason.OFFLINE ->
+                        BannerTone.Alert to "Their phone is offline — no new data reaching the swarm. Last reading $age."
+                    // UNKNOWN (no heartbeat) and the FLOWING-can't-happen case:
+                    // the honest, certain-only wording.
+                    else ->
+                        BannerTone.Alert to "No new reading — last was $age. Still checking."
+                }
+                StatusBanner(tone, message, Modifier.padding(top = 10.dp))
             }
         }
     }
