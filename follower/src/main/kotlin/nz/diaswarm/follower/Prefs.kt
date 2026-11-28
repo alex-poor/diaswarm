@@ -242,20 +242,24 @@ object Prefs {
      * phone carries for reciprocity too, which is where the ingest actually blows
      * up — a stranger's history is unbounded and unchosen.
      *
-     * **0 = EVERYTHING, AND IT IS THE DEFAULT**, so an existing follower that
-     * updates keeps every day it already holds and drops nothing without being
-     * asked. Turning on a window is a deliberate choice to trade old history for
-     * a phone that cannot be swamped by it; the data is still on the publisher
-     * and other carriers, and raising the window later re-fetches it.
+     * **0 = EVERYTHING, AND IT IS THE UNBOUNDED FULL CARRY** — against a publisher
+     * with real history that is the fresh-onboard OOM, the follower pulling the
+     * whole segment log at once. So the default is a bounded window, not 0: three
+     * days is plenty to read a family member's recent pattern and cannot swamp the
+     * phone. The data is still on the publisher and other carriers, and raising the
+     * window later re-fetches it. Only a fresh install takes this default; a stored
+     * explicit choice (including 0) is kept, so nobody who chose "Everything" loses
+     * it on update.
      *
-     * Needs a publisher emitting the epoch index (anchors) to map days to a
-     * floor; against one that does not, the carry degrades to a full follow
-     * rather than going dark. See `KeysReplicator::carry_windowed`.
+     * Needs a publisher emitting the epoch index (anchors) to map days to a floor;
+     * against one that does not, `KeysReplicator::carry_windowed` now HOLDS BACK the
+     * segment carry and retries rather than full-following into an OOM.
      */
-    fun keepDays(c: Context): Int = p(c).getInt(KEEP_DAYS, 0).coerceAtLeast(0)
+    const val DEFAULT_KEEP_DAYS = 3
+    fun keepDays(c: Context): Int = p(c).getInt(KEEP_DAYS, DEFAULT_KEEP_DAYS).coerceAtLeast(0)
     fun setKeepDays(c: Context, v: Int) = p(c).edit().putInt(KEEP_DAYS, v.coerceAtLeast(0)).apply()
 
-    /** The windows offered, in days. 0 is "everything" and leads, as the default. */
+    /** The windows offered, in days. 0 is "everything"; the default is 3. */
     val KEEP_DAYS_OPTIONS: List<Int> = listOf(0, 1, 3, 7, 14, 30, 90)
 
     /** Move to the next window, wrapping. The only way this is set. */

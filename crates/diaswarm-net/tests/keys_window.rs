@@ -131,3 +131,62 @@ async fn a_follower_holds_only_its_windowed_days() {
     // The control log is never windowed: the create message is all there.
     assert!(held(&follower_store, &author, CONTROL_LOG_ID).await >= 1, "the control log synced in full");
 }
+
+/// A windowing follower of a publisher that emits NO epoch index must HOLD THE
+/// SEGMENTS BACK, not full-follow them — the hardening behind the fresh-onboard
+/// OOM. Without a settled index there is no floor, so carrying the segment log
+/// would advertise `Have[0]` and pull the whole history at once. The follower
+/// should instead sync only keys/control and wait, retrying on a later pass.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_windowing_follower_does_not_full_follow_a_publisher_with_no_index() {
+    let net = network_id("keys-window-noindex");
+    let rng = Rng::default();
+
+    // The subject seals six days of SEGMENTS but publishes NO anchors — an older
+    // or non-anchoring publisher. There is nothing to map days onto a floor.
+    let subject_key = SigningKey::generate();
+    let author = subject_key.verifying_key();
+    let mut subject = Vault::open(tmp("noidx-subject"), OFFSET, &subject_key).unwrap();
+    let (mgr, _bundle) = Vault::key_bundle(&rng).unwrap();
+    let subject_store = SqliteStoreBuilder::memory().build().await.unwrap();
+    let create = subject.create(mgr).unwrap();
+    wire::publish_control(&subject_store, &subject_key, &create).await.unwrap();
+    const DAYS: i64 = 6;
+    for e in 0..DAYS {
+        let epoch = 22_000 + e;
+        let seg = subject.seal(epoch, &day(epoch)).unwrap();
+        wire::publish(&subject_store, &subject_key, &seg).await.unwrap(); // no anchor
+    }
+
+    let publisher = Swarm::join_network(tmp("noidx-pub-pool"), SigningKey::generate(), net).await.unwrap();
+    let (pe, pg) = publisher.parts();
+    let publishing = KeysReplicator::keys(subject_store.clone(), pe, pg).await.unwrap();
+    let subject_hex = author.to_hex();
+    publishing.carry(pool::subject_topic(&subject_hex), &subject_hex).await.unwrap();
+    publishing
+        .carry_logs(pool::control_topic(&subject_hex), &subject_hex, &[CONTROL_LOG_ID])
+        .await
+        .unwrap();
+
+    let follower_store = SqliteStoreBuilder::memory().build().await.unwrap();
+    let follower = Swarm::join_network(tmp("noidx-fol-pool"), SigningKey::generate(), net).await.unwrap();
+    let (fe, fg) = follower.parts();
+    let following = KeysReplicator::keys(follower_store.clone(), fe, fg).await.unwrap();
+
+    following.carry_windowed(&subject_hex, 2).await.unwrap();
+
+    // Past the ~30s index wait: the control log syncs, but no index ever settles,
+    // so the segment log stays EMPTY — held back, not full-followed. If the old
+    // fallback were in place, all six segments would arrive.
+    let mut segments = u32::MAX;
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        segments = held(&follower_store, &author, LOG_ID).await;
+        assert_eq!(segments, 0, "a no-index publisher must not be full-followed (held {segments})");
+    }
+    assert_eq!(segments, 0, "segments stayed held back for the whole wait");
+    assert!(
+        held(&follower_store, &author, CONTROL_LOG_ID).await >= 1,
+        "control still synced — the follower has keys, it is only the unbounded segment pull it refuses",
+    );
+}
