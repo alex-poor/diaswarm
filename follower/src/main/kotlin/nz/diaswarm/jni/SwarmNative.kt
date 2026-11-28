@@ -791,6 +791,23 @@ object SwarmNative {
         limit: Long
     ): String
 
+    /**
+     * The publisher's newest liveness heartbeat for a subject (issue #8), as a
+     * single tab line `t \t cgm_at \t loop \t sensor_at \t sensor_ev`, or the
+     * empty string when none falls inside the window.
+     *
+     * **ABSENCE IS THE "OFFLINE" SIGNAL.** The heartbeat is sealed every pass, so
+     * an empty result is not "no data" but "no recent proof of life" — the one
+     * reason only the follower can conclude and the publisher never asserts.
+     */
+    external fun keysLiveness(
+        handle: Long,
+        joinedDir: String,
+        subjectKeys: String,
+        purpose: String,
+        sinceMs: Long
+    ): String
+
     /** The spec version this Kotlin was written against. */
     const val EXPECTED_SPEC_VERSION = 3
 

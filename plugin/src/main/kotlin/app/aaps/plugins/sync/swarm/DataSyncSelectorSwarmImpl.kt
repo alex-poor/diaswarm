@@ -7,6 +7,8 @@ import androidx.work.WorkManager
 import app.aaps.plugins.sync.swarm.workers.SwarmDataSyncWorker
 import java.util.concurrent.TimeUnit
 import android.content.Context
+import app.aaps.core.data.model.RM
+import app.aaps.core.data.model.TE
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -675,9 +677,78 @@ class DataSyncSelectorSwarmImpl @Inject constructor(
     /** How many recent segment operations to keep when pruning at a rotation (D35). */
     private val SEGMENT_KEEP = 2_000L
 
+    /** No more than one heartbeat per this interval, even on a busy pass. */
+    private val LIVENESS_INTERVAL_MS = 5 * 60_000L
+
+    /** When the last liveness heartbeat was carried, to throttle the next. */
+    private var lastLivenessMs = 0L
+
+    /**
+     * Carry a publisher liveness heartbeat into the current epoch (issue #8).
+     *
+     * **THE HEARTBEAT HAS TO FLOW WHEN THE DATA DOES NOT.** Everything else in
+     * this pass is appended to epochs the drain already filled; a dead CGM fills
+     * none, so this uses `getOrPut` to CREATE the current epoch when it is empty.
+     * That is the whole point: a follower reads the heartbeat's *absence* as the
+     * publisher being offline, so it must keep arriving on its own when readings
+     * have stopped. Throttled to [LIVENESS_INTERVAL_MS]; the 15-minute periodic
+     * worker guarantees it still fires when a quiet phone wakes for nothing else.
+     *
+     * **EVERY FIELD IS READ-ONLY (D7).** Loop mode comes from the persistence
+     * layer's running-mode history, not an injected [app.aaps.core.interfaces.aps.Loop]
+     * — nothing here acquires a handle that could influence dosing. A field we
+     * cannot establish is omitted (§1), never a zero a follower would misread.
+     */
+    private fun ensureCurrentEpochCarriesLiveness() {
+        val now = System.currentTimeMillis()
+        if (now - lastLivenessMs < LIVENESS_INTERVAL_MS) return
+
+        val cgmAt = runCatching { persistenceLayer.getLastGlucoseValue()?.timestamp }.getOrNull()
+
+        val loop = runCatching {
+            when (val mode = persistenceLayer.getRunningModeActiveAt(now).mode) {
+                RM.Mode.CLOSED_LOOP     -> "closed"
+                RM.Mode.CLOSED_LOOP_LGS -> "lgs"
+                RM.Mode.OPEN_LOOP       -> "open"
+                RM.Mode.DISABLED_LOOP   -> "disabled"
+                // Every suspend/disconnect/super-bolus state reads as "stopped"
+                // to a carer; anything the enum adds later is safest there too.
+                else                    -> if (mode.isSuspended()) "suspended" else "disabled"
+            }
+        }.getOrNull()
+
+        // The most recent sensor therapy event, whichever kind. "stop" being the
+        // newest is the positive "sensor ended — replace it" signal; a later
+        // "start"/"change" means a new sensor is in, so a CGM gap is out-of-range,
+        // not expiry. If the source never logs a stop, the newest stays a start
+        // and the follower honestly says "out of range" rather than inventing an
+        // expiry — the sensor timestamp still rides along for a later refinement.
+        val sensor = runCatching {
+            listOf(
+                TE.Type.SENSOR_STOPPED to "stop",
+                TE.Type.SENSOR_STARTED to "start",
+                TE.Type.SENSOR_CHANGE to "change",
+            ).mapNotNull { (type, label) ->
+                persistenceLayer.getLastTherapyRecordUpToNow(type)?.let { it.timestamp to label }
+            }.maxByOrNull { it.first }
+        }.getOrNull()
+
+        val line = SwarmRecords.liveness(now, cgmAt, loop, sensor?.first, sensor?.second)
+        val epoch = SwarmNative.epochOf(now, offsetMs)
+        pending.getOrPut(epoch) { StringBuilder() }.append(line).append('\n')
+        lastLivenessMs = now
+        aapsLogger.info(
+            LTag.CORE,
+            "swarm: liveness heartbeat — cgm_at=$cgmAt loop=$loop sensor=${sensor?.second}"
+        )
+    }
+
     private fun sealPending() {
         val shadow = openShadow()
         rotateIfDue(shadow)
+        // Before the profile pass, so a current epoch this creates on a quiet day
+        // also gets that day's profile carried into it.
+        ensureCurrentEpochCarriesLiveness()
         ensureEachDayCarriesItsProfile()
         // **NOTHING ACCUMULATES WHILE THE SHADOW IS OFF, AND IT USED TO.**
         //

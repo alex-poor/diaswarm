@@ -120,6 +120,29 @@ object SwarmRecords {
         else -> null
     }
 
+    /**
+     * A publisher liveness heartbeat (issue #8): the loop's own account of why
+     * its data might be quiet. Synthesized rather than mapped from one domain
+     * object, but sealed like any record so a follower reads it through the same
+     * path. Every field is positively known or ABSENT (§1) — a reason we could
+     * not establish is simply not emitted, so a follower never shows a cause we
+     * cannot stand behind. Its own `t` is the heartbeat, so a follower reads the
+     * record's *absence* as the publisher being offline.
+     *
+     * @param t        emit instant
+     * @param cgmAt    newest glucose timestamp held, or null
+     * @param loop     loop mode `closed|open|lgs|suspended|disabled`, or null
+     * @param sensorAt last sensor therapy-event timestamp, or null
+     * @param sensorEv that event `start|stop|change`, or null
+     */
+    fun liveness(t: Long, cgmAt: Long?, loop: String?, sensorAt: Long?, sensorEv: String?): String =
+        obj(t, "liveness") {
+            cgmAt?.let { put("cgm_at", it) }
+            loop?.let { put("loop", it) }
+            sensorAt?.let { put("sensor_at", it) }
+            sensorEv?.let { put("sensor_ev", it) }
+        }
+
     /** Blocks as `[{duration, …}]`, in the order AAPS holds them. */
     private inline fun blocks(list: List<Block>, field: (Block) -> JSONObject): JSONArray =
         JSONArray().apply {

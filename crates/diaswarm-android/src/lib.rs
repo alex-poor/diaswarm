@@ -2362,6 +2362,67 @@ pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysProfile<'a>(
     }
 }
 
+/// The newest publisher liveness heartbeat for a subject (issue #8).
+///
+/// Returns a single tab line `t \t cgm_at \t loop \t sensor_at \t sensor_ev`,
+/// or the empty string when no liveness record falls inside the window — which
+/// is itself the signal the follower reads as "publisher offline": the heartbeat
+/// is emitted every seal pass, so its absence is as meaningful as its contents.
+/// A field the publisher could not determine is empty between the tabs, never a
+/// placeholder zero (§1). Windowed like `keysGlucose`, not every-epoch like a
+/// profile: an old heartbeat is a stale heartbeat, and staleness is the answer.
+#[no_mangle]
+pub extern "system" fn Java_nz_diaswarm_jni_SwarmNative_keysLiveness<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    joined_dir: JString<'a>,
+    subject_keys: JString<'a>,
+    purpose: JString<'a>,
+    since_ms: jlong,
+) -> JString<'a> {
+    let (Ok(joined), Ok(keys), Ok(purpose)) =
+        (env.get_string(&joined_dir), env.get_string(&subject_keys), env.get_string(&purpose))
+    else {
+        return to_jstring(env, String::new());
+    };
+    let (joined, keys, purpose) = (String::from(joined), String::from(keys), String::from(purpose));
+    let Some(v) = keys_vault(handle) else { return to_jstring(env, String::new()) };
+    let offset = v.vault.offset();
+    let own_dir = v.vault.root().to_path_buf();
+
+    let tail = if since_ms > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(since_ms);
+        let days = (now.saturating_sub(since_ms)) / 86_400_000 + 2;
+        days.max(2) as u64
+    } else {
+        0
+    };
+
+    let out = follow_read(
+        &own_dir,
+        Path::new(&joined),
+        &v.store,
+        &v.handle,
+        &v.signing,
+        &keys,
+        &purpose,
+        tail,
+        i64::MIN,
+        offset,
+    );
+    let Some(body) = out.strip_prefix("ok ").and_then(|rest| rest.split_once('\n')) else {
+        return to_jstring(env, String::new());
+    };
+    match newest_liveness(body.1, since_ms) {
+        Some(line) => to_jstring(env, line),
+        None => to_jstring(env, String::new()),
+    }
+}
+
 /// The latest record of one kind in an ndjson body, as canonical JSON.
 ///
 /// Latest by the record's own `t`, never by position: segments are opened per
@@ -2384,6 +2445,86 @@ fn newest_of_kind(body: &str, kind: &str) -> Option<String> {
 
 fn newest_profile(body: &str) -> Option<String> {
     newest_of_kind(body, "profile")
+}
+
+/// The newest liveness heartbeat in a body as a fixed tab line (issue #8).
+///
+/// Newest by the record's own `t`, like everything else here — segments arrive
+/// per epoch, so position says nothing. Fields come out in a fixed order so the
+/// follower splits on tabs without a JSON parser; a field the publisher omitted
+/// (absence is meaningful, §1) comes back empty, not zero.
+fn newest_liveness(body: &str, since_ms: i64) -> Option<String> {
+    let r = body
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| Record::from_json(l).ok())
+        .filter(|r| r.kind() == diaswarm_core::kind::LIVENESS)
+        .filter(|r| r.t() > since_ms)
+        .max_by_key(|r| r.t())?;
+    let int = |k: &str| r.get(k).and_then(|v| v.as_i64()).map(|n| n.to_string()).unwrap_or_default();
+    let text = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    Some(format!(
+        "{}\t{}\t{}\t{}\t{}",
+        r.t(),
+        int("cgm_at"),
+        text("loop"),
+        int("sensor_at"),
+        text("sensor_ev"),
+    ))
+}
+
+#[cfg(test)]
+mod liveness_tests {
+    use super::newest_liveness;
+    use diaswarm_core::{kind, Record};
+
+    fn live(t: i64, cgm_at: i64, loop_mode: &str, sensor_at: i64, ev: &str) -> String {
+        Record::new(t, kind::LIVENESS)
+            .set("cgm_at", Some(cgm_at.into()))
+            .set("loop", Some(loop_mode.into()))
+            .set("sensor_at", Some(sensor_at.into()))
+            .set("sensor_ev", Some(ev.into()))
+            .to_canonical_json()
+    }
+
+    #[test]
+    fn newest_wins_and_fields_come_out_in_order() {
+        // An older heartbeat, a cgm reading between them (ignored), the newest.
+        let body = [
+            live(1_000, 900, "closed", 500, "start"),
+            Record::new(1_500, kind::CGM).set("mgdl", Some(120.0.into())).to_canonical_json(),
+            live(2_000, 1_800, "suspended", 1_900, "stop"),
+        ]
+        .join("\n");
+        assert_eq!(
+            newest_liveness(&body, 0).as_deref(),
+            Some("2000\t1800\tsuspended\t1900\tstop"),
+            "returns the newest heartbeat's fields in fixed order, skipping cgm rows",
+        );
+    }
+
+    #[test]
+    fn a_field_the_publisher_omitted_comes_back_empty_not_zero() {
+        // No sensor event known yet: sensor_at / sensor_ev absent (§1).
+        let body = Record::new(3_000, kind::LIVENESS)
+            .set("cgm_at", Some(2_900.into()))
+            .set("loop", Some("closed".into()))
+            .to_canonical_json();
+        assert_eq!(
+            newest_liveness(&body, 0).as_deref(),
+            Some("3000\t2900\tclosed\t\t"),
+            "omitted sensor fields are empty between the tabs, never a placeholder 0",
+        );
+    }
+
+    #[test]
+    fn a_heartbeat_older_than_the_window_is_offline_not_a_reason() {
+        // since is after the only heartbeat → None, which the follower reads as
+        // "publisher offline", distinct from an in-window reason.
+        let body = live(1_000, 900, "closed", 500, "start");
+        assert_eq!(newest_liveness(&body, 2_000), None);
+        assert!(newest_liveness("", 0).is_none(), "empty body → no heartbeat");
+    }
 }
 
 /// Who in the pool has announced holding this subject, one node id per line.

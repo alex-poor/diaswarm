@@ -90,6 +90,18 @@ pub mod kind {
     pub const PROFILE: &str = "profile";
     pub const META: &str = "meta";
 
+    /// A publisher heartbeat that says WHY data is quiet, not a reading (issue #8).
+    /// Emitted every seal pass so its *absence* means the publisher is offline. Its
+    /// own `t` is the emit instant; the fields below are what only the loop phone
+    /// knows positively, so a follower can classify staleness instead of guessing:
+    ///   `cgm_at`    (i64 ms) newest glucose timestamp the publisher holds
+    ///   `loop`      (str)    loop mode: closed|open|lgs|suspended|disabled
+    ///   `sensor_at` (i64 ms) timestamp of the last sensor therapy event
+    ///   `sensor_ev` (str)    that event: start|stop|change
+    /// Any field the publisher cannot determine is absent (§1), never zero.
+    /// Like [`META`], it is state rather than a data point, so it is NOT in `ALL`.
+    pub const LIVENESS: &str = "liveness";
+
     pub const ALL: &[&str] = &[CGM, BOLUS, CARB, TBR, EXT_BOLUS, EVENT, TARGET, PROFILE];
 }
 
